@@ -13,6 +13,14 @@ let GOOGLE_IMAGE_MODELS = [];
 let GOOGLE_VIDEO_MODELS = [];
 let GOOGLE_MUSIC_MODELS = [];
 
+// ── Modelos con soporte de computer use por proveedor (sub-agente dedicado) ──
+const COMPUTER_USE_MODELS = {
+    google: ['gemini-2.5-computer-use-preview-10-2025'],
+    anthropic: ['claude-sonnet-4-6', 'claude-opus-4-6'],
+    openai: ['computer-use-preview'],
+};
+const COMPUTER_USE_PROVIDER_LABELS = { google: 'Google', anthropic: 'Anthropic', openai: 'OpenAI' };
+
 class SettingsManager {
     constructor() {
         this.panel = document.getElementById('settings-panel');
@@ -60,6 +68,7 @@ class SettingsManager {
         this.mcpServersList = document.getElementById('mcp-servers-list');
         this.mcpAddServerBtn = document.getElementById('btn-mcp-add-server');
         this.mcpTransportSelect = document.getElementById('select-mcp-transport');
+        this.mcpIntegrationModeSelect = document.getElementById('select-mcp-integration-mode');
         this.gatewayTelegramEnabledCheckbox = document.getElementById('cb-gateway-telegram-enabled');
         this.gatewayTelegramDefaultChatInput = document.getElementById('input-gateway-telegram-default-chat');
         this.gatewayTelegramAllowedChatsInput = document.getElementById('input-gateway-telegram-allowed-chat-ids');
@@ -119,6 +128,8 @@ class SettingsManager {
         this.voiceTtsSelect = document.getElementById('select-tts-engine');
         this.voiceRuntimeStatus = document.getElementById('voice-runtime-status');
         this.voiceGoogleConfig = document.getElementById('voice-google-config');
+        this.voiceGoogleVoiceConfig = document.getElementById('voice-google-voice-config');
+        this.voiceGoogleVoiceSelect = document.getElementById('select-google-voice');
         this.voiceGoogleKeyInput = document.getElementById('input-voice-google-api-key');
         this.voiceGoogleKeyToggleBtn = document.getElementById('btn-toggle-voice-google-key');
         this.voiceGoogleKeySaveBtn = document.getElementById('btn-save-voice-google-key');
@@ -238,6 +249,21 @@ class SettingsManager {
             this._renderAutonomyMeta();
         });
 
+        // ── Monitor selector ──
+        const monitorSelect = document.getElementById('select-target-monitor');
+        if (monitorSelect) {
+            monitorSelect.addEventListener('change', async (e) => {
+                const val = parseInt(e.target.value, 10) || 0;
+                await this._saveTargetMonitor(val);
+            });
+        }
+        const btnRefreshMonitors = document.getElementById('btn-refresh-monitors');
+        if (btnRefreshMonitors) {
+            btnRefreshMonitors.addEventListener('click', async () => {
+                await this._syncMonitors();
+            });
+        }
+
         this.blockedSitesEnabledCheckbox.addEventListener('change', async (e) => {
             await this._saveConfigValue('agent', 'blocked_sites_enabled', e.target.checked);
             this._renderBlockedSitesMeta();
@@ -262,6 +288,10 @@ class SettingsManager {
         this.mcpEnabledCheckbox?.addEventListener('change', async (e) => {
             await this._saveConfigValue('mcp', 'enabled', e.target.checked);
             await this._syncMcpRuntime();
+        });
+
+        this.mcpIntegrationModeSelect?.addEventListener('change', async (e) => {
+            await this._saveConfigValue('mcp', 'integration_mode', e.target.value);
         });
 
         // ── MCP Tabs ──
@@ -398,6 +428,11 @@ class SettingsManager {
             await this._saveModelAssignments();
         });
 
+        // ── Computer Use ──
+        document.getElementById('btn-save-computer-use')?.addEventListener('click', async () => {
+            await this._saveComputerUseConfig();
+        });
+
         // ── Crews ──
         this.crewsList = document.getElementById('crews-list');
         this.crewsMeta = document.getElementById('crews-meta');
@@ -462,6 +497,7 @@ class SettingsManager {
             this.currentProvider = e.target.value;
             this._updateModelOptions();
             this._applyProviderChange();
+            this._toggleGoogleBackendGroup();
         });
 
         this.modelSelect.addEventListener('change', (e) => {
@@ -477,6 +513,25 @@ class SettingsManager {
             ws.sendConfig('model_router', 'temperature', parseFloat(e.target.value));
         });
 
+        // ── Google Backend selector ──
+        const googleBackendSelect = document.getElementById('select-google-backend');
+        if (googleBackendSelect) {
+            googleBackendSelect.addEventListener('change', async (e) => {
+                const isVertex = e.target.value === 'vertex_ai';
+                const vertexConfig = document.getElementById('google-vertex-config');
+                if (vertexConfig) vertexConfig.style.display = isVertex ? '' : 'none';
+                if (!isVertex) {
+                    await this._saveGoogleBackendConfig();
+                }
+            });
+        }
+        const btnSaveGoogleBackend = document.getElementById('btn-save-google-backend');
+        if (btnSaveGoogleBackend) {
+            btnSaveGoogleBackend.addEventListener('click', async () => {
+                await this._saveGoogleBackendConfig();
+            });
+        }
+
         document.getElementById('cb-always-on-top').addEventListener('change', (e) => {
             if (window.gmini) window.gmini.toggleAlwaysOnTop(e.target.checked);
         });
@@ -484,6 +539,30 @@ class SettingsManager {
         document.getElementById('cb-overlay').addEventListener('change', (e) => {
             if (window.gmini) window.gmini.toggleOverlay(e.target.checked);
         });
+
+        // Modo de visualizacion (chat flotante vs avatar flotante)
+        const selDisplayMode = document.getElementById('select-display-mode');
+        selDisplayMode?.addEventListener('change', async (e) => {
+            const mode = e.target.value === 'skin' ? 'skin' : 'chat';
+            await this._saveConfigValue('character', 'mode', mode);
+            if (window.gmini && typeof window.gmini.skinSetMode === 'function') {
+                await window.gmini.skinSetMode(mode);
+            }
+        });
+
+        // Skin del avatar flotante
+        const selAvatarSkin = document.getElementById('select-avatar-skin');
+        selAvatarSkin?.addEventListener('change', async (e) => {
+            await this._saveConfigValue('character', 'skin', e.target.value);
+        });
+
+        // Tipo de personaje (3D / 2D / Sin personaje): filtra las skins disponibles
+        const selCharType = document.getElementById('select-character-type');
+        selCharType?.addEventListener('change', async (e) => {
+            await this._populateAvatarSkinOptions(null, e.target.value);
+        });
+
+        this._setupCharacterCreator();
 
         // Voice & Character settings
         const voiceSaveBtn = document.getElementById('btn-save-voice');
@@ -504,6 +583,9 @@ class SettingsManager {
         });
         this.voiceElevenlabsVoiceIdInput?.addEventListener('input', (e) => {
             this._updateVoiceDraft({ elevenlabs_voice_id: String(e.target.value || '') }, 'elevenlabs-voice-id:input');
+        });
+        this.voiceGoogleVoiceSelect?.addEventListener('change', () => {
+            this._updateVoiceDraft({ google_voice: this.voiceGoogleVoiceSelect.value || 'Kore' }, 'google-voice:change');
         });
         document.getElementById('cb-auto-tts')?.addEventListener('change', (e) => {
             this._updateVoiceDraft({ auto_tts: !!e.target.checked }, 'auto-tts:change');
@@ -560,12 +642,17 @@ class SettingsManager {
         // Cargar catálogo de modelos desde backend y luego sincronizar config
         setTimeout(async () => {
             await this._loadModelsCatalog();
+            // Fire CU config load independently so it doesn't depend on full sync chain
+            this._loadComputerUseConfig().catch(e => console.warn('CU config preload failed:', e));
             await this._syncFromBackend();
         }, 1500);
     }
 
     toggle() { this.panel.classList.toggle('hidden'); }
-    show()   { this.panel.classList.remove('hidden'); }
+    show()   {
+        this.panel.classList.remove('hidden');
+        this._loadComputerUseConfig().catch(() => {});
+    }
     hide()   { this.panel.classList.add('hidden'); }
 
     _switchPage(pageId) {
@@ -593,7 +680,7 @@ class SettingsManager {
         allModels.forEach((m) => {
             const opt = document.createElement('option');
             opt.value = m;
-            // Los modelos Live-only se marcan con "(Live)" — solo funcionan con el botón 📞
+            // Los modelos Live-only se marcan con "(Live)" — solo funcionan con el boton de voz RT
             const isLive = isDict && raw[m]?.api_method === 'live';
             opt.textContent = isLive ? `${m}  (Live)` : m;
             if (isLive) opt.style.color = '#7c3aed';  // morado para distinguirlos
@@ -622,7 +709,7 @@ class SettingsManager {
         if (hint) {
             hint.style.display = isLive ? '' : 'none';
             hint.textContent = isLive
-                ? '📞 Modelo Live API — solo funciona con el botón de voz en tiempo real (📞). No usa el chat de texto.'
+                ? 'Modelo Live API — solo funciona con el boton de voz en tiempo real. No usa el chat de texto.'
                 : '';
         }
     }
@@ -638,7 +725,7 @@ class SettingsManager {
                 <div class="api-key-input-group">
                     <input type="password" class="api-key-input" data-provider="${provider}" 
                            placeholder="sk-... o clave API" autocomplete="off">
-                    <button class="btn-toggle-key" data-provider="${provider}" title="Mostrar/ocultar">👁</button>
+                    <button class="btn-toggle-key" data-provider="${provider}" title="Mostrar/ocultar"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
                 </div>
                 <span class="api-key-status" id="key-status-${provider}">—</span>
                 <button class="btn-save-key" data-provider="${provider}">Guardar</button>
@@ -653,7 +740,9 @@ class SettingsManager {
                 const input = this.keysContainer.querySelector(`input[data-provider="${prov}"]`);
                 if (input) {
                     input.type = input.type === 'password' ? 'text' : 'password';
-                    e.currentTarget.textContent = input.type === 'password' ? '👁' : '🙈';
+                    e.currentTarget.innerHTML = input.type === 'password'
+                        ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'
+                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
                 }
             });
         });
@@ -741,6 +830,7 @@ class SettingsManager {
         return {
             tts_primary: String(source.tts_primary ?? fallbackSettings.tts_primary ?? 'melotts') || 'melotts',
             tts_speed: Number.isFinite(normalizedSpeed) ? normalizedSpeed : 1.0,
+            google_voice: String(source.google_voice ?? fallbackSettings.google_voice ?? 'Kore') || 'Kore',
             elevenlabs_voice_id: String(
                 source.elevenlabs_voice_id ?? fallbackSettings.elevenlabs_voice_id ?? '',
             ),
@@ -761,6 +851,7 @@ class SettingsManager {
         return this._normalizeVoiceDraft({
             tts_primary: this.voiceTtsSelect?.value || this.voiceDraft?.tts_primary || fallback.tts_primary,
             tts_speed: Number.isFinite(sliderValue) ? sliderValue : fallback.tts_speed,
+            google_voice: this.voiceGoogleVoiceSelect?.value || this.voiceDraft?.google_voice || fallback.google_voice,
             elevenlabs_voice_id: this.voiceElevenlabsVoiceIdInput?.value ?? this.voiceDraft?.elevenlabs_voice_id ?? fallback.elevenlabs_voice_id,
             auto_tts: document.getElementById('cb-auto-tts')?.checked ?? this.voiceDraft?.auto_tts ?? fallback.auto_tts,
             enabled: document.getElementById('cb-voice-enabled')?.checked ?? this.voiceDraft?.enabled ?? fallback.enabled,
@@ -782,7 +873,7 @@ class SettingsManager {
         if (!draft || !persisted) return false;
         const normalizedDraft = this._normalizeVoiceDraft(draft);
         const normalizedPersisted = this._normalizeVoiceDraft(persisted);
-        return ['tts_primary', 'elevenlabs_voice_id', 'auto_tts', 'enabled'].some(
+        return ['tts_primary', 'google_voice', 'elevenlabs_voice_id', 'auto_tts', 'enabled'].some(
             (key) => normalizedDraft[key] !== normalizedPersisted[key],
         ) || Math.abs(normalizedDraft.tts_speed - normalizedPersisted.tts_speed) > 0.0001;
     }
@@ -813,6 +904,12 @@ class SettingsManager {
         }
         if (this.voiceElevenlabsVoiceIdInput) {
             this.voiceElevenlabsVoiceIdInput.value = draft.elevenlabs_voice_id || '';
+        }
+        if (this.voiceGoogleVoiceSelect) {
+            const hasOption = Array.from(this.voiceGoogleVoiceSelect.options || []).some(
+                (o) => o.value === draft.google_voice,
+            );
+            if (hasOption) this.voiceGoogleVoiceSelect.value = draft.google_voice;
         }
         if (this.voiceSpeedSlider) {
             this.voiceSpeedSlider.value = String(draft.tts_speed ?? 1.0);
@@ -926,6 +1023,17 @@ class SettingsManager {
         this.voiceTtsSelect.value = engines.some((engine) => engine.id === selectedEngine)
             ? selectedEngine
             : engines[0].id;
+
+        // Poblar selector de voces Google desde el metadata
+        if (this.voiceGoogleVoiceSelect && Array.isArray(this.voiceMetadata?.google_voices)) {
+            const currentVal = this.voiceDraft?.google_voice || 'Kore';
+            this.voiceGoogleVoiceSelect.innerHTML = '';
+            this.voiceMetadata.google_voices.forEach(({ id, description }) => {
+                const opt = new Option(`${id}${description ? ` — ${description}` : ''}`, id);
+                this.voiceGoogleVoiceSelect.appendChild(opt);
+            });
+            this.voiceGoogleVoiceSelect.value = currentVal;
+        }
         this._voiceDebug('render:tts-options', {
             selectedEngine,
             domValue: this.voiceTtsSelect.value,
@@ -978,19 +1086,24 @@ class SettingsManager {
         if (this.voiceGoogleConfig) {
             this.voiceGoogleConfig.classList.toggle('hidden', provider !== 'google');
         }
+        if (this.voiceGoogleVoiceConfig) {
+            this.voiceGoogleVoiceConfig.classList.toggle('hidden', provider !== 'google');
+        }
         if (this.voiceElevenlabsConfig) {
             this.voiceElevenlabsConfig.classList.toggle('hidden', selectedEngine !== 'elevenlabs');
         }
 
+        // El slider de velocidad solo aplica a motores que lo soportan
+        const speedGroup = this.voiceSpeedSlider?.closest('.setting-group');
+        if (speedGroup) {
+            speedGroup.classList.toggle('hidden', !supportsNumericSpeed);
+        }
         if (this.voiceSpeedSlider) {
             this.voiceSpeedSlider.disabled = !supportsNumericSpeed;
         }
         if (this.voiceSpeedHelp) {
-            const showSpeedHelp = provider === 'google';
-            this.voiceSpeedHelp.classList.toggle('hidden', !showSpeedHelp);
-            this.voiceSpeedHelp.textContent = showSpeedHelp
-                ? 'Google Gemini TTS no expone una velocidad numerica fija. El slider no aplica para estos modelos.'
-                : '';
+            this.voiceSpeedHelp.classList.add('hidden');
+            this.voiceSpeedHelp.textContent = '';
         }
 
         this.voiceDraftDirty = this._hasVoicePendingChanges();
@@ -1212,6 +1325,8 @@ class SettingsManager {
         } catch (err) {
             // Backend no listo
         }
+        await this._syncGoogleBackendConfig();
+        await this._syncMonitors();
         try {
             const resp = await fetch(`${BACKEND_API}/config/agent`);
             if (resp.ok) {
@@ -1296,6 +1411,9 @@ class SettingsManager {
                 this.currentMcpServers = Array.isArray(mcpConfig.servers) ? mcpConfig.servers : [];
                 if (this.mcpEnabledCheckbox) {
                     this.mcpEnabledCheckbox.checked = !!mcpConfig.enabled;
+                }
+                if (this.mcpIntegrationModeSelect) {
+                    this.mcpIntegrationModeSelect.value = mcpConfig.integration_mode || 'preloaded';
                 }
                 this._renderMcpServers();
             }
@@ -1523,7 +1641,13 @@ class SettingsManager {
             if (charResp.ok) {
                 const cd = (await charResp.json())?.data?.character || {};
                 const selChar = document.getElementById('select-character-type');
-                if (selChar) selChar.value = cd.type || '2d';
+                let charType = String(cd.type || '3d');
+                if (cd.skin === 'energy-ball' && charType === '2d') charType = '3d';
+                if (!['3d', '2d', 'none'].includes(charType)) charType = '3d';
+                if (selChar) selChar.value = charType;
+                const selMode = document.getElementById('select-display-mode');
+                if (selMode) selMode.value = cd.mode === 'skin' ? 'skin' : 'chat';
+                await this._populateAvatarSkinOptions(cd.skin || 'energy-ball', charType);
             }
         } catch (err) {
             // Backend no listo
@@ -1539,6 +1663,7 @@ class SettingsManager {
         if (this.currentPage) this._switchPage(this.currentPage);
         // Sync model assignments + crews
         await this._syncModelAssignments();
+        await this._loadComputerUseConfig();
         await this._syncCrews();
         this._toggleBudgetFields();
     }
@@ -2152,23 +2277,196 @@ class SettingsManager {
         this._renderAppBehaviorMeta('Modo 24/7 actualizado.');
     }
 
+    async _populateAvatarSkinOptions(selectedSkin, charType) {
+        const select = document.getElementById('select-avatar-skin');
+        if (!select) return;
+        const group = charType === '2d' ? '2d' : (charType === 'none' ? 'none' : '3d');
+        let skins = [{ id: 'energy-ball', name: 'Bola de energia', group: '3d' }];
+        try {
+            if (window.gmini && typeof window.gmini.skinList === 'function') {
+                const list = await window.gmini.skinList();
+                if (Array.isArray(list) && list.length) skins = list;
+            }
+        } catch (err) {
+            // Si IPC no esta disponible, mantenemos la opcion por defecto
+        }
+        const filtered = group === 'none' ? [] : skins.filter((s) => s.group === group);
+        select.innerHTML = '';
+        for (const skin of filtered) {
+            const option = document.createElement('option');
+            option.value = skin.id;
+            option.textContent = skin.name || skin.id;
+            select.appendChild(option);
+        }
+        if (selectedSkin && filtered.some((s) => s.id === selectedSkin)) {
+            select.value = selectedSkin;
+        }
+        select.disabled = group === 'none';
+        select.closest('.setting-group')?.classList.toggle('disabled-group', group === 'none');
+    }
+
+    _setupCharacterCreator() {
+        const btnToggle = document.getElementById('btn-toggle-new-character');
+        const form = document.getElementById('new-character-form');
+        const typeSelect = document.getElementById('select-new-character-type');
+        const pane3d = document.getElementById('new-character-3d-pane');
+        const pane2d = document.getElementById('new-character-2d-pane');
+        const btnToggleEmotions = document.getElementById('btn-toggle-character-emotions');
+        const emotionsPane = document.getElementById('new-character-emotions-pane');
+        const nameInput = document.getElementById('input-new-character-name');
+        const btnCreate = document.getElementById('btn-create-character');
+        const btnCancel = document.getElementById('btn-cancel-new-character');
+        const statusEl = document.getElementById('new-character-status');
+        const btnPickModel = document.getElementById('btn-pick-character-model');
+        const modelInput = document.getElementById('input-character-model');
+        if (!btnToggle || !form) return;
+
+        const basename = (p) => String(p || '').split(/[\\/]/).pop();
+
+        const resetCreatorForm = () => {
+            this.newCharacterDraft = { model: '', sprites: {} };
+            if (nameInput) nameInput.value = '';
+            if (typeSelect) typeSelect.value = '3d';
+            if (modelInput) modelInput.value = '';
+            form.querySelectorAll('#new-character-2d-pane input.setting-input').forEach((inp) => { inp.value = ''; });
+            pane3d?.classList.remove('hidden');
+            pane2d?.classList.add('hidden');
+            emotionsPane?.classList.add('hidden');
+            if (statusEl) statusEl.textContent = '';
+        };
+        resetCreatorForm();
+
+        btnToggle.addEventListener('click', () => {
+            const willShow = form.classList.contains('hidden');
+            if (willShow) resetCreatorForm();
+            form.classList.toggle('hidden', !willShow);
+        });
+
+        btnCancel?.addEventListener('click', () => {
+            form.classList.add('hidden');
+            resetCreatorForm();
+        });
+
+        typeSelect?.addEventListener('change', (e) => {
+            const is2d = e.target.value === '2d';
+            pane3d?.classList.toggle('hidden', is2d);
+            pane2d?.classList.toggle('hidden', !is2d);
+        });
+
+        btnToggleEmotions?.addEventListener('click', () => {
+            emotionsPane?.classList.toggle('hidden');
+        });
+
+        btnPickModel?.addEventListener('click', async () => {
+            if (!window.gmini?.skinPickFile) return;
+            const filePath = await window.gmini.skinPickFile('model');
+            if (!filePath) return;
+            this.newCharacterDraft.model = filePath;
+            if (modelInput) modelInput.value = basename(filePath);
+        });
+
+        form.querySelectorAll('.btn-pick-sprite').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                if (!window.gmini?.skinPickFile) return;
+                const key = btn.dataset.sprite;
+                const filePath = await window.gmini.skinPickFile('sprite');
+                if (!filePath) return;
+                this.newCharacterDraft.sprites[key] = filePath;
+                const input = document.getElementById(`input-sprite-${key}`);
+                if (input) input.value = basename(filePath);
+            });
+        });
+
+        btnCreate?.addEventListener('click', async () => {
+            const name = nameInput?.value.trim() || '';
+            const type = typeSelect?.value === '2d' ? '2d' : '3d';
+            if (statusEl) statusEl.textContent = '';
+
+            if (!name) {
+                if (statusEl) statusEl.textContent = 'Ingresa un nombre para el personaje.';
+                return;
+            }
+
+            const payload = { name, group: type };
+            if (type === '3d') {
+                if (!this.newCharacterDraft.model) {
+                    if (statusEl) statusEl.textContent = 'Selecciona un archivo de modelo (.vrm o .glb).';
+                    return;
+                }
+                payload.model = this.newCharacterDraft.model;
+            } else {
+                const required = ['idle', 'talk', 'blink', 'blink_talk'];
+                const missing = required.filter((k) => !this.newCharacterDraft.sprites[k]);
+                if (missing.length) {
+                    if (statusEl) statusEl.textContent = `Faltan sprites obligatorios: ${missing.join(', ')}.`;
+                    return;
+                }
+                const sprites = {};
+                for (const k of required) sprites[k] = this.newCharacterDraft.sprites[k];
+                const emotions = {};
+                for (const k of ['happy', 'sad', 'angry', 'surprised', 'relaxed']) {
+                    if (this.newCharacterDraft.sprites[k]) emotions[k] = this.newCharacterDraft.sprites[k];
+                }
+                if (Object.keys(emotions).length) sprites.emotions = emotions;
+                payload.sprites = sprites;
+            }
+
+            btnCreate.disabled = true;
+            if (statusEl) statusEl.textContent = 'Creando personaje...';
+            try {
+                const result = await window.gmini.skinCreate(payload);
+                if (!result?.ok) {
+                    const messages = {
+                        'invalid-group': 'Tipo invalido.',
+                        'invalid-name': 'Nombre invalido.',
+                        'duplicate': 'Ya existe un personaje con ese nombre.',
+                        'missing-model': 'Falta el archivo de modelo.',
+                        'missing-sprites': 'Faltan sprites obligatorios.',
+                        'copy-failed': 'Error al copiar los archivos.',
+                    };
+                    if (statusEl) statusEl.textContent = messages[result?.error] || 'No se pudo crear el personaje.';
+                    return;
+                }
+
+                const selCharType = document.getElementById('select-character-type');
+                if (selCharType) selCharType.value = type;
+                await this._populateAvatarSkinOptions(result.skin?.id, type);
+                await this._saveConfigValue('character', 'type', type);
+                if (result.skin?.id) {
+                    await this._saveConfigValue('character', 'skin', result.skin.id);
+                }
+
+                form.classList.add('hidden');
+                resetCreatorForm();
+            } catch (err) {
+                if (statusEl) statusEl.textContent = 'No se pudo crear el personaje.';
+            } finally {
+                btnCreate.disabled = false;
+            }
+        });
+    }
+
     async _saveVoiceCharacterSettings() {
         const voiceDraft = this._readVoiceDraftFromControls();
         this.voiceDraft = voiceDraft;
         this.voiceDraftDirty = this._hasVoicePendingChanges();
         const ttsEngine = voiceDraft.tts_primary || 'melotts';
         const elevenVoiceId = voiceDraft.elevenlabs_voice_id || '';
+        const googleVoice = voiceDraft.google_voice || 'Kore';
         const ttsSpeed = voiceDraft.tts_speed;
-        const charType = document.getElementById('select-character-type')?.value || '2d';
+        const charType = document.getElementById('select-character-type')?.value || '3d';
+        const charSkin = document.getElementById('select-avatar-skin')?.value || 'energy-ball';
         const autoTts = !!voiceDraft.auto_tts;
         const voiceEnabled = !!voiceDraft.enabled;
         const debugPayload = {
             tts_primary: ttsEngine,
             elevenlabs_voice_id: elevenVoiceId,
+            google_voice: googleVoice,
             tts_speed: ttsSpeed,
             auto_tts: autoTts,
             enabled: voiceEnabled,
             character_type: charType,
+            character_skin: charSkin,
         };
         this._voiceDebug('voice-settings:save:start', {
             payload: debugPayload,
@@ -2180,10 +2478,12 @@ class SettingsManager {
         const ops = [
             ['voice', 'tts_primary', ttsEngine],
             ['voice', 'elevenlabs_voice_id', elevenVoiceId],
+            ['voice', 'google_voice', googleVoice],
             ['voice', 'tts_speed', ttsSpeed],
             ['voice', 'auto_tts', autoTts],
             ['voice', 'enabled', voiceEnabled],
             ['character', 'type', charType],
+            ['character', 'skin', charSkin],
         ];
 
         let allOk = true;
@@ -2618,8 +2918,154 @@ class SettingsManager {
     _applyModelChange() {
         ws.sendConfig('model_router', 'default_model', this.currentModel);
         this.updateModelLabel();
-        // Actualizar botón RT al cambiar modelo (puede cambiar de 📞 a 🎙️ o viceversa)
         ws.checkRealtimeAvailable(this.currentProvider, this.currentModel);
+    }
+
+    _toggleGoogleBackendGroup() {
+        const group = document.getElementById('google-backend-group');
+        if (group) {
+            group.style.display = this.currentProvider === 'google' ? '' : 'none';
+        }
+    }
+
+    async _syncGoogleBackendConfig() {
+        try {
+            const resp = await fetch(`${BACKEND_API}/providers/google/backend`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+
+            const backendSelect = document.getElementById('select-google-backend');
+            const projectInput = document.getElementById('input-google-project-id');
+            const locationSelect = document.getElementById('select-google-location');
+            const credentialsInput = document.getElementById('input-google-credentials-file');
+            const vertexConfig = document.getElementById('google-vertex-config');
+            const statusEl = document.getElementById('google-backend-status');
+
+            if (backendSelect) backendSelect.value = data.backend || 'ai_studio';
+            if (projectInput) projectInput.value = data.project_id || '';
+            if (locationSelect) locationSelect.value = data.location || 'us-central1';
+            if (credentialsInput) credentialsInput.value = data.credentials_file || '';
+            if (vertexConfig) vertexConfig.style.display = data.backend === 'vertex_ai' ? '' : 'none';
+
+            if (statusEl) {
+                if (data.backend === 'vertex_ai') {
+                    statusEl.textContent = data.project_id
+                        ? `Vertex AI: ${data.project_id} (${data.location})`
+                        : 'Vertex AI: falta Project ID';
+                    statusEl.className = data.project_id ? 'api-key-status set' : 'api-key-status unset';
+                } else {
+                    statusEl.textContent = 'AI Studio (API Key)';
+                    statusEl.className = 'api-key-status';
+                }
+            }
+
+            this._toggleGoogleBackendGroup();
+        } catch (err) {
+            // Backend not ready
+        }
+    }
+
+    async _saveGoogleBackendConfig() {
+        const backendSelect = document.getElementById('select-google-backend');
+        const projectInput = document.getElementById('input-google-project-id');
+        const locationSelect = document.getElementById('select-google-location');
+        const credentialsInput = document.getElementById('input-google-credentials-file');
+        const statusEl = document.getElementById('google-backend-status');
+        const saveBtn = document.getElementById('btn-save-google-backend');
+
+        const payload = {
+            backend: backendSelect?.value || 'ai_studio',
+            project_id: projectInput?.value?.trim() || '',
+            location: locationSelect?.value || 'us-central1',
+            credentials_file: credentialsInput?.value?.trim() || '',
+        };
+
+        try {
+            if (saveBtn) {
+                saveBtn.disabled = true;
+                saveBtn.textContent = 'Conectando...';
+            }
+
+            const resp = await fetch(`${BACKEND_API}/providers/google/backend`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await resp.json();
+
+            if (statusEl) {
+                if (data.success) {
+                    if (data.backend === 'vertex_ai') {
+                        statusEl.textContent = `Vertex AI conectado: ${data.project_id} (${data.location})`;
+                    } else {
+                        statusEl.textContent = 'AI Studio (API Key) configurado';
+                    }
+                    statusEl.className = 'api-key-status set';
+                } else {
+                    statusEl.textContent = `Error: ${data.error || 'desconocido'}`;
+                    statusEl.className = 'api-key-status error';
+                }
+            }
+        } catch (err) {
+            if (statusEl) {
+                statusEl.textContent = `Error de red: ${err.message}`;
+                statusEl.className = 'api-key-status error';
+            }
+        } finally {
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Guardar y conectar';
+            }
+        }
+    }
+
+    async _syncMonitors() {
+        const select = document.getElementById('select-target-monitor');
+        const meta = document.getElementById('monitor-meta');
+        if (!select) return;
+        try {
+            const resp = await fetch(`${BACKEND_API}/monitors`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const monitors = data.monitors || [];
+            const target = data.target_monitor || 0;
+
+            select.innerHTML = '<option value="0">Todos los monitores (combinado)</option>';
+            monitors.forEach((m) => {
+                const opt = document.createElement('option');
+                opt.value = String(m.index);
+                opt.textContent = `Monitor ${m.index}${m.primary ? ' (principal)' : ''} — ${m.width}x${m.height}`;
+                select.appendChild(opt);
+            });
+            select.value = String(target);
+
+            if (meta) {
+                meta.textContent = monitors.length > 0
+                    ? `${monitors.length} monitor(es) detectados. Activo: ${target === 0 ? 'todos' : 'monitor ' + target}.`
+                    : 'No se detectaron monitores.';
+            }
+        } catch (err) {
+            if (meta) meta.textContent = 'Error detectando monitores.';
+        }
+    }
+
+    async _saveTargetMonitor(monitor) {
+        const meta = document.getElementById('monitor-meta');
+        try {
+            const resp = await fetch(`${BACKEND_API}/monitors/target`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ monitor }),
+            });
+            const data = await resp.json();
+            if (meta) {
+                meta.textContent = data.success
+                    ? `Monitor objetivo cambiado a: ${monitor === 0 ? 'todos' : 'monitor ' + monitor}`
+                    : 'Error guardando monitor.';
+            }
+        } catch (err) {
+            if (meta) meta.textContent = 'Error de conexion.';
+        }
     }
 
     updateModelLabel() {
@@ -2916,6 +3362,7 @@ class SettingsManager {
             { key: 'creatividad', label: 'Creatividad' },
             { key: 'matematicas', label: 'Matemáticas' },
             { key: 'sin_censura', label: 'Sin Censura' },
+            { key: 'computer_use', label: 'Computer Use (UI)' },
             { key: 'analisis', label: 'Análisis' },
             { key: 'general', label: 'General' },
         ];
@@ -2997,6 +3444,79 @@ class SettingsManager {
         if (this.modelAssignmentsMeta) {
             const configured = Object.entries(assignments).filter(([, v]) => v).length;
             this.modelAssignmentsMeta.textContent = `Asignaciones guardadas. ${configured} tipo(s) con modelo específico.`;
+        }
+    }
+
+    // ── Computer Use Config ─────────────────────────────────
+    async _loadComputerUseConfig() {
+        try {
+            const resp = await fetch(`${BACKEND_API}/config`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const cu = data?.data?.computer_use || data?.computer_use || {};
+            const cbEnabled = document.getElementById('cb-computer-use-enabled');
+            const selProvider = document.getElementById('select-computer-use-provider');
+            const inputMaxIter = document.getElementById('input-computer-use-max-iter');
+            const inputTimeout = document.getElementById('input-computer-use-timeout');
+            const inputDelay = document.getElementById('input-computer-use-delay');
+            if (cbEnabled) cbEnabled.checked = cu.enabled !== false;
+            const provider = String(cu.provider || 'google').toLowerCase();
+            if (selProvider) {
+                selProvider.innerHTML = '';
+                for (const p of Object.keys(COMPUTER_USE_MODELS)) {
+                    const opt = document.createElement('option');
+                    opt.value = p;
+                    opt.textContent = COMPUTER_USE_PROVIDER_LABELS[p] || p;
+                    if (p === provider) opt.selected = true;
+                    selProvider.appendChild(opt);
+                }
+                selProvider.onchange = () => this._populateComputerUseModels(selProvider.value, '');
+            }
+            this._populateComputerUseModels(provider, cu.model || '');
+            if (inputMaxIter && cu.max_iterations) inputMaxIter.value = cu.max_iterations;
+            if (inputTimeout && cu.timeout_seconds) inputTimeout.value = cu.timeout_seconds;
+            if (inputDelay && cu.stabilization_delay_seconds) inputDelay.value = cu.stabilization_delay_seconds;
+        } catch (err) {
+            console.warn('No se pudo cargar config computer_use:', err);
+        }
+    }
+
+    _populateComputerUseModels(provider, selected) {
+        const selModel = document.getElementById('select-computer-use-model');
+        if (!selModel) return;
+        selModel.innerHTML = '';
+        const models = [...(COMPUTER_USE_MODELS[provider] || [])];
+        if (selected && !models.includes(selected)) models.unshift(selected);
+        for (const m of models) {
+            const opt = document.createElement('option');
+            opt.value = m;
+            opt.textContent = m;
+            if (m === selected) opt.selected = true;
+            selModel.appendChild(opt);
+        }
+        if (!selModel.value && selModel.options.length) selModel.selectedIndex = 0;
+    }
+
+    async _saveComputerUseConfig() {
+        const enabled = document.getElementById('cb-computer-use-enabled')?.checked ?? true;
+        const provider = document.getElementById('select-computer-use-provider')?.value || 'google';
+        const model = document.getElementById('select-computer-use-model')?.value || 'gemini-2.5-computer-use-preview-10-2025';
+        const maxIter = parseInt(document.getElementById('input-computer-use-max-iter')?.value || '30', 10);
+        const timeout = parseInt(document.getElementById('input-computer-use-timeout')?.value || '180', 10);
+        const delay = parseFloat(document.getElementById('input-computer-use-delay')?.value || '3');
+
+        await this._saveConfigValue('computer_use', 'enabled', enabled);
+        await this._saveConfigValue('computer_use', 'provider', provider);
+        await this._saveConfigValue('computer_use', 'model', model);
+        await this._saveConfigValue('computer_use', 'max_iterations', maxIter);
+        await this._saveConfigValue('computer_use', 'timeout_seconds', timeout);
+        await this._saveConfigValue('computer_use', 'stabilization_delay_seconds', delay);
+
+        const btn = document.getElementById('btn-save-computer-use');
+        if (btn) {
+            const orig = btn.textContent;
+            btn.textContent = 'Guardado ✓';
+            setTimeout(() => { btn.textContent = orig; }, 2000);
         }
     }
 

@@ -63,6 +63,10 @@ CORE_PROMPT_SPECS: dict[str, dict[str, str]] = {
         "label": "Sub-Agent Executor System",
         "default_file": "data/prompts/subagent_executor_system.md",
     },
+    "computer_use_system": {
+        "label": "Computer Use Sub-Agent System",
+        "default_file": "data/prompts/computer_use_system.md",
+    },
     "subagent_worker_user": {
         "label": "Sub-Agent Worker User",
         "default_file": "data/prompts/subagent_worker_user.md",

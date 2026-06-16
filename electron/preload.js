@@ -9,6 +9,9 @@ contextBridge.exposeInMainWorld('gmini', {
     // Backend URL
     getBackendUrl: () => ipcRenderer.invoke('get-backend-url'),
 
+    // Guardar media generada (imagen/video/audio) en carpeta a eleccion del usuario
+    saveMediaAs: (url, filename) => ipcRenderer.invoke('save-media-as', url, filename),
+
     // Window controls
     minimize: () => ipcRenderer.invoke('minimize-window'),
     close: () => ipcRenderer.invoke('close-window'),
@@ -35,6 +38,43 @@ contextBridge.exposeInMainWorld('gmini', {
     },
     onOverlayCharacterRuntime: (callback) => {
         ipcRenderer.on('overlay-character-runtime', (_, payload) => callback(payload));
+    },
+
+    // Skin (avatar flotante)
+    skinSetMode: (mode) => ipcRenderer.invoke('skin:set-mode', mode),
+    skinGetState: () => ipcRenderer.invoke('skin:get-state'),
+    skinList: () => ipcRenderer.invoke('skin:list'),
+    skinPickFile: (kind) => ipcRenderer.invoke('skin:pick-file', kind),
+    skinCreate: (payload) => ipcRenderer.invoke('skin:create', payload),
+    skinSetInteractive: (interactive) => ipcRenderer.invoke('skin:set-interactive', interactive),
+    skinMoveBy: (dx, dy) => ipcRenderer.invoke('skin:move-by', dx, dy),
+    skinResizeBy: (delta) => ipcRenderer.invoke('skin:resize-by', delta),
+    skinSetBounds: (bounds) => ipcRenderer.invoke('skin:set-bounds', bounds),
+    skinMinimize: () => ipcRenderer.invoke('skin:minimize'),
+    onSkinState: (callback) => {
+        ipcRenderer.on('skin-state', (_, state) => callback(state));
+    },
+
+    // Skin: mini-chat burbuja
+    skinChatOpen: () => ipcRenderer.invoke('skin:chat-open'),
+    skinChatClose: () => ipcRenderer.invoke('skin:chat-close'),
+    skinChatSend: (text) => ipcRenderer.invoke('skin:chat-send', text),
+    skinChatRelay: (payload) => ipcRenderer.invoke('skin:chat-relay', payload),
+    onSkinChatSend: (callback) => {
+        ipcRenderer.on('skin-chat-send', (_, text) => callback(text));
+    },
+    onSkinChatRelay: (callback) => {
+        ipcRenderer.on('skin-chat-relay', (_, payload) => callback(payload));
+    },
+
+    // Skin: boton mic (proxy hacia voz en tiempo real de mainWindow)
+    skinVoiceToggle: () => ipcRenderer.invoke('skin:voice-toggle'),
+    skinVoiceState: (payload) => ipcRenderer.invoke('skin:voice-state', payload),
+    onSkinVoiceToggle: (callback) => {
+        ipcRenderer.on('skin-voice-toggle', () => callback());
+    },
+    onSkinVoiceState: (callback) => {
+        ipcRenderer.on('skin-voice-state', (_, payload) => callback(payload));
     },
 
     // Window transparency & effects

@@ -17,6 +17,7 @@ from pathlib import Path
 from loguru import logger
 
 from backend.config import config
+from backend.core.avatar_context import build_avatar_context
 
 try:
     import websockets
@@ -98,7 +99,19 @@ class RealTimeVoice:
     def resolve_rt_provider(text_provider: str) -> str | None:
         """Dado el provider de texto actual, retorna el provider RT correspondiente o None."""
         if text_provider in RealTimeVoice.get_realtime_providers():
-            api_key_map = {"openai": "openai_api", "google": "google_api", "xai": "xai_api"}
+            # Vertex AI backend doesn't need an API key — uses ADC
+            if text_provider == "google":
+                backend = config.get("providers", "google", "backend", default="ai_studio")
+                if backend == "vertex_ai":
+                    project_id = config.get("providers", "google", "project_id", default="")
+                    if project_id:
+                        return text_provider
+                else:
+                    if config.get_api_key("google_api"):
+                        return text_provider
+                return None
+
+            api_key_map = {"openai": "openai_api", "xai": "xai_api"}
             key_name = api_key_map.get(text_provider)
             if key_name and config.get_api_key(key_name):
                 return text_provider
@@ -106,10 +119,19 @@ class RealTimeVoice:
 
     @staticmethod
     def get_rt_capabilities() -> dict:
-        """Retorna qué providers RT están disponibles (tienen API key)."""
+        """Retorna qué providers RT están disponibles (tienen credenciales)."""
         available = {}
-        key_map = {"openai": "openai_api", "google": "google_api", "xai": "xai_api"}
+        key_map = {"openai": "openai_api", "xai": "xai_api"}
         for prov, info in RealTimeVoice.get_realtime_providers().items():
+            if prov == "google":
+                backend = config.get("providers", "google", "backend", default="ai_studio")
+                if backend == "vertex_ai":
+                    if config.get("providers", "google", "project_id", default=""):
+                        available[prov] = info["default"]
+                elif config.get_api_key("google_api"):
+                    available[prov] = info["default"]
+                continue
+
             key_name = key_map.get(prov)
             if key_name and config.get_api_key(key_name):
                 available[prov] = info["default"]
@@ -132,50 +154,57 @@ class RealTimeVoice:
             {
                 "name": "screenshot",
                 "description": (
-                    "Toma una captura de pantalla del PC y analiza visualmente qué hay en la pantalla usando detección de UI (OmniParser). "
-                    "IMPORTANTE: Esta es tu ÚNICA forma de saber qué hay en la pantalla. Sin ella NO puedes saber dónde hacer click. "
-                    "Úsala SIEMPRE antes de interactuar con la pantalla (click, type, scroll). "
-                    "Toma ~30 segundos. Devuelve los elementos detectados con sus coordenadas."
+                    "Captura la pantalla completa del PC (1440x900). "
+                    "Devuelve la imagen como frame de video + texto OCR de la pantalla. "
+                    "El cursor del mouse aparece como un punto rojo con cruz en la imagen. "
+                    "OBLIGATORIO: úsala SIEMPRE antes de click/type/scroll. "
+                    "Analiza la imagen recibida para identificar elementos y sus coordenadas EXACTAS en píxeles. "
+                    "NUNCA hagas click sin haber tomado screenshot primero."
                 ),
             },
             {
-                "name": "click",
+                "name": "delegate_computer_use",
                 "description": (
-                    "Hace click izquierdo en una posición de la pantalla del PC. "
-                    "REQUIERE haber usado screenshot primero para conocer las coordenadas exactas de los elementos."
+                    "Delega una tarea de interacción de escritorio al sub-agente de computer use, que la ejecuta "
+                    "de forma autónoma (clicks, escritura, teclas, scroll, arrastrar, abrir/operar ventanas y apps). "
+                    "TÚ eres el coordinador: NO haces clicks ni escribes directamente. Describe la tarea COMPLETA en "
+                    "lenguaje natural (app exacta, textos a escribir literalmente, botones a presionar, pasos). "
+                    "Ejemplo: task=\"Abrir el Bloc de notas desde el menú inicio y escribir 'Hola mundo'\". "
+                    "Si la tarea está en otro monitor, indícalo en 'monitor'. Tras delegar recibirás una captura de verificación. "
+                    "Toma screenshot primero para decidir QUÉ delegar y en qué monitor."
                 ),
                 "parameters": {
                     "type": "OBJECT",
                     "properties": {
-                        "x": {"type": "INTEGER", "description": "Coordenada X en píxeles (obtenida de screenshot)"},
-                        "y": {"type": "INTEGER", "description": "Coordenada Y en píxeles (obtenida de screenshot)"},
+                        "task": {"type": "STRING", "description": "Descripción clara y completa de la interacción de UI a realizar"},
+                        "monitor": {"type": "INTEGER", "description": "Monitor objetivo: 0=actual/predeterminado, 1=primario, 2=secundario"},
                     },
-                    "required": ["x", "y"],
+                    "required": ["task"],
                 },
             },
             {
-                "name": "type",
+                "name": "set_emotion",
                 "description": (
-                    "Escribe texto en el campo de texto activo de la pantalla. "
-                    "Primero haz click en el campo donde quieres escribir, luego usa type."
+                    "Cambia la expresión facial y corporal de TU PROPIO avatar en pantalla "
+                    "(sonreír, entristecerte, sorprenderte, etc.). Tu cara es interna, NO un "
+                    "botón ni una ventana: NUNCA uses delegate_computer_use, screenshot ni clicks "
+                    "para cambiar tu expresión. Llama a esta herramienta cuando el usuario te pida "
+                    "sonreír o mostrar una emoción, o cuando sea natural acompañar tu respuesta con "
+                    "una expresión (con moderación). La expresión se desvanece sola hacia neutral. "
+                    "Es INSTANTÁNEA: llamarla es TODO lo que hace falta — NO tomes screenshot ni "
+                    "verifiques el resultado después; no hay nada que comprobar en pantalla. Tras "
+                    "set_emotion no ejecutes ninguna otra herramienta para 'confirmar' la expresión."
                 ),
                 "parameters": {
                     "type": "OBJECT",
                     "properties": {
-                        "text": {"type": "STRING", "description": "Texto a escribir"},
+                        "emotion": {
+                            "type": "STRING",
+                            "enum": ["happy", "sad", "angry", "surprised", "relaxed", "neutral"],
+                            "description": "Emoción a expresar en el avatar.",
+                        },
                     },
-                    "required": ["text"],
-                },
-            },
-            {
-                "name": "press",
-                "description": "Presiona una tecla o combinación de teclas. Ejemplos: enter, tab, escape, ctrl+c, ctrl+a, alt+f4, win.",
-                "parameters": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "key": {"type": "STRING", "description": "Tecla o combinación (ej: enter, ctrl+a, alt+tab)"},
-                    },
-                    "required": ["key"],
+                    "required": ["emotion"],
                 },
             },
             {
@@ -196,10 +225,11 @@ class RealTimeVoice:
             {
                 "name": "browser_navigate",
                 "description": (
-                    "Abre una URL en Chrome usando un backend automatizado con extensión. "
-                    "Si la extensión no está conectada, Chrome se abrirá pero quedará en modo computer_use (click/type manuales). "
-                    "Para buscar en Google: usa browser_navigate con url='https://www.google.com/search?q=tu+busqueda'. "
-                    "IMPORTANTE: Después de navegar, usa screenshot para verificar que la página cargó correctamente."
+                    "Navega a una URL en el browser. "
+                    "Intenta primero con la extensión de Chrome. Si falla, usa browser-use automáticamente. "
+                    "Para buscar en Google: url='https://www.google.com/search?q=tu+busqueda'. "
+                    "SIEMPRE usa screenshot después para verificar que la página cargó. "
+                    "Si ambos fallan, usa computer use: click barra dirección Chrome (y≈55) + hotkey ctrl+a + type URL + enter."
                 ),
                 "parameters": {
                     "type": "OBJECT",
@@ -224,17 +254,6 @@ class RealTimeVoice:
                         "command": {"type": "STRING", "description": "Comando a ejecutar en PowerShell de Windows"},
                     },
                     "required": ["command"],
-                },
-            },
-            {
-                "name": "scroll",
-                "description": "Hace scroll en la ventana activa del PC. Positivo = scroll abajo, negativo = scroll arriba.",
-                "parameters": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "clicks": {"type": "INTEGER", "description": "Cantidad de clicks de scroll (positivo=abajo, negativo=arriba, ej: 3 o -3)"},
-                    },
-                    "required": ["clicks"],
                 },
             },
             {
@@ -439,21 +458,6 @@ class RealTimeVoice:
             },
             # ── Desktop extras ─────────────────────────────────────────
             {
-                "name": "hotkey",
-                "description": (
-                    "Presiona una combinación de teclas (hotkey) en el PC. "
-                    "Ej: 'ctrl+c', 'alt+tab', 'win+d', 'ctrl+shift+esc'. "
-                    "Útil para atajos de teclado del sistema operativo."
-                ),
-                "parameters": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "keys": {"type": "STRING", "description": "Combinación de teclas separadas por + (ej: ctrl+c, alt+f4, win+l)"},
-                    },
-                    "required": ["keys"],
-                },
-            },
-            {
                 "name": "wait",
                 "description": "Espera una cantidad de segundos antes de continuar.",
                 "parameters": {
@@ -517,6 +521,26 @@ class RealTimeVoice:
                     "required": ["prompt"],
                 },
             },
+            # ── MCP (Model Context Protocol) ─────────────────────────
+            {
+                "name": "mcp_call_tool",
+                "description": (
+                    "Llama a una herramienta de un servidor MCP configurado y activo. "
+                    "Usa esta herramienta cuando el usuario pida interactuar con un servicio MCP "
+                    "(ej: Chrome DevTools, browser-tools-mcp, MCPControl, etc.). "
+                    "Los servidores disponibles y sus tools se detallan en tu contexto de sistema. "
+                    "Pasa el server_id, el nombre exacto de la tool, y los argumentos requeridos."
+                ),
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "server_id": {"type": "STRING", "description": "ID del servidor MCP (ej: 'chrome-devtools', 'browser-tools-mcp')"},
+                        "tool": {"type": "STRING", "description": "Nombre exacto de la herramienta MCP a ejecutar"},
+                        "arguments": {"type": "OBJECT", "description": "Argumentos de la herramienta MCP en formato JSON"},
+                    },
+                    "required": ["server_id", "tool"],
+                },
+            },
         ],
     }]
 
@@ -540,11 +564,13 @@ class RealTimeVoice:
         self._last_bargein_log: float = 0.0  # Timestamp del último log de barge-in (debounce)
         self._last_flushed_input: str = ""  # Último texto de usuario emitido (anti-duplicación)
         self._history_pending: bool = False  # True si hay historial pendiente de inyectar tras setupComplete
+        self._mcp_context: str = ""  # Contexto MCP inyectado externamente para el system prompt RT
         self._google_ready: bool = False  # True tras setupComplete + historial inyectado (gate para audio)
         self._screen_streaming: bool = False  # True while screen streaming is active
         self._screen_stream_task: asyncio.Task | None = None  # Task for screen capture loop
         self._reconnecting: bool = False  # True durante auto-reconexión
         self._goaway_received: bool = False  # True cuando se recibe GoAway del servidor
+        self._on_error_callback: Callable | None = None  # Errores fatales (quota, auth, modelo inválido)
 
     async def start_session(
         self,
@@ -556,6 +582,7 @@ class RealTimeVoice:
         voice: str = "",
         on_turn_complete: Callable | None = None,
         conversation_history: list[dict] | None = None,
+        on_error: Callable | None = None,
     ) -> bool:
         """
         Inicia una sesión de voz en tiempo real.
@@ -571,6 +598,7 @@ class RealTimeVoice:
         self._on_user_text_callback = on_user_text
         self._on_tool_call_callback = on_tool_call
         self._on_turn_complete_callback = on_turn_complete
+        self._on_error_callback = on_error
         self._provider = provider
         self._conversation_history = conversation_history
         if voice:
@@ -630,39 +658,112 @@ class RealTimeVoice:
         return True
 
     def _get_google_system_prompt(self) -> str:
-        """System prompt para Google Live API.
-        Adaptado para modelos live_api: usan video en tiempo real, NO necesitan screenshot para ver."""
-        return (
-            "Eres G-Mini Agent, un asistente de IA con capacidades agénticas completas sobre el PC del usuario. "
+        """System prompt para Google Live API (rol coordinador).
+        
+        Si hay contexto MCP disponible (_mcp_context), se inyecta al final
+        para que el modelo sepa qué servidores MCP están activos y sus tools.
+        """
+        base = (
+            "Eres G-Mini Agent, un asistente de IA que COORDINA acciones sobre el PC del usuario. "
             "Responde SIEMPRE en español de forma concisa y natural.\n\n"
-            "CAPACIDADES DE VIDEO EN TIEMPO REAL:\n"
-            "Recibes fotogramas de la pantalla del usuario a ~1fps como entrada de video (realtimeInput.video, JPEG). "
-            "Cuando el streaming de pantalla está activo, VES su escritorio en tiempo real de forma NATIVA. "
-            "Puedes describir lo que ves, identificar ventanas abiertas, texto en pantalla, juegos, y asistir con "
-            "lo que el usuario hace. Si ves algo relevante en los fotogramas, menciónalo PROACTIVAMENTE. "
-            "NO digas que no puedes ver la pantalla: si recibes fotogramas de video, SÍ puedes ver.\n\n"
-            "REGLA CRÍTICA SOBRE SCREENSHOT:\n"
-            "NUNCA uses la herramienta 'screenshot' mientras recibes fotogramas de video en tiempo real. "
-            "Ya puedes ver la pantalla directamente a través del stream de video. "
-            "La herramienta 'screenshot' tarda ~40 segundos y es INNECESARIA cuando ya ves el video. "
-            "Solo usa 'screenshot' si el usuario NO tiene el streaming de pantalla activado y te pide explícitamente "
-            "una captura, o si necesitas coordenadas exactas de píxeles para hacer click.\n\n"
-            "REGLA PRINCIPAL: Responde a lo que el usuario PIDE. Si te saluda, salúdalo de vuelta brevemente. "
-            "Si te hace una pregunta, respóndela. SOLO usa herramientas cuando el usuario te pide HACER algo concreto.\n\n"
-            "REGLAS PARA ACCIONES:\n"
-            "1. Cuando el usuario pide una acción (navegar, abrir, buscar, etc.), ejecútala INMEDIATAMENTE sin pedir confirmación. "
-            "NO digas 'voy a hacer X' ni 'dame un momento'. Ejecuta la herramienta y reporta el resultado después.\n"
-            "2. Para abrir URLs o navegar en internet, usa 'browser_navigate' con la URL completa.\n"
-            "3. Para buscar en Google: usa browser_navigate con url='https://www.google.com/search?q=tu+busqueda'.\n"
-            "4. Si necesitas coordenadas exactas para click/type/press y NO estás recibiendo video, usa 'screenshot'.\n"
-            "5. Si ESTÁS recibiendo video, basa tus acciones en lo que ves en los fotogramas, NO tomes screenshot.\n"
-            "6. Si una herramienta falla, reintenta con otra estrategia sin explicar el error.\n"
-            "7. Para atajos de teclado del sistema, usa 'hotkey' (ej: hotkey keys='ctrl+c').\n"
-            "8. NUNCA uses herramientas si el usuario solo está conversando, saludando o preguntando algo que no requiere acción en el PC."
+            "INICIO DE SESIÓN:\n"
+            "Al iniciar la sesión NO saludas ni dices nada proactivamente. "
+            "Esperas en silencio a que el usuario hable o escriba primero.\n\n"
+            "CAPACIDADES DE VIDEO:\n"
+            "Cuando el streaming de pantalla está activo (~1fps) ves el escritorio en tiempo real. "
+            "Puedes describir lo que ves y reaccionar.\n\n"
+            "ROL Y LÍMITES — MUY IMPORTANTE:\n"
+            "Eres el COORDINADOR. Tú solo puedes OBSERVAR (screenshot, screen_read_text) y ANALIZAR. "
+            "NO tienes clicks, escritura, teclas ni scroll directos. "
+            "Para CUALQUIER interacción con la interfaz del escritorio (clicks, escribir, teclas, scroll, arrastrar, "
+            "abrir/operar ventanas o apps) DEBES delegar con la herramienta 'delegate_computer_use', describiendo la "
+            "tarea completa en lenguaje natural. El sub-agente de computer use la ejecuta de forma autónoma.\n\n"
+            "FLUJO PARA TAREAS DE ESCRITORIO:\n"
+            "  1. screenshot → analiza qué hay y en qué monitor está el objetivo.\n"
+            "  2. delegate_computer_use(task=\"descripción completa\", monitor=N) — el sub-agente hace todos los clicks/typing.\n"
+            "  3. Recibirás una captura de verificación. Comprueba el resultado; si no se logró, vuelve a delegar con más detalle.\n"
+            "Ejemplo: usuario dice 'abre el bloc de notas y escribe Hola mundo' → "
+            "delegate_computer_use(task=\"Abrir el Bloc de notas desde el menú inicio y escribir literalmente 'Hola mundo' en el área de edición\").\n\n"
+            "MONITORES:\n"
+            "- Si el objetivo no se ve en la captura actual (ej: 'abre WhatsApp' y el icono no está), usa screenshot(monitor=1), "
+            "screenshot(monitor=2)… para localizarlo, y luego delega con ese 'monitor'.\n\n"
+            "NAVEGACIÓN WEB:\n"
+            "- Para URLs usa 'browser_navigate' (intenta extensión + browser-use). Para interactuar con el DOM usa las "
+            "herramientas browser_* (browser_click, browser_type, browser_fill, browser_press…).\n"
+            "- Si el control web estructurado falla, delega la interacción al sub-agente con delegate_computer_use.\n\n"
+            "OTRAS CAPACIDADES DIRECTAS PERMITIDAS:\n"
+            "- open_application para abrir apps de Windows; terminal_run para comandos PowerShell; generate_image/video/music; wait.\n"
+            "- mcp_call_tool para ejecutar herramientas de servidores MCP configurados (ver sección MCP abajo).\n\n"
+            "REGLAS GENERALES:\n"
+            "1. NO uses herramientas cuando el usuario solo conversa.\n"
+            "2. No anuncies cada paso; reporta el resultado al terminar.\n"
+            "3. Nunca afirmes haber hecho clicks tú mismo: la interacción la realiza el sub-agente vía delegate_computer_use."
         )
+        # Contexto del avatar (3D/2D/desactivado) segun config del usuario.
+        # En audio nativo NO se usan tags de texto [happy] (el modelo los leeria en
+        # voz alta); en su lugar la expresion facial se controla con la herramienta
+        # set_emotion (ver bloque siguiente).
+        try:
+            base += "\n\n" + build_avatar_context()
+        except Exception:
+            pass
+        # Instruccion de control de expresion (solo si las emociones estan activas;
+        # _get_rt_tools expone set_emotion bajo la misma condicion).
+        if config.get("character", "emotions_enabled", default=False):
+            base += (
+                "\n\nEXPRESIÓN FACIAL DE TU AVATAR:\n"
+                "Tu avatar tiene cara y cuerpo que pueden mostrar emociones. Para sonreír "
+                "o reflejar un estado de ánimo, llama a la herramienta set_emotion(emotion=...). "
+                "Tu cara es INTERNA: NUNCA uses delegate_computer_use, screenshot ni clicks para "
+                "cambiar tu expresión (no hay ningún botón de sonrisa en pantalla). "
+                "Si el usuario te pide sonreír o mostrar una emoción, usa set_emotion. "
+                "set_emotion es INSTANTÁNEA y NO requiere verificación: después de llamarla NO tomes "
+                "screenshot ni ninguna otra acción para 'comprobar' la expresión. Pedir 'sonríe' = "
+                "SOLO set_emotion(emotion=\"happy\"), nada más (sin captura de pantalla). "
+                "El screenshot es EXCLUSIVO para tareas de interacción con el escritorio, jamás para "
+                "conversar ni para expresar emociones. "
+                "Emociones válidas: happy, sad, angry, surprised, relaxed, neutral. Úsalas con moderación."
+            )
+        # Inyectar contexto MCP si está disponible (modo pre-cargadas)
+        if self._mcp_context:
+            base += "\n\n" + self._mcp_context
+        return base
+
+    def _get_rt_tools(self) -> list[dict]:
+        """Devuelve la lista de tools para la sesión RT.
+        
+        Si hay contexto MCP (_mcp_context no vacío), incluye mcp_call_tool.
+        Si no hay MCP, excluye mcp_call_tool para no confundir al modelo.
+        Siempre incluye google_search al final.
+        """
+        base_tools = self.GOOGLE_RT_TOOLS
+        # Tools a excluir segun contexto/config.
+        excluded: set[str] = set()
+        if not self._mcp_context:
+            excluded.add("mcp_call_tool")  # sin contexto MCP no tiene sentido
+        if not config.get("character", "emotions_enabled", default=False):
+            excluded.add("set_emotion")  # avatar sin emociones configuradas
+        if excluded:
+            filtered_decls = [
+                d for d in base_tools[0]["function_declarations"]
+                if d.get("name") not in excluded
+            ]
+            base_tools = [{"function_declarations": filtered_decls}]
+        return base_tools + [{"google_search": {}}]
 
     async def _connect_google(self) -> bool:
-        """Conecta a Google Gemini Live API (WebSocket directo)."""
+        """Conecta a Google Gemini Live API (WebSocket directo).
+
+        Soporta dos backends:
+        - AI Studio: usa API key en la URL (generativelanguage.googleapis.com)
+        - Vertex AI: usa Bearer token OAuth (aiplatform.googleapis.com)
+        """
+        backend = config.get("providers", "google", "backend", default="ai_studio")
+
+        if backend == "vertex_ai":
+            return await self._connect_google_vertex()
+
+        # ── AI Studio (API key) ──
         api_key = config.get_api_key("google_api")
         if not api_key:
             logger.error("API key de Google no disponible para RT")
@@ -674,10 +775,6 @@ class RealTimeVoice:
         self._active = True
 
         model = self.get_realtime_providers()["google"]["default"]
-        # Mensaje de configuración inicial según API Reference oficial:
-        # https://ai.google.dev/api/live — BidiGenerateContentSetup
-        # Campo del mensaje: "setup" (NO "config")
-        # responseModalities y speechConfig van dentro de generationConfig
         setup_msg: dict[str, Any] = {
             "setup": {
                 "model": f"models/{model}",
@@ -692,7 +789,7 @@ class RealTimeVoice:
                 },
                 "outputAudioTranscription": {},
                 "inputAudioTranscription": {},
-                "tools": self.GOOGLE_RT_TOOLS + [{"google_search": {}}],
+                "tools": self._get_rt_tools(),
             },
         }
 
@@ -732,6 +829,93 @@ class RealTimeVoice:
 
         self._task = asyncio.create_task(self._listen_loop())
         logger.info(f"Google Gemini Live conectado (modelo: {model})")
+        return True
+
+    # Vertex AI Live API uses different model IDs than AI Studio.
+    # Only gemini-live-2.5-flash-native-audio is available on Vertex AI as of June 2026.
+    VERTEX_LIVE_MODEL = "gemini-live-2.5-flash-native-audio"
+
+    async def _connect_google_vertex(self) -> bool:
+        """Conecta a Google Gemini Live API via Vertex AI (google-genai SDK).
+
+        Usa el SDK que maneja autenticación automáticamente (ADC o credentials_file).
+        El modelo en Vertex AI Live API es gemini-live-2.5-flash-native-audio (no los preview de AI Studio).
+        """
+        project_id = config.get("providers", "google", "project_id", default="")
+        location = config.get("providers", "google", "location", default="global")
+        credentials_file = config.get("providers", "google", "credentials_file", default="")
+
+        if not project_id:
+            logger.error("Vertex AI Live API requiere project_id configurado")
+            return False
+
+        # Live API NO funciona en "global" — necesita región específica
+        live_location = location if location != "global" else "us-central1"
+
+        # Obtener access token via ADC
+        try:
+            import google.auth
+            import google.auth.transport.requests
+            import os
+
+            if credentials_file:
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_file
+
+            credentials, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+            auth_req = google.auth.transport.requests.Request()
+            credentials.refresh(auth_req)
+            access_token = credentials.token
+        except Exception as exc:
+            logger.error(f"No se pudo obtener token OAuth para Vertex AI Live API: {exc}")
+            return False
+
+        model = self.VERTEX_LIVE_MODEL
+        model_path = f"projects/{project_id}/locations/{live_location}/publishers/google/models/{model}"
+
+        url = (
+            f"wss://{live_location}-aiplatform.googleapis.com/ws/"
+            f"google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent"
+        )
+
+        headers = {"Authorization": f"Bearer {access_token}"}
+        self._ws = await websockets.connect(url, additional_headers=headers)
+        self._active = True
+
+        setup_msg: dict[str, Any] = {
+            "setup": {
+                "model": model_path,
+                "generationConfig": {
+                    "responseModalities": ["AUDIO"],
+                    "speechConfig": {
+                        "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self._voice}},
+                    },
+                },
+                "systemInstruction": {
+                    "parts": [{"text": self._get_google_system_prompt()}],
+                },
+                "outputAudioTranscription": {},
+                "inputAudioTranscription": {},
+                "tools": self._get_rt_tools(),
+            },
+        }
+
+        setup_msg["setup"]["contextWindowCompression"] = {"slidingWindow": {}}
+        if self._session_resumption_handle:
+            setup_msg["setup"]["sessionResumption"] = {"handle": self._session_resumption_handle}
+        else:
+            setup_msg["setup"]["sessionResumption"] = {}
+            if self._conversation_history:
+                setup_msg["setup"]["historyConfig"] = {"initialHistoryInClientContent": True}
+
+        await self._ws.send(json.dumps(setup_msg))
+
+        self._history_pending = bool(self._conversation_history and not self._session_resumption_handle)
+        self._google_ready = False
+
+        self._task = asyncio.create_task(self._listen_loop())
+        logger.info(f"Google Gemini Live (Vertex AI) conectado (modelo: {model}, location: {live_location}, model_path: {model_path})")
         return True
 
     async def _inject_conversation_history(self) -> None:
@@ -914,16 +1098,27 @@ class RealTimeVoice:
                     logger.warning("Mensaje WS no-JSON recibido")
         except Exception as e:
             if self._active:
+                error_str = str(e).lower()
+                # Detectar errores fatales: quota, auth, modelo inválido — no tiene sentido reconectar
+                is_fatal = any(kw in error_str for kw in (
+                    "quota", "billing", "exceeded", "permission", "unauthorized",
+                    "api key", "invalid_argument", "not found", "does not exist",
+                ))
                 if self._goaway_received or self._reconnecting:
-                    # Error esperado: GoAway ya recibido o reconexión proactiva en curso
                     logger.info(f"RT listen loop: conexión cerrada tras GoAway/reconexión: {e}")
                 else:
                     logger.error(f"RT listen loop error: {e}")
+                # Notificar al frontend si hay error fatal (quota, auth, modelo inválido)
+                if is_fatal and self._on_error_callback:
+                    try:
+                        await self._on_error_callback(str(e))
+                    except Exception:
+                        pass
                 # ── Auto-reconexión para Google RT ──
-                # Si la sesión sigue "activa" (no fue stop_session explícito)
-                # y tenemos un handle de reanudación, intentar reconectar automáticamente.
+                # Solo si NO es error fatal y tenemos handle de reanudación.
                 # Ref: https://ai.google.dev/gemini-api/docs/live-api/session-management#session-resumption
-                if self._provider == "google" and self._session_resumption_handle and not self._reconnecting:
+                if (self._provider == "google" and self._session_resumption_handle
+                        and not self._reconnecting and not is_fatal):
                     await self._auto_reconnect_google()
                     return  # _auto_reconnect_google maneja el nuevo listen loop
         finally:
@@ -1121,8 +1316,8 @@ class RealTimeVoice:
             # Interrupción por VAD (barge-in del usuario)
             if content.get("interrupted") is True:
                 self._speaking = False
-                if self._on_turn_complete_callback:
-                    await self._on_turn_complete_callback()
+                # No cerrar la burbuja de streaming aquí — _flush_input_transcription
+                # la cerrará cuando llegue el próximo modelTurn, preservando el texto parcial
                 logger.debug("Google RT: generación interrumpida por VAD")
                 return
 
@@ -1178,14 +1373,24 @@ class RealTimeVoice:
         # https://ai.google.dev/gemini-api/docs/live-api/tools
         elif "toolCall" in data:
             await self._flush_input_transcription()
-            # Silenciar mic y flush audio acumulado para evitar VAD interruption
-            self._executing_tool = True
-            try:
-                await self._ws.send(json.dumps({"realtimeInput": {"audioStreamEnd": True}}))
-                logger.info("RT: audioStreamEnd enviado antes de tool execution")
-            except Exception:
-                pass
             tool_call = data["toolCall"]
+            self._executing_tool = True
+            # audioStreamEnd solo es correcto cuando el audio se pausa >1s (tools
+            # lentos: screenshot, delegate_computer_use, browser_*...). Para tools
+            # INSTANTÁNEOS y locales (set_emotion, ~10ms) NO se envía: hacerlo hace
+            # flush + resume casi inmediato del stream continuo del mic, lo que bajo
+            # VAD automática crea un TURNO FANTASMA y el modelo genera una respuesta
+            # DUPLICADA (p.ej. saluda dos veces). Ref VAD automática:
+            # https://ai.google.dev/gemini-api/docs/live-guide
+            _INSTANT_RT_TOOLS = {"set_emotion"}
+            _fc_names = {fc.get("name", "") for fc in tool_call.get("functionCalls", [])}
+            _all_instant = bool(_fc_names) and _fc_names.issubset(_INSTANT_RT_TOOLS)
+            if not _all_instant:
+                try:
+                    await self._ws.send(json.dumps({"realtimeInput": {"audioStreamEnd": True}}))
+                    logger.info("RT: audioStreamEnd enviado antes de tool execution")
+                except Exception:
+                    pass
             if self._on_tool_call_callback:
                 await self._on_tool_call_callback(tool_call)
 

@@ -313,13 +313,27 @@ async def handle_realtime_start(sid: str, data: dict) -> None:
         from backend.config import config as app_config
 
         current_model = app_config.get("model_router", "default_model", default="") or ""
+        google_backend = app_config.get("providers", "google", "backend", default="ai_studio")
 
         def _model_is_rt(prov: str) -> bool:
             """Verifica si el modelo actual es un modelo RT nativo del provider."""
+            if prov == "google" and google_backend == "vertex_ai":
+                try:
+                    from pathlib import Path as _Prt
+                    import yaml as _yrt
+                    _mf = _Prt(__file__).resolve().parent.parent.parent / "data" / "models.yaml"
+                    with open(_mf, "r", encoding="utf-8") as _fh:
+                        _cat = _yrt.safe_load(_fh) or {}
+                    _gm = _cat.get("llm", {}).get("google", {})
+                    _md = _gm.get(current_model, {}) if isinstance(_gm, dict) else {}
+                    has_live = bool(_md.get("features", {}).get("live_api", False))
+                    return has_live and bool(app_config.get("providers", "google", "project_id", default=""))
+                except Exception:
+                    return False
             rt_info = RealTimeVoice.get_realtime_providers().get(prov, {})
             return current_model in rt_info.get("models", [])
 
-        # Intentar resolver provider RT nativo, pero solo si el modelo es RT
+        # Intentar resolver provider RT nativo
         if provider in ("openai", "google", "xai"):
             resolved = RealTimeVoice.resolve_rt_provider(provider)
             if resolved and _model_is_rt(resolved):
@@ -484,9 +498,13 @@ async def handle_check_realtime(sid: str, data: dict) -> None:
 
     # ── 1. Determinar si el modelo tiene Live API nativa ─────────────
     model_is_native = False
+    _model_data = {}
 
-    # Para Google: leer el flag live_api desde models.yaml (fuente única de verdad)
+    # Para Google: verificar si el modelo seleccionado tiene live_api en models.yaml
     if current_provider == "google":
+        google_backend = app_config.get("providers", "google", "backend", default="ai_studio")
+
+        # Consultar live_api del modelo en models.yaml (aplica a AI Studio y Vertex AI)
         try:
             _models_yaml = _Path(__file__).resolve().parent.parent.parent / "data" / "models.yaml"
             with open(_models_yaml, "r", encoding="utf-8") as _f:
@@ -496,9 +514,13 @@ async def handle_check_realtime(sid: str, data: dict) -> None:
             model_is_native = bool(_model_data.get("features", {}).get("live_api", False))
         except Exception as _exc:
             logger.warning(f"No se pudo leer models.yaml para check_realtime: {_exc}")
-            # Fallback a realtime_models.yaml si falla la lectura
             rt_google = RealTimeVoice.get_realtime_providers().get("google", {})
             model_is_native = current_model in rt_google.get("models", [])
+
+        # Vertex AI requiere además project_id configurado
+        if google_backend == "vertex_ai" and model_is_native:
+            project_id = app_config.get("providers", "google", "project_id", default="")
+            model_is_native = bool(project_id)
     else:
         # Para OpenAI, xAI y otros: usar realtime_models.yaml
         if current_provider in RealTimeVoice.get_realtime_providers():
@@ -590,7 +612,8 @@ async def emit_status(sid: str, status: AgentStatus) -> None:
     try:
         from backend.core.gateway_service import get_gateway
 
-        if await get_gateway().forward_agent_status(sid, status.value):
+        status_value = status.value if hasattr(status, "value") else status
+        if await get_gateway().forward_agent_status(sid, status_value):
             return
     except Exception as exc:
         logger.warning(f"No se pudo redirigir estado al gateway remoto: {exc}")
@@ -633,11 +656,58 @@ async def emit_message_done(sid: str) -> None:
     )
 
 
+async def emit_emotion(sid: str, emotion: str) -> None:
+    """Emite un cambio de emocion para animar la skin VRM."""
+    await sio.emit("agent:emotion", {"emotion": emotion}, to=sid)
+
+
 async def emit_screenshot(sid: str, image_b64: str, *, caption: str = "") -> None:
-    """Emite una captura del agente al frontend o al gateway remoto."""
+    """Emite una captura del agente al frontend o al gateway remoto.
+
+    Comprime la imagen a JPEG para que el frontend pueda renderizarla
+    de forma fiable sin exceder los límites de data-URI de Chromium.
+    """
     if not image_b64 or not isinstance(image_b64, str) or len(image_b64) < 100:
         logger.warning("emit_screenshot: imagen base64 vacía o inválida, omitiendo emisión")
         return
+
+    # ── Comprimir a JPEG para el frontend ────────────────────────
+    frontend_b64 = image_b64
+    original_size_kb = len(image_b64) * 3 // 4 // 1024  # approx decoded size
+    try:
+        import base64 as _b64
+        from io import BytesIO as _BytesIO
+        from PIL import Image as _PILImage
+
+        # Decodificar la imagen original
+        raw_bytes = _b64.b64decode(image_b64)
+        img = _PILImage.open(_BytesIO(raw_bytes))
+
+        # Convertir a RGB si tiene canal alfa (PNG con transparencia)
+        if img.mode in ("RGBA", "LA", "P"):
+            img = img.convert("RGB")
+
+        # Redimensionar si es muy grande (max 1600px de ancho para el frontend)
+        max_w = 1600
+        if img.width > max_w:
+            ratio = max_w / img.width
+            new_h = int(img.height * ratio)
+            img = img.resize((max_w, new_h), _PILImage.LANCZOS)
+
+        # Comprimir a JPEG
+        buf = _BytesIO()
+        img.save(buf, format="JPEG", quality=72, optimize=True)
+        frontend_b64 = _b64.b64encode(buf.getvalue()).decode("ascii")
+        compressed_size_kb = len(buf.getvalue()) // 1024
+
+        logger.debug(
+            f"emit_screenshot: comprimido {original_size_kb}KB → {compressed_size_kb}KB "
+            f"(JPEG q72, {img.width}x{img.height})"
+        )
+    except Exception as comp_exc:
+        logger.warning(f"emit_screenshot: no se pudo comprimir, enviando original: {comp_exc}")
+        frontend_b64 = image_b64
+
     try:
         from backend.core.gateway_service import get_gateway
 
@@ -647,7 +717,16 @@ async def emit_screenshot(sid: str, image_b64: str, *, caption: str = "") -> Non
         logger.warning(f"No se pudo redirigir screenshot al gateway remoto: {exc}")
     await sio.emit(
         "agent:screenshot",
-        {"image": image_b64, "caption": caption},
+        {"image": frontend_b64, "caption": caption},
+        to=sid,
+    )
+
+
+async def emit_media(sid: str, media_type: str, filename: str, url: str, **extra) -> None:
+    """Emite un archivo multimedia generado al frontend para reproducción inline."""
+    await sio.emit(
+        "agent:media",
+        {"type": media_type, "filename": filename, "url": url, **extra},
         to=sid,
     )
 

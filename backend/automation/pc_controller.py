@@ -681,15 +681,26 @@ class AutomationEngine:
     # ── Keyboard Actions ──────────────────────────────────
 
     async def type_text(self, text: str, interval: float = 0.02) -> bool:
-        """Escribe texto carácter por carácter."""
+        """Escribe texto usando clipboard (soporta Unicode) o fallback a write."""
         if not self._check_enabled():
             return False
 
         try:
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None, lambda: pyautogui.typewrite(text, interval=interval)
-            )
+
+            def _type_via_clipboard():
+                import pyperclip
+                pyperclip.copy(text)
+                pyautogui.hotkey("ctrl", "v")
+                time.sleep(0.05)
+
+            try:
+                await loop.run_in_executor(None, _type_via_clipboard)
+            except Exception:
+                # Fallback: pyautogui.write soporta más que typewrite
+                await loop.run_in_executor(
+                    None, lambda: pyautogui.write(text, interval=interval)
+                )
             self._log_action("type", text=text[:50])
             logger.debug(f"Texto escrito: {text[:50]}...")
             return True

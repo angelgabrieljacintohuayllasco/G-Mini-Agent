@@ -1,9 +1,8 @@
-No emitiste ninguna acción `[ACTION:...]`.
+El usuario te pidió una tarea operativa pero no emitiste acciones `[ACTION:...]`.
 
 Recuerda:
-- Si la tarea requiere operar PC, web, archivos o terminal, debes actuar.
-- Observa primero si no tienes suficiente contexto.
-- Luego ejecuta una o más acciones concretas.
-- Termina con `task_complete(...)` solo cuando el resultado esté verificado.
+- Si la tarea requiere operar PC, web, archivos o terminal, debes actuar con `[ACTION:...]`.
+- Si no tienes contexto visual, empieza con `[ACTION:screenshot()]`.
+- Si no estás seguro de qué hacer, pregunta al usuario antes de actuar.
 
-Ejecuta ahora el siguiente paso real.
+Ejecuta el siguiente paso concreto de la tarea solicitada.

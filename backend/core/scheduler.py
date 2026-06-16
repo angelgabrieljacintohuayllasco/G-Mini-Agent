@@ -17,6 +17,7 @@ from loguru import logger
 
 from backend.config import ROOT_DIR, config
 from backend.core.gateway_service import get_gateway
+from backend.core.mcp_registry import get_mcp_registry
 from backend.core.mcp_runtime import MCPRuntime
 from backend.core.skill_runtime import SkillRuntime
 
@@ -106,7 +107,7 @@ class SchedulerService:
     ):
         self._db_path = Path(db_path) if db_path else _resolve_scheduler_db_path()
         self._skill_runtime = skill_runtime or SkillRuntime()
-        self._mcp_runtime = mcp_runtime or MCPRuntime()
+        self._mcp_runtime = mcp_runtime or MCPRuntime(get_mcp_registry())
         self._enabled = _coerce_bool(
             config.get("scheduler", "enabled", default=True),
             default=True,

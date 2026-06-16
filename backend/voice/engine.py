@@ -41,6 +41,29 @@ DEFAULT_GOOGLE_TTS_ENGINE = "gemini-2.5-flash-preview-tts"
 DEFAULT_ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
 DEFAULT_GOOGLE_VOICE = "Kore"
 
+# Voces disponibles en Google Gemini TTS (https://ai.google.dev/gemini-api/docs/speech-generation)
+GOOGLE_VOICE_CATALOG: list[dict] = [
+    {"id": "Kore",             "description": "Firme"},
+    {"id": "Puck",             "description": "Animado"},
+    {"id": "Charon",          "description": "Informativo"},
+    {"id": "Aoede",           "description": "Fluido"},
+    {"id": "Zephyr",          "description": "Brillante"},
+    {"id": "Fenrir",          "description": "Enérgico"},
+    {"id": "Leda",            "description": "Juvenil"},
+    {"id": "Orus",            "description": "Firme"},
+    {"id": "Callirrhoe",      "description": "Tranquilo"},
+    {"id": "Autonoe",         "description": "Brillante"},
+    {"id": "Enceladus",       "description": "Suave"},
+    {"id": "Iapetus",         "description": "Claro"},
+    {"id": "Umbriel",         "description": "Tranquilo"},
+    {"id": "Achernar",        "description": "Suave"},
+    {"id": "Alnilam",         "description": "Firme"},
+    {"id": "Schedar",         "description": "Equilibrado"},
+    {"id": "Sulafat",         "description": "Cálido"},
+    {"id": "Sadaltager",      "description": "Conocedor"},
+    {"id": "Achird",          "description": "Amigable"},
+]
+
 TTS_ENGINE_CATALOG: dict[str, dict[str, Any]] = {
     "melotts": {
         "label": "MeloTTS (offline)",
@@ -442,11 +465,18 @@ class VoiceEngine:
             return False, "init_error", f"ElevenLabs no pudo inicializarse: {exc}"
 
     async def _setup_google(self, model: str) -> tuple[bool, str, str]:
+        # Determinar backend: Vertex AI o AI Studio (hereda config del provider Google)
+        google_backend = config.get("providers", "google", "backend", default="ai_studio")
+
+        if google_backend == "vertex_ai":
+            return await self._setup_google_vertex(model)
+
+        # AI Studio: usa API key
         api_key = config.get_api_key("google_api")
         api_key_configured = bool(str(api_key or "").strip())
         logger.info(
             "VoiceEngine._setup_google start: "
-            f"requested_model={model}, api_key_configured={api_key_configured}"
+            f"requested_model={model}, api_key_configured={api_key_configured}, backend=ai_studio"
         )
         if not api_key:
             logger.warning(
@@ -458,11 +488,11 @@ class VoiceEngine:
         try:
             from google import genai
             self._google_client = genai.Client(api_key=api_key)
-            self._tts_engine = model  # <- asignar modelo activo aqui, no fallback
+            self._tts_engine = model
             logger.info(
                 "VoiceEngine._setup_google success: "
                 f"requested_model={model}, active_engine={self._tts_engine}, "
-                f"api_key_configured={api_key_configured}"
+                f"api_key_configured={api_key_configured}, backend=ai_studio"
             )
             return True, "ready", f"Google TTS listo ({model})."
         except Exception as exc:
@@ -471,6 +501,55 @@ class VoiceEngine:
                 f"requested_model={model}, api_key_configured={api_key_configured}, error={exc}"
             )
             return False, "init_error", f"Google TTS no pudo inicializarse: {exc}"
+
+    async def _setup_google_vertex(self, model: str) -> tuple[bool, str, str]:
+        """Configura Google TTS via Vertex AI (misma config que el provider LLM)."""
+        import os
+
+        project_id = config.get("providers", "google", "project_id", default="")
+        raw_location = config.get("providers", "google", "location", default="us-central1")
+        # "global" no funciona para Vertex AI generative models — fallback a us-central1
+        location = raw_location if raw_location != "global" else "us-central1"
+        credentials_file = config.get("providers", "google", "credentials_file", default="")
+
+        logger.info(
+            "VoiceEngine._setup_google_vertex start: "
+            f"requested_model={model}, project_id={project_id}, location={location}"
+        )
+
+        if not project_id:
+            logger.warning(
+                "VoiceEngine._setup_google_vertex missing project_id: "
+                f"requested_model={model}"
+            )
+            return False, "missing_project", (
+                "Vertex AI requiere project_id. Configúralo en Ajustes > Google > Project ID."
+            )
+
+        try:
+            from google import genai
+
+            if credentials_file:
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_file
+
+            self._google_client = genai.Client(
+                vertexai=True,
+                project=project_id,
+                location=location,
+            )
+            self._tts_engine = model
+            logger.info(
+                "VoiceEngine._setup_google_vertex success: "
+                f"requested_model={model}, active_engine={self._tts_engine}, "
+                f"project={project_id}, location={location}"
+            )
+            return True, "ready", f"Google TTS listo ({model}, Vertex AI)."
+        except Exception as exc:
+            logger.warning(
+                "VoiceEngine._setup_google_vertex failed: "
+                f"requested_model={model}, project={project_id}, error={exc}"
+            )
+            return False, "init_error", f"Google TTS (Vertex AI) no pudo inicializarse: {exc}"
 
     async def _init_stt(self) -> None:
         """Inicializa Faster-Whisper para STT."""
@@ -591,12 +670,20 @@ class VoiceEngine:
             return None
 
     async def _tts_google(self, text: str, voice_id: str | None = None) -> bytes | None:
-        """TTS con Google Gemini."""
+        """TTS con Google Gemini — usa la API async nativa."""
         try:
             from google.genai import types
 
-            response = await asyncio.to_thread(
-                self._google_client.models.generate_content,
+            # Voz: prioridad voice_id (runtime) > config > default
+            voice_name = (
+                voice_id
+                or str(config.get("voice", "google_voice", default="") or "").strip()
+                or DEFAULT_GOOGLE_VOICE
+            )
+
+            # Usar el cliente async para evitar asyncio.to_thread y el 400 INVALID_ARGUMENT
+            # que ocurre cuando el SDK sincrónico infiere respuesta de texto en el thread pool.
+            response = await self._google_client.aio.models.generate_content(
                 model=self._tts_engine,
                 contents=text,
                 config=types.GenerateContentConfig(
@@ -604,7 +691,7 @@ class VoiceEngine:
                     speech_config=types.SpeechConfig(
                         voice_config=types.VoiceConfig(
                             prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                voice_name=voice_id or DEFAULT_GOOGLE_VOICE,
+                                voice_name=voice_name,
                             )
                         )
                     ),

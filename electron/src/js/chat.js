@@ -10,6 +10,7 @@ class ChatManager {
         this.streamingText = '';
         this.isStreaming = false;
         this.approvalCardEl = null;
+        this._pendingScreenshotCard = null;
     }
 
     init() {
@@ -38,44 +39,336 @@ class ChatManager {
      * Añade un screenshot inline al chat con throttle de 3 segundos.
      */
     addScreenshot(base64Image, caption = '') {
+        if (!base64Image || base64Image.length < 100) return;
+
         const now = Date.now();
-        // Throttle solo para screenshots idénticos consecutivos (evitar duplicados por refresh)
-        // No aplicar throttle a imágenes generadas ni screenshots del agente en voz
         if (!caption && now - this._lastScreenshotTime < 500) return;
         if (!caption) this._lastScreenshotTime = now;
 
         const isGenerated = caption === 'generated_image';
         const el = this._createMessageEl(isGenerated ? 'generated-image-message' : 'screenshot-message');
+
+        // Skeleton loader while image loads
+        const skeleton = document.createElement('div');
+        skeleton.className = 'screenshot-skeleton';
+        skeleton.innerHTML = '<div class="screenshot-skeleton-shimmer"></div>';
+        el.appendChild(skeleton);
+
         const img = document.createElement('img');
-        const src = base64Image.startsWith('data:') ? base64Image : `data:image/png;base64,${base64Image}`;
+        img.style.display = 'none';
+        // Auto-detect MIME from base64 header bytes
+        let src;
+        if (base64Image.startsWith('data:')) {
+            src = base64Image;
+        } else if (base64Image.startsWith('/9j/')) {
+            src = `data:image/jpeg;base64,${base64Image}`;
+        } else if (base64Image.startsWith('iVBOR')) {
+            src = `data:image/png;base64,${base64Image}`;
+        } else {
+            src = `data:image/jpeg;base64,${base64Image}`;
+        }
         img.src = src;
-        img.alt = isGenerated ? 'Imagen generada por IA' : 'Screenshot del agente';
-        img.addEventListener('click', () => this._showScreenshotModal(src));
+        img.alt = isGenerated ? 'Imagen generada por IA' : 'Captura de pantalla';
+        img.loading = 'lazy';
+
+        let retryCount = 0;
+        img.addEventListener('load', () => {
+            skeleton.remove();
+            img.style.display = '';
+            img.classList.add('screenshot-loaded');
+        });
+        img.addEventListener('click', () => this._showScreenshotModal(img.src));
+        img.addEventListener('error', () => {
+            retryCount++;
+            // Try PNG if JPEG failed, or vice versa
+            if (retryCount === 1) {
+                img.src = `data:image/png;base64,${base64Image}`;
+                return;
+            }
+            if (retryCount === 2) {
+                img.src = `data:image/jpeg;base64,${base64Image}`;
+                return;
+            }
+            // All retries failed
+            skeleton.remove();
+            img.style.display = 'none';
+            const errDiv = document.createElement('div');
+            errDiv.className = 'screenshot-error-msg';
+            errDiv.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg> Captura no disponible';
+            el.appendChild(errDiv);
+        });
         el.appendChild(img);
         if (isGenerated) {
             const label = document.createElement('div');
             label.className = 'generated-image-label';
-            label.textContent = '🎨 Imagen generada con IA';
+            label.textContent = 'Imagen generada con IA';
             el.appendChild(label);
         }
         this.messagesContainer.appendChild(el);
         this._scrollToBottom();
+
+        // Also attach to pending screenshot action card if exists
+        if (!isGenerated && this._pendingScreenshotCard) {
+            this._attachScreenshotToCard(this._pendingScreenshotCard, img.src);
+            this._pendingScreenshotCard = null;
+        }
     }
 
-    _showScreenshotModal(src) {
+    /**
+     * Añade un reproductor multimedia inline (imagen, video o audio) con
+     * barra de herramientas: zoom/pantalla completa + descarga a carpeta.
+     */
+    addMediaPlayer(type, url, filename = '') {
+        if (!url) return;
+        const el = this._createMessageEl('generated-media-message');
+
+        if (type === 'image') {
+            const img = document.createElement('img');
+            img.src = url;
+            img.alt = filename || 'Imagen generada';
+            img.className = 'generated-media-img';
+            img.addEventListener('click', () => this._showMediaViewer(url, filename));
+            img.addEventListener('load', () => img.classList.add('screenshot-loaded'));
+            img.addEventListener('error', () => {
+                img.style.display = 'none';
+                const errDiv = document.createElement('div');
+                errDiv.className = 'screenshot-error-msg';
+                errDiv.textContent = 'No se pudo cargar la imagen';
+                el.insertBefore(errDiv, el.firstChild);
+            });
+            el.appendChild(img);
+            el.appendChild(this._buildMediaToolbar({
+                label: filename || 'Imagen generada con IA',
+                url, filename,
+                onZoom: () => this._showMediaViewer(url, filename),
+                zoomIcon: 'zoom', zoomTitle: 'Ampliar / Zoom',
+            }));
+        } else if (type === 'video') {
+            const video = document.createElement('video');
+            video.src = url;
+            video.controls = true;
+            video.preload = 'metadata';
+            video.className = 'generated-media-video';
+            video.addEventListener('error', () => {
+                video.style.display = 'none';
+                const errDiv = document.createElement('div');
+                errDiv.className = 'screenshot-error-msg';
+                errDiv.textContent = 'No se pudo cargar el video';
+                el.insertBefore(errDiv, el.firstChild);
+            });
+            el.appendChild(video);
+            el.appendChild(this._buildMediaToolbar({
+                label: filename || 'Video generado con IA',
+                url, filename,
+                onZoom: () => { if (video.requestFullscreen) video.requestFullscreen(); },
+                zoomIcon: 'fullscreen', zoomTitle: 'Pantalla completa',
+            }));
+        } else if (type === 'audio') {
+            const audio = document.createElement('audio');
+            audio.src = url;
+            audio.controls = true;
+            audio.preload = 'metadata';
+            audio.className = 'generated-media-audio';
+            audio.addEventListener('error', () => {
+                audio.style.display = 'none';
+                const errDiv = document.createElement('div');
+                errDiv.className = 'screenshot-error-msg';
+                errDiv.textContent = 'No se pudo cargar el audio';
+                el.insertBefore(errDiv, el.firstChild);
+            });
+            el.appendChild(audio);
+            el.appendChild(this._buildMediaToolbar({
+                label: filename || 'Audio generado con IA',
+                url, filename,
+            }));
+        }
+
+        this.messagesContainer.appendChild(el);
+        this._scrollToBottom();
+    }
+
+    /**
+     * Barra de herramientas bajo un medio: etiqueta + (zoom/fullscreen) + descarga.
+     */
+    _buildMediaToolbar({ label, url, filename, onZoom = null, zoomIcon = 'zoom', zoomTitle = 'Ampliar' }) {
+        const bar = document.createElement('div');
+        bar.className = 'media-toolbar';
+
+        const lbl = document.createElement('span');
+        lbl.className = 'media-toolbar-label';
+        lbl.textContent = label || '';
+        bar.appendChild(lbl);
+
+        const actions = document.createElement('div');
+        actions.className = 'media-toolbar-actions';
+
+        if (typeof onZoom === 'function') {
+            const zoomBtn = this._mediaButton(zoomIcon, zoomTitle);
+            zoomBtn.addEventListener('click', onZoom);
+            actions.appendChild(zoomBtn);
+        }
+
+        const dlBtn = this._mediaButton('download', 'Descargar / Guardar como…');
+        dlBtn.addEventListener('click', () => this._downloadMedia(url, filename, dlBtn));
+        actions.appendChild(dlBtn);
+
+        bar.appendChild(actions);
+        return bar;
+    }
+
+    _mediaButton(icon, title) {
+        const btn = document.createElement('button');
+        btn.className = 'media-btn';
+        btn.title = title;
+        btn.setAttribute('aria-label', title);
+        btn.innerHTML = this._mediaIcon(icon);
+        return btn;
+    }
+
+    _mediaIcon(name) {
+        const wrap = (inner) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+        switch (name) {
+            case 'download': return wrap('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>');
+            case 'zoom': return wrap('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>');
+            case 'zoom-in': return wrap('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>');
+            case 'zoom-out': return wrap('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/>');
+            case 'fullscreen': return wrap('<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>');
+            case 'reset': return wrap('<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>');
+            case 'close': return wrap('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>');
+            default: return wrap('');
+        }
+    }
+
+    /**
+     * Descarga un medio a una carpeta elegida por el usuario (dialogo nativo via
+     * Electron). Fallback a <a download> si no esta el bridge. Soporta data: URIs.
+     */
+    async _downloadMedia(url, filename, btn) {
+        try {
+            if (window.gmini && typeof window.gmini.saveMediaAs === 'function') {
+                if (btn) btn.classList.add('media-btn-busy');
+                const res = await window.gmini.saveMediaAs(url, filename || '');
+                if (btn) btn.classList.remove('media-btn-busy');
+                if (res && res.ok) {
+                    this._toast(`Guardado en: ${res.path}`);
+                } else if (res && res.canceled) {
+                    /* usuario cancelo */
+                } else {
+                    this._toast(`No se pudo guardar${res && res.error ? ': ' + res.error : ''}`, true);
+                }
+                return;
+            }
+            // Fallback navegador
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename || 'media';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        } catch (e) {
+            if (btn) btn.classList.remove('media-btn-busy');
+            this._toast('Error al descargar: ' + ((e && e.message) || e), true);
+        }
+    }
+
+    /**
+     * Visor de imagen ampliada con zoom (botones + rueda + arrastre) y descarga.
+     */
+    _showMediaViewer(src, filename = '') {
         const existing = document.getElementById('screenshot-modal');
         if (existing) existing.remove();
 
         const overlay = document.createElement('div');
         overlay.id = 'screenshot-modal';
         overlay.className = 'screenshot-modal-overlay';
-        overlay.addEventListener('click', () => overlay.remove());
+
+        let scale = 1, tx = 0, ty = 0, dragging = false, sx = 0, sy = 0;
+
+        const stage = document.createElement('div');
+        stage.className = 'media-viewer-stage';
 
         const img = document.createElement('img');
         img.src = src;
-        img.alt = 'Screenshot ampliado';
-        overlay.appendChild(img);
+        img.alt = filename || 'Imagen ampliada';
+        img.className = 'media-viewer-img';
+        stage.appendChild(img);
+
+        const apply = () => { img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`; };
+        const setScale = (s) => {
+            scale = Math.min(8, Math.max(0.2, s));
+            if (scale <= 1.001) { scale = 1; tx = 0; ty = 0; }
+            img.style.cursor = scale > 1 ? 'grab' : 'zoom-out';
+            apply();
+        };
+
+        const bar = document.createElement('div');
+        bar.className = 'media-viewer-toolbar';
+        const mk = (icon, title, fn) => {
+            const b = this._mediaButton(icon, title);
+            b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+            return b;
+        };
+        bar.appendChild(mk('zoom-in', 'Acercar', () => setScale(scale * 1.25)));
+        bar.appendChild(mk('zoom-out', 'Alejar', () => setScale(scale / 1.25)));
+        bar.appendChild(mk('reset', 'Restablecer', () => setScale(1)));
+        bar.appendChild(mk('download', 'Descargar / Guardar como…', () => this._downloadMedia(src, filename)));
+        bar.appendChild(mk('close', 'Cerrar', () => overlay.remove()));
+
+        stage.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            setScale(scale * (e.deltaY < 0 ? 1.12 : 0.89));
+        }, { passive: false });
+        img.addEventListener('mousedown', (e) => {
+            if (scale <= 1) return;
+            dragging = true; sx = e.clientX - tx; sy = e.clientY - ty;
+            img.style.cursor = 'grabbing';
+            e.preventDefault();
+        });
+        overlay.addEventListener('mousemove', (e) => {
+            if (!dragging) return;
+            tx = e.clientX - sx; ty = e.clientY - sy; apply();
+        });
+        overlay.addEventListener('mouseup', () => {
+            dragging = false;
+            if (scale > 1) img.style.cursor = 'grab';
+        });
+        img.addEventListener('dblclick', (e) => { e.stopPropagation(); setScale(scale > 1 ? 1 : 2); });
+        overlay.addEventListener('click', (e) => { if (e.target === overlay || e.target === stage) overlay.remove(); });
+        const onKey = (e) => {
+            if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', onKey); }
+            else if (e.key === '+' || e.key === '=') setScale(scale * 1.25);
+            else if (e.key === '-') setScale(scale / 1.25);
+            else if (e.key === '0') setScale(1);
+        };
+        document.addEventListener('keydown', onKey);
+
+        overlay.appendChild(bar);
+        overlay.appendChild(stage);
         document.body.appendChild(overlay);
+    }
+
+    /** Alias retro-compatible: capturas de pantalla usan el mismo visor con zoom. */
+    _showScreenshotModal(src, filename = '') {
+        this._showMediaViewer(src, filename);
+    }
+
+    /** Notificacion efimera (toast) para feedback de descargas. */
+    _toast(message, isError = false) {
+        let host = document.getElementById('gmini-toast-host');
+        if (!host) {
+            host = document.createElement('div');
+            host.id = 'gmini-toast-host';
+            document.body.appendChild(host);
+        }
+        const t = document.createElement('div');
+        t.className = 'gmini-toast' + (isError ? ' gmini-toast-error' : '');
+        t.textContent = message;
+        host.appendChild(t);
+        requestAnimationFrame(() => t.classList.add('gmini-toast-show'));
+        setTimeout(() => {
+            t.classList.remove('gmini-toast-show');
+            setTimeout(() => t.remove(), 300);
+        }, 3600);
     }
 
     /**
@@ -87,6 +380,19 @@ class ChatManager {
         if (type === 'error') {
             this._addErrorMessage(text);
             this.finishStreaming();
+            return;
+        }
+
+        // Action summaries go to a collapsed system message, not streaming text
+        if (type === 'action' || type === 'system' || type === 'warning') {
+            if (this.isStreaming) this.finishStreaming();
+            const cssClass = type === 'warning' ? 'warning-message'
+                : type === 'action' ? 'system-message action-result'
+                : 'system-message';
+            const el = this._createMessageEl(cssClass);
+            el.innerHTML = this._renderMarkdown(String(text || ''));
+            this.messagesContainer.appendChild(el);
+            this._scrollToBottom();
             return;
         }
 
@@ -120,8 +426,12 @@ class ChatManager {
     finishStreaming() {
         if (this.currentStreamingEl) {
             this.currentStreamingEl.classList.remove('streaming-cursor');
-            // Parse final markdown
-            this.currentStreamingEl.innerHTML = this._renderMarkdown(this.streamingText);
+            const cleanText = this._stripActionLines(this.streamingText);
+            if (!cleanText) {
+                this.currentStreamingEl.remove();
+            } else {
+                this.currentStreamingEl.innerHTML = this._renderMarkdown(cleanText);
+            }
         }
         this.currentStreamingEl = null;
         this.streamingText = '';
@@ -130,12 +440,29 @@ class ChatManager {
     }
 
     /**
+     * Strips [ACTION:...] lines from text to avoid duplication with action cards.
+     */
+    _stripActionLines(text) {
+        return text
+            .split('\n')
+            .filter(line => !line.trim().match(/^\[ACTION:[^\]]+\]$/))
+            .join('\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    }
+
+    /**
      * Actualiza el contenido del mensaje streaming.
      */
     _updateStreamingContent() {
         if (!this.currentStreamingEl) return;
-        // Render parcial (sin markdown completo para performance)
-        this.currentStreamingEl.innerHTML = this._renderMarkdown(this.streamingText);
+        const cleanText = this._stripActionLines(this.streamingText);
+        if (!cleanText) {
+            this.currentStreamingEl.style.display = 'none';
+        } else {
+            this.currentStreamingEl.style.display = '';
+            this.currentStreamingEl.innerHTML = this._renderMarkdown(cleanText);
+        }
         this._scrollToBottom();
     }
 
@@ -210,31 +537,87 @@ class ChatManager {
      */
     addActionCard(type, params) {
         const el = this._createMessageEl('action-message');
-        const icon = this._getActionIcon(type);
+        const icon = this._getActionIcon(type, params);
         const label = this._getActionLabel(type, params);
+        const category = this._getActionCategory(type);
 
+        el.dataset.actionCategory = category;
         el.innerHTML = `
             <div class="action-header">
                 <span class="action-icon">${icon}</span>
                 <span class="action-label">${this._escapeHtml(label)}</span>
-                <span class="action-status action-running">ejecutando…</span>
+                <span class="action-status action-running">
+                    <span class="action-spinner"></span>
+                    ejecutando
+                </span>
             </div>
             <div class="action-detail">${this._formatActionParams(type, params)}</div>
+            <div class="action-progress-bar"><div class="action-progress-fill"></div></div>
         `;
 
-        // Timer de progreso: muestra segundos transcurridos después de 2s
+        // Timer: update elapsed time. Safety cap (MAX_ACTION_SECONDS): si por
+        // cualquier motivo no llega el agent:action_result, el contador NO debe
+        // correr para siempre — se detiene solo y marca timeout.
+        const MAX_ACTION_SECONDS = 180;
         const startTime = Date.now();
         const statusEl = el.querySelector('.action-status');
         el._actionTimer = setInterval(() => {
             const elapsed = Math.round((Date.now() - startTime) / 1000);
-            if (elapsed >= 2 && statusEl && statusEl.classList.contains('action-running')) {
-                statusEl.textContent = `ejecutando… ${elapsed}s`;
+            if (!statusEl || !statusEl.classList.contains('action-running')) return;
+            if (elapsed >= MAX_ACTION_SECONDS) {
+                clearInterval(el._actionTimer);
+                el._actionTimer = null;
+                statusEl.innerHTML = `${elapsed}s`;
+                statusEl.classList.remove('action-running');
+                statusEl.classList.add('action-timeout');
+                return;
+            }
+            if (elapsed >= 2) {
+                statusEl.innerHTML = `<span class="action-spinner"></span>${elapsed}s`;
             }
         }, 1000);
+
+        // Track screenshot action cards for thumbnail attachment
+        if (type === 'screenshot' || type === 'browser_screenshot' || type === 'adb_screenshot') {
+            this._pendingScreenshotCard = el;
+        }
 
         this.messagesContainer.appendChild(el);
         this._scrollToBottom();
         return el;
+    }
+
+    /**
+     * Attaches a screenshot thumbnail inside an action card.
+     */
+    _attachScreenshotToCard(cardEl, imgSrc) {
+        if (!cardEl) return;
+        const existing = cardEl.querySelector('.action-screenshot-thumb');
+        if (existing) return;
+        const thumb = document.createElement('img');
+        thumb.className = 'action-screenshot-thumb';
+        thumb.src = imgSrc;
+        thumb.alt = 'Captura';
+        thumb.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._showScreenshotModal(imgSrc);
+        });
+        cardEl.appendChild(thumb);
+    }
+
+    /**
+     * Returns the category of an action for visual styling.
+     */
+    _getActionCategory(type) {
+        if (['click', 'double_click', 'right_click', 'type', 'focus_type', 'press', 'hotkey', 'scroll', 'move', 'drag'].includes(type)) return 'interaction';
+        if (['screenshot', 'browser_screenshot', 'adb_screenshot', 'screen_read_text', 'screen_preview_start'].includes(type)) return 'vision';
+        if (type.startsWith('browser_')) return 'browser';
+        if (['terminal_run'].includes(type)) return 'terminal';
+        if (['task_complete'].includes(type)) return 'complete';
+        if (['generate_image', 'generate_video', 'generate_music'].includes(type)) return 'creative';
+        if (type.startsWith('file_')) return 'file';
+        if (['wait'].includes(type)) return 'wait';
+        return 'system';
     }
 
     /**
@@ -243,18 +626,45 @@ class ChatManager {
      * @param {boolean} success - Si la acción fue exitosa
      * @param {string} resultText - Texto del resultado
      */
-    updateActionCard(cardEl, success, resultText) {
+    updateActionCard(cardEl, success, resultText, durationMs) {
         if (!cardEl) return;
-        // Detener timer de progreso si existe
+        // Stop progress timer
         if (cardEl._actionTimer) {
             clearInterval(cardEl._actionTimer);
             cardEl._actionTimer = null;
         }
+
+        // Complete progress bar animation
+        const progressFill = cardEl.querySelector('.action-progress-fill');
+        if (progressFill) {
+            progressFill.style.width = '100%';
+            progressFill.style.background = success
+                ? 'var(--success)'
+                : 'var(--error)';
+            setTimeout(() => {
+                const bar = cardEl.querySelector('.action-progress-bar');
+                if (bar) bar.style.opacity = '0';
+            }, 600);
+        }
+
         const statusEl = cardEl.querySelector('.action-status');
         if (statusEl) {
-            statusEl.textContent = success ? 'COMPLETADO' : 'ERROR';
+            const checkSvg = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+            const xSvg = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+            // Duracion exacta (del backend) — se guarda visible en la tarjeta.
+            let durText = '';
+            const ms = Number(durationMs);
+            if (Number.isFinite(ms) && ms > 0) {
+                durText = ms >= 1000 ? ` · ${(ms / 1000).toFixed(1)}s` : ` · ${Math.round(ms)}ms`;
+            }
+            const durSpan = durText ? `<span class="action-duration">${durText}</span>` : '';
+            statusEl.innerHTML = success ? `${checkSvg} OK${durSpan}` : `${xSvg} ERROR${durSpan}`;
             statusEl.className = `action-status ${success ? 'action-ok' : 'action-fail'}`;
         }
+
+        // Update card border color on completion
+        cardEl.classList.add(success ? 'action-completed' : 'action-failed');
+
         if (resultText) {
             let detailEl = cardEl.querySelector('.action-result');
             if (!detailEl) {
@@ -262,9 +672,8 @@ class ChatManager {
                 detailEl.className = 'action-result';
                 cardEl.appendChild(detailEl);
             }
-            // Formatear resultados de generación multimedia de forma limpia
             const formatted = this._formatMediaResult(resultText);
-            const maxLen = 500;
+            const maxLen = 300;
             const truncated = formatted.length > maxLen ? formatted.slice(0, maxLen) + '…' : formatted;
             detailEl.textContent = truncated;
             if (!success) detailEl.classList.add('action-result-error');
@@ -295,37 +704,123 @@ class ChatManager {
             if (data.count) parts.push(`Archivos: ${data.count}`);
             if (Array.isArray(data.files)) {
                 for (const f of data.files) {
-                    if (f.filename) parts.push(`📁 ${f.filename}`);
-                    else if (f.path) parts.push(`📁 ${f.path.split(/[/\\]/).pop()}`);
+                    if (f.filename) parts.push(f.filename);
+                    else if (f.path) parts.push(f.path.split(/[/\\]/).pop());
                 }
             }
-            if (data.lyrics) parts.push(`🎵 Letra: ${data.lyrics.slice(0, 200)}`);
+            if (data.lyrics) parts.push(`Letra: ${data.lyrics.slice(0, 200)}`);
             return parts.length > 0 ? parts.join(' | ') : text;
         } catch {
             return text;
         }
     }
 
-    _getActionIcon(type) {
-        const icons = {
-            screenshot: '📸', click: '🖱️', double_click: '🖱️', right_click: '🖱️',
-            type: '⌨️', press: '⌨️', hotkey: '⌨️',
-            open_application: '🚀', browser_navigate: '🌐',
-            browser_click: '🖱️', browser_type: '⌨️', browser_extract: '📄',
-            browser_snapshot: '📋', browser_tabs: '📑', browser_new_tab: '➕',
-            browser_switch_tab: '🔀', browser_close_tab: '❌',
-            browser_go_back: '◀️', browser_go_forward: '▶️', browser_scroll: '🔄',
-            terminal_run: '💻', scroll: '🔄', screen_read_text: '👁️',
-            move: '↗️', drag: '↕️', wait: '⏳',
-            generate_image: '🎨', generate_video: '🎬', generate_music: '🎵',
+    /**
+     * Mapea una tool de MCPControl a un "tipo" de icono ya existente, para que
+     * las acciones mcp_call_tool muestren un icono significativo (teclado, ratón,
+     * cámara…) en vez del engranaje genérico.
+     */
+    _resolveMcpIconType(params) {
+        const tool = String((params && params.tool) || '').toLowerCase();
+        const map = {
+            press_key: 'press',
+            press_key_combination: 'hotkey',
+            hold_key: 'press',
+            type_text: 'type',
+            get_screenshot: 'screenshot',
+            get_screen_size: 'screenshot',
+            click_at: 'click',
+            click_mouse: 'click',
+            double_click: 'double_click',
+            move_mouse: 'move',
+            drag_mouse: 'drag',
+            scroll_mouse: 'scroll',
+            get_cursor_position: 'move',
+            focus_window: 'open_application',
+            get_active_window: 'browser_snapshot',
+            set_clipboard_content: 'type',
+            get_clipboard_content: 'file_read_text',
         };
-        return icons[type] || '⚙️';
+        return map[tool] || null;
+    }
+
+    _getActionIcon(type, params) {
+        const s = (d) => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+        // mcp_call_tool: usar el icono de la tool subyacente cuando se reconoce.
+        if (type === 'mcp_call_tool') {
+            const resolved = this._resolveMcpIconType(params);
+            if (resolved) type = resolved;
+        }
+        const icons = {
+            screenshot: s('<path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/>'),
+            click: s('<path d="M4 4l7.07 17 2.51-7.39L21 11.07z"/>'),
+            double_click: s('<path d="M4 4l7.07 17 2.51-7.39L21 11.07z"/>'),
+            right_click: s('<path d="M4 4l7.07 17 2.51-7.39L21 11.07z"/>'),
+            type: s('<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/>'),
+            press: s('<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/>'),
+            hotkey: s('<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/>'),
+            open_application: s('<polygon points="5 3 19 12 5 21 5 3"/>'),
+            browser_navigate: s('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>'),
+            browser_click: s('<path d="M4 4l7.07 17 2.51-7.39L21 11.07z"/>'),
+            browser_type: s('<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 16h10"/>'),
+            browser_extract: s('<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>'),
+            browser_snapshot: s('<path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/>'),
+            browser_use_automation_profile: s('<circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10"/>'),
+            terminal_run: s('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'),
+            scroll: s('<path d="M12 5v14M5 12l7-7 7 7"/>'),
+            screen_read_text: s('<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>'),
+            move: s('<path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/>'),
+            drag: s('<path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/>'),
+            wait: s('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>'),
+            file_write_text: s('<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>'),
+            file_read_text: s('<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>'),
+            file_exists: s('<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'),
+            task_complete: s('<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'),
+            generate_image: s('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>'),
+            generate_video: s('<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>'),
+            generate_music: s('<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>'),
+        };
+        return icons[type] || s('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>');
+    }
+
+    /**
+     * Etiqueta legible para una llamada mcp_call_tool, según la tool y sus
+     * argumentos (ej. "Tecla: enter", "Escribiendo: notepad", "Click en (720, 450)").
+     */
+    _getMcpLabel(params) {
+        const tool = String((params && params.tool) || '').toLowerCase();
+        const a = (params && params.arguments) || {};
+        const clip = (t) => {
+            const s = String(t == null ? '' : t);
+            return s.length > 32 ? s.slice(0, 32) + '…' : s;
+        };
+        switch (tool) {
+            case 'press_key': return `Tecla: ${a.key || '?'}`;
+            case 'press_key_combination': return `Atajo: ${Array.isArray(a.keys) ? a.keys.join(' + ') : (a.keys || '?')}`;
+            case 'hold_key': return `Mantener tecla: ${a.key || '?'}`;
+            case 'type_text': return `Escribiendo: "${clip(a.text)}"`;
+            case 'get_screenshot': return 'Captura de pantalla';
+            case 'get_screen_size': return 'Tamaño de pantalla';
+            case 'click_at': return `Click en (${a.x}, ${a.y})`;
+            case 'click_mouse': return 'Click del ratón';
+            case 'double_click': return (a.x != null) ? `Doble click en (${a.x}, ${a.y})` : 'Doble click';
+            case 'move_mouse': return `Mover cursor a (${a.x}, ${a.y})`;
+            case 'drag_mouse': return `Arrastrar (${a.fromX}, ${a.fromY}) → (${a.toX}, ${a.toY})`;
+            case 'scroll_mouse': return `Scroll ${Number(a.amount) >= 0 ? 'abajo' : 'arriba'}`;
+            case 'focus_window': return `Enfocar ventana: ${clip(a.title)}`;
+            case 'get_active_window': return 'Ventana activa';
+            case 'set_clipboard_content': return 'Copiar al portapapeles';
+            case 'get_clipboard_content': return 'Leer portapapeles';
+            default: return tool ? `MCP: ${tool}` : `MCP: ${params.server_id || 'tool'}`;
+        }
     }
 
     _getActionLabel(type, params) {
         switch (type) {
             case 'screenshot': return 'Captura de pantalla';
             case 'screen_read_text': return 'Leyendo texto de pantalla (OCR)';
+            case 'delegate_computer_use': return 'Delegando a computer use';
+            case 'mcp_call_tool': return this._getMcpLabel(params);
             case 'click': return `Click en (${params.x}, ${params.y})`;
             case 'double_click': return `Doble click en (${params.x}, ${params.y})`;
             case 'right_click': return `Click derecho en (${params.x}, ${params.y})`;
@@ -361,6 +856,7 @@ class ChatManager {
         if (!params || Object.keys(params).length === 0) return '';
         switch (type) {
             case 'type': return `<code>${this._escapeHtml(params.text || '')}</code>${params.submit ? ' <span class="action-param-tag">+ Enter</span>' : ''}`;
+            case 'delegate_computer_use': return `<code>${this._escapeHtml(params.task || '')}</code>${params.monitor ? ` <span class="action-param-tag">monitor ${params.monitor}</span>` : ''}`;
             case 'terminal_run': return `<code>${this._escapeHtml(params.command || '')}</code>`;
             case 'browser_navigate': return `<code>${this._escapeHtml(params.url || '')}</code>`;
             case 'browser_click': return `selector: <code>${this._escapeHtml(params.selector || '')}</code>${params.force ? ' <span class="action-param-tag">force</span>' : ''}`;

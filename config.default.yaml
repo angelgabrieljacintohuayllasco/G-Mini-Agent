@@ -24,8 +24,8 @@ server:
 
 model_router:
   mode: "manual"            # auto | manual
-  default_provider: "openai"
-  default_model: "gpt-5.4"
+  default_provider: "google"
+  default_model: "gemini-3.1-pro-preview"   # Agente principal (coordinador). Cambiable desde el selector.
   policy:
     interactive_chat: "fast"
     critical_actions: "high_reasoning"
@@ -63,10 +63,16 @@ providers:
   google:
     api_key_vault: "google_api"
     base_url: "https://generativelanguage.googleapis.com/v1beta"
+    backend: "ai_studio"        # ai_studio | vertex_ai — AI Studio usa API key; Vertex AI usa credenciales GCP y consume los créditos de Google Cloud
+    project_id: ""              # Solo para vertex_ai: ID del proyecto GCP (ej: "my-project-12345")
+    location: "global"          # Solo para vertex_ai: región GCP. Usa "global" para acceder a Gemini 3.x preview; "us-central1" solo tiene Gemini 2.5
+    credentials_file: ""        # Solo para vertex_ai: ruta opcional a service account JSON key (si vacío, usa Application Default Credentials)
     models:
+      - "gemini-3.5-flash"                                      # NUEVO: Latest estable, Pro-level coding, ejecución agéntica paralela
       - "gemini-3.1-pro-preview"                               # Inteligencia avanzada, coding agéntico (1M ctx)
       - "gemini-3-flash-preview"                                # Rendimiento frontier a fracción del costo (1M ctx)
-      - "gemini-3.1-flash-lite-preview"                         # Flash-Lite: más rápido y económico (1M ctx)
+      - "gemini-3.1-flash-lite"                                 # Flash-Lite estable: ultra rápido y económico (1M ctx)
+      - "gemini-3.1-flash-lite-preview"                         # Flash-Lite preview (1M ctx)
       - "gemini-2.5-pro"                                        # Pro estable (1M ctx)
       - "gemini-2.5-flash"                                      # Flash estable
       - "gemini-2.5-flash-lite"                                 # Flash-Lite estable
@@ -133,6 +139,7 @@ providers:
 vision:
   enabled: true             # Vision activa para el agente
   mode: "token_saver"       # token_saver | computer_use
+  target_monitor: 0         # 0 = todos los monitores; 1 = monitor primario; 2 = secundario, etc.
   ocr_engine: "auto"        # auto | tesseract | easyocr | paddleocr
   ocr_multi_engine: true    # Si un motor OCR falla o no devuelve texto, intenta con el siguiente
   ui_elements_enabled: true # Adjunta elementos de UI detectados al analisis de pantalla
@@ -176,6 +183,17 @@ vision:
   retry_max_delay_ms: 1500
   retry_backoff_multiplier: 2.0
   max_screenshot_width: 1920   # Ancho máximo de screenshot enviado al LLM (0 = sin límite)
+
+computer_use:
+  enabled: true                                          # Sub-agente de computer use activo
+  model: "gemini-2.5-computer-use-preview-10-2025"       # Modelo con soporte nativo computer_use
+  provider: "google"                                     # Solo Google soporta native computer_use tool
+  max_iterations: 30                                     # Ciclos screenshot-acción por delegación
+  timeout_seconds: 180                                   # Timeout por delegación (3 min)
+  stabilization_delay_seconds: 3                         # Espera tras cada acción para que la UI se actualice
+  coordinate_scale: 1000                                 # Gemini usa coords normalizadas 0-1000
+  target_monitor: 0                                      # 0 = heredar de vision.target_monitor
+  screenshot_mode: "computer_use"                        # Modo de visión para screenshots del sub-agente
 
 automation:
   enabled: true             # Automatización activa para agente autónomo
@@ -240,10 +258,16 @@ editors:
     cursor: ""
 
 mcp:
-  enabled: false
+  enabled: true
   protocol_version: "2024-11-05"
   request_timeout_seconds: 20
-  servers: []               # Lista de servidores MCP configurados por el usuario
+  servers:                   # Lista de servidores MCP configurados por el usuario
+    - id: "mcpcontrol"
+      name: "MCPControl"
+      command: "mcp-control"
+      args: []
+      transport: "stdio"
+      enabled: true
 
 skills:
   enabled: true
@@ -489,9 +513,20 @@ security:
 voice:
   enabled: false            # Se activa en Fase 3
   auto_tts: false           # Sintetizar voz automáticamente en cada respuesta
+  # Presupuesto de tokens para la voz simulada (STT→LLM→TTS).
+  # CRITICO con modelos de razonamiento (gemini-3.x thinking): los tokens de
+  # "pensamiento" consumen max_output_tokens; valores bajos (p.ej. 1024) truncaban
+  # la respuesta a la mitad y rompian los bloques [ACTION:...]. No bajar de ~4096.
+  max_tokens: 8192                 # turno principal (genera acciones)
+  vision_max_tokens: 4096          # turno de analisis visual tras screenshot
+  vision_repair_max_tokens: 2048   # turno de "completar" descripcion visual
+  # Maximo de turnos del bucle agentico por enunciado: tras ejecutar acciones,
+  # el modelo hace otro turno para confirmar/continuar. Acota bucles infinitos.
+  max_agentic_turns: 5
   tts_primary: "melotts"    # melotts | elevenlabs | gemini-3.1-flash-tts-preview | gemini-2.5-flash-preview-tts | gemini-2.5-pro-preview-tts | none
   tts_fallback: "melotts"
   tts_speed: 1.0
+  google_voice: "Kore"      # Voz de Google Gemini TTS: Kore | Puck | Charon | Aoede | Zephyr | Fenrir | Leda | Orus | ...
   stt_engine: "faster-whisper"
   stt_model: "large-v3"
   stt_language: "es"
@@ -504,8 +539,10 @@ voice:
     latency_optimization: 3
 
 character:
-  type: "2d"                # 2d | 3d
-  skin: "default"
+  type: "3d"                # 3d | 2d | none
+  skin: "energy-ball"       # energy-ball | girl-3d | girl-glb | ...
+  mode: "chat"              # chat | skin (chat flotante o avatar flotante)
+  emotions_enabled: false
   default_size: 200
   default_opacity: 100
   overlay_position:
@@ -542,6 +579,7 @@ model_assignments:
   creatividad: "openai:gpt-4o"                         # Sub-agente creativo
   matematicas: "deepseek:deepseek-reasoner"            # Sub-agente razonamiento
   sin_censura: "xai:grok-3"                            # Sub-agente sin restricciones
+  computer_use: "google:gemini-2.5-computer-use-preview-10-2025"  # Sub-agente interacción UI
   analisis: ""                                         # Hereda modelo por defecto
   general: ""                                          # Hereda modelo por defecto
 
@@ -559,6 +597,7 @@ prompts:
   delegation_planner: ""
   subagent_worker_system: ""
   subagent_executor_system: ""
+  computer_use_system: ""
   subagent_worker_user: ""
   critic_system: ""
   critic_user: ""

@@ -66,7 +66,7 @@ class HistoryManager {
         if (this.sessions.length === 0) {
             this.chatList.innerHTML = `
                 <div class="chat-list-empty">
-                    <div class="chat-list-empty-icon">📂</div>
+                    <div class="chat-list-empty-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg></div>
                     <div>No hay conversaciones guardadas</div>
                 </div>
             `;
@@ -90,8 +90,8 @@ class HistoryManager {
                         <span class="chat-item-date">${this._escapeHtml(mode)}</span>
                         <span class="chat-item-count">${count} msgs</span>
                         <span class="chat-item-actions">
-                            <button class="btn-delete-chat" 
-                                    title="Eliminar">🗑️</button>
+                            <button class="btn-delete-chat"
+                                    title="Eliminar"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button>
                         </span>
                     </div>
                 </div>
@@ -223,7 +223,8 @@ class HistoryManager {
                         chatManager.updateActionCard(
                             cardEl,
                             meta.success !== false,
-                            meta.result_preview || ''
+                            meta.result_preview || '',
+                            meta.duration_ms
                         );
                     } else if (msg.role === 'display' || msgType === 'system' || msgType === 'action' || msgType === 'error' || msgType === 'warning') {
                         const cssClass = msgType === 'error' ? 'error-message'

@@ -15,6 +15,10 @@ class VoiceRealtime {
         this._processor = null;
         /** @type {AudioContext|null} */
         this._playbackCtx = null;
+        /** @type {AnalyserNode|null} */
+        this._playbackAnalyser = null;
+        /** @type {Uint8Array|null} */
+        this._analyserBuffer = null;
         /** @type {Array<AudioBuffer>} */
         this._playQueue = [];
         this._playing = false;
@@ -76,6 +80,10 @@ class VoiceRealtime {
 
             // Playback context
             this._playbackCtx = new AudioContext({ sampleRate: 24000 });
+            this._playbackAnalyser = this._playbackCtx.createAnalyser();
+            this._playbackAnalyser.fftSize = 256;
+            this._playbackAnalyser.smoothingTimeConstant = 0.6;
+            this._analyserBuffer = new Uint8Array(this._playbackAnalyser.fftSize);
             this._playQueue = [];
             this._playing = false;
 
@@ -131,7 +139,9 @@ class VoiceRealtime {
                 float32 = new Float32Array(bytes.buffer);
             }
 
-            const sampleRate = this._playbackCtx.sampleRate;
+            // PCM16 from backend is always 24kHz — use source rate, not context rate.
+            // AudioContext will resample automatically during playback.
+            const sampleRate = (format === 'pcm16') ? 24000 : this._playbackCtx.sampleRate;
             const audioBuffer = this._playbackCtx.createBuffer(1, float32.length, sampleRate);
             audioBuffer.getChannelData(0).set(float32);
 
@@ -155,7 +165,12 @@ class VoiceRealtime {
         const buffer = this._playQueue.shift();
         const source = this._playbackCtx.createBufferSource();
         source.buffer = buffer;
-        source.connect(this._playbackCtx.destination);
+        if (this._playbackAnalyser) {
+            source.connect(this._playbackAnalyser);
+            this._playbackAnalyser.connect(this._playbackCtx.destination);
+        } else {
+            source.connect(this._playbackCtx.destination);
+        }
         source.onended = () => {
             this._playing = false;
             this._drainPlayQueue();
@@ -181,8 +196,27 @@ class VoiceRealtime {
             try { this._playbackCtx.close(); } catch (_) { /* noop */ }
             this._playbackCtx = null;
         }
+        this._playbackAnalyser = null;
+        this._analyserBuffer = null;
         this._playQueue = [];
         this._playing = false;
+    }
+
+    /**
+     * Nivel de amplitud (RMS) del audio que se esta reproduciendo, 0..1.
+     * Usado para animar la boca del avatar en modo skin.
+     * @returns {number}
+     */
+    getLevel() {
+        if (!this._playbackAnalyser || !this._analyserBuffer) return 0;
+        this._playbackAnalyser.getByteTimeDomainData(this._analyserBuffer);
+        let sumSquares = 0;
+        for (let i = 0; i < this._analyserBuffer.length; i++) {
+            const norm = (this._analyserBuffer[i] - 128) / 128;
+            sumSquares += norm * norm;
+        }
+        const rms = Math.sqrt(sumSquares / this._analyserBuffer.length);
+        return Math.min(1, rms * 4);
     }
 
     /**

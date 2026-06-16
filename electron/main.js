@@ -16,16 +16,26 @@ if (!electronModule || typeof electronModule !== 'object' || !electronModule.app
     process.exit(1);
 }
 
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen } = electronModule;
+const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, dialog, protocol, net } = electronModule;
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const yaml = require('js-yaml');
 
+protocol.registerSchemesAsPrivileged([
+    {
+        scheme: 'gmini-skin',
+        privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true },
+    },
+]);
+
 let mainWindow = null;
 let overlayWindow = null;
+let skinWindow = null;
+let skinChatSavedBounds = null;
 let tray = null;
 let isOverlayMode = false;
+let currentSkinMode = 'chat';
 let backendProcess = null;
 let backendProcessOwnership = 'none';
 let lastOverlayText = 'G-Mini Agent listo';
@@ -43,6 +53,14 @@ const OVERLAY_BASE_SIZE = Object.freeze({ width: 400, height: 300 });
 const OVERLAY_MIN_SCALE = 0.7;
 const OVERLAY_MAX_SCALE = 2.25;
 const OVERLAY_SAVE_DEBOUNCE_MS = 180;
+const SKIN_STATE_FILENAME = 'skin-state.json';
+const SKIN_BASE_SIZE = Object.freeze({ width: 320, height: 360 });
+const SKIN_MIN_SCALE = 0.5;
+const SKIN_MAX_SCALE = 2.5;
+const SKIN_SAVE_DEBOUNCE_MS = 180;
+const SKIN_CHAT_BUBBLE_WIDTH = 300;
+const DATA_SKINS_DIR = path.join(PROJECT_ROOT, 'data', 'skins');
+const CHARACTER_EMOTIONS = Object.freeze(['neutral', 'happy', 'sad', 'angry', 'surprised', 'relaxed']);
 const SINGLE_INSTANCE_LOCK = app.requestSingleInstanceLock();
 
 if (!SINGLE_INSTANCE_LOCK) {
@@ -57,8 +75,10 @@ const DEFAULT_APP_PREFERENCES = Object.freeze({
     startHiddenToTray: false,
 });
 const DEFAULT_CHARACTER_PREFERENCES = Object.freeze({
-    type: '2d',
-    skin: 'default',
+    type: '3d',
+    skin: 'energy-ball',
+    mode: 'chat',
+    emotionsEnabled: false,
     defaultSize: 200,
     defaultOpacity: 100,
     blinkIntervalMinMs: 3000,
@@ -69,6 +89,8 @@ const DEFAULT_OVERLAY_CHARACTER_RUNTIME = Object.freeze({
     status: 'idle',
     audioHintMs: 0,
     visemes: [],
+    mouth: 0,
+    emotion: 'neutral',
     updatedAt: 0,
 });
 
@@ -79,6 +101,8 @@ let overlayRuntimeState = null;
 let overlayStateSaveTimer = null;
 let overlayInteractionLocked = false;
 let overlayCharacterRuntime = { ...DEFAULT_OVERLAY_CHARACTER_RUNTIME };
+let skinRuntimeState = null;
+let skinStateSaveTimer = null;
 
 function deepMerge(base, override) {
     const merged = { ...(base || {}) };
@@ -144,9 +168,17 @@ function normalizeCharacterPreferences(rawCharacterConfig = {}) {
         900
     );
 
+    let type = String(rawCharacterConfig.type || DEFAULT_CHARACTER_PREFERENCES.type);
+    if (!['3d', '2d', 'none'].includes(type)) type = DEFAULT_CHARACTER_PREFERENCES.type;
+    const skin = String(rawCharacterConfig.skin || DEFAULT_CHARACTER_PREFERENCES.skin);
+    // La bola de energia es procedural/3D, nunca 2D (configs viejas la guardaban como 2D).
+    if (skin === 'energy-ball' && type === '2d') type = '3d';
+
     return {
-        type: String(rawCharacterConfig.type || DEFAULT_CHARACTER_PREFERENCES.type),
-        skin: String(rawCharacterConfig.skin || DEFAULT_CHARACTER_PREFERENCES.skin),
+        type,
+        skin,
+        mode: rawCharacterConfig.mode === 'skin' ? 'skin' : 'chat',
+        emotionsEnabled: !!rawCharacterConfig.emotions_enabled,
         defaultSize,
         defaultOpacity,
         blinkIntervalMinMs,
@@ -219,6 +251,7 @@ function refreshTrayMenu() {
         {
             label: 'Mostrar G-Mini Agent',
             click: () => {
+                setSkinMode('chat');
                 if (mainWindow) {
                     mainWindow.show();
                     mainWindow.focus();
@@ -239,6 +272,21 @@ function refreshTrayMenu() {
             checked: isOverlayMode,
             click: (item) => {
                 toggleOverlay(item.checked);
+            },
+        },
+        {
+            label: currentSkinMode === 'skin' ? 'Mostrar avatar' : 'Avatar flotante',
+            type: 'checkbox',
+            checked: currentSkinMode === 'skin' && !!(skinWindow && !skinWindow.isDestroyed() && skinWindow.isVisible()),
+            click: (item) => {
+                if (item.checked) {
+                    setSkinMode('skin');
+                } else if (currentSkinMode === 'skin' && skinWindow && !skinWindow.isDestroyed()) {
+                    skinWindow.hide();
+                    refreshTrayMenu();
+                } else {
+                    setSkinMode('chat');
+                }
             },
         },
         { type: 'separator' },
@@ -272,6 +320,7 @@ function applyCharacterPreferences(nextPreferences = null) {
         ...(nextPreferences || loadCharacterPreferencesFromDisk()),
     };
     broadcastOverlayState();
+    broadcastSkinState();
 }
 
 function reloadRuntimePreferencesFromDisk() {
@@ -428,6 +477,18 @@ function sanitizeCharacterRuntimeUpdate(payload = {}) {
             }));
     }
 
+    if (Number.isFinite(Number(payload.mouth))) {
+        nextState.mouth = clampNumber(Number(payload.mouth), 0, 1);
+    }
+
+    if (payload.emotion && typeof payload.emotion === 'object') {
+        const emotionName = String(payload.emotion.name || 'neutral').trim().toLowerCase();
+        nextState.emotion = CHARACTER_EMOTIONS.includes(emotionName) ? emotionName : 'neutral';
+    } else if (typeof payload.emotion === 'string') {
+        const emotionName = payload.emotion.trim().toLowerCase();
+        nextState.emotion = CHARACTER_EMOTIONS.includes(emotionName) ? emotionName : 'neutral';
+    }
+
     nextState.updatedAt = Number.isFinite(Number(payload.updatedAt))
         ? Number(payload.updatedAt)
         : Date.now();
@@ -521,7 +582,14 @@ function updateOverlayWindowInteractivity() {
     const shouldIgnoreMouse = overlayInteractionLocked || !overlayRuntimeState?.interactive;
 
     try {
-        overlayWindow.setIgnoreMouseEvents(shouldIgnoreMouse, { forward: true });
+        // forward solo con el overlay visible: con la ventana oculta el hook global
+        // de mouse que instala forward en Windows hace parpadear/saltar cualquier
+        // ventana del sistema al arrastrarla (electron#35030).
+        if (overlayWindow.isVisible()) {
+            overlayWindow.setIgnoreMouseEvents(shouldIgnoreMouse, { forward: true });
+        } else {
+            overlayWindow.setIgnoreMouseEvents(shouldIgnoreMouse);
+        }
     } catch (err) {
         console.error(`[Overlay] No se pudo actualizar click-through: ${err.message}`);
     }
@@ -597,8 +665,562 @@ function setOverlayCharacterRuntime(payload = {}) {
     if (overlayWindow && !overlayWindow.isDestroyed()) {
         overlayWindow.webContents.send('overlay-character-runtime', overlayCharacterRuntime);
     }
+    if (skinWindow && !skinWindow.isDestroyed()) {
+        skinWindow.webContents.send('overlay-character-runtime', overlayCharacterRuntime);
+    }
+    // La emoción es un evento ONE-SHOT, no estado persistente. Ya se envió arriba
+    // una vez; ahora la quitamos del estado base (-> 'neutral') para que NI el
+    // snapshot de broadcastOverlayState NI los siguientes updates de runtime
+    // (visemas/mouth/status, que llegan muchas veces por segundo al hablar) la
+    // reemitan. Si se reemitiera, el skin reaplicaría setEmotion en cada frame:
+    // la intensidad quedaría clavada en 1 (sonrisa pegada, nunca decae a neutral)
+    // y el gesto corporal se reiniciaría constantemente (convulsión). El skin VRM
+    // ignora 'neutral' (no está en su lista EMOTIONS), así que reenviarlo es no-op.
+    if (overlayCharacterRuntime.emotion && overlayCharacterRuntime.emotion !== 'neutral') {
+        overlayCharacterRuntime = { ...overlayCharacterRuntime, emotion: 'neutral' };
+    }
     broadcastOverlayState();
     return overlayCharacterRuntime;
+}
+
+// ── Skin Window — bounds/state helpers ──────────────────────
+
+function getSkinStatePath() {
+    return path.join(app.getPath('userData'), SKIN_STATE_FILENAME);
+}
+
+function getDefaultSkinBounds(display = null, scale = 1.0) {
+    const targetDisplay = display || screen.getPrimaryDisplay();
+    const workArea = getOverlayDisplayBounds(targetDisplay);
+    const normalizedScale = clampNumber(toFiniteNumber(scale, 1.0), SKIN_MIN_SCALE, SKIN_MAX_SCALE);
+    const width = Math.round(SKIN_BASE_SIZE.width * normalizedScale);
+    const height = Math.round(SKIN_BASE_SIZE.height * normalizedScale);
+    return {
+        x: Math.round(workArea.x + workArea.width - width - 40),
+        y: Math.round(workArea.y + workArea.height - height - 40),
+        width,
+        height,
+    };
+}
+
+function normalizeSkinBounds(rawBounds, preferredDisplayId = null) {
+    const preferredDisplay = preferredDisplayId !== null ? getDisplayById(preferredDisplayId) : null;
+    const fallbackDisplay = preferredDisplay || screen.getPrimaryDisplay();
+    const desiredWidth = toFiniteNumber(rawBounds?.width, SKIN_BASE_SIZE.width);
+    const inferredScale = desiredWidth / SKIN_BASE_SIZE.width;
+    const scale = clampNumber(toFiniteNumber(rawBounds?.scale, inferredScale), SKIN_MIN_SCALE, SKIN_MAX_SCALE);
+    const width = Math.round(SKIN_BASE_SIZE.width * scale);
+    const height = Math.round(SKIN_BASE_SIZE.height * scale);
+    const rawX = Math.round(toFiniteNumber(rawBounds?.x, getDefaultSkinBounds(fallbackDisplay, scale).x));
+    const rawY = Math.round(toFiniteNumber(rawBounds?.y, getDefaultSkinBounds(fallbackDisplay, scale).y));
+    const provisionalBounds = { x: rawX, y: rawY, width, height };
+
+    if (!hasVisibleIntersection(provisionalBounds)) {
+        const resetBounds = getDefaultSkinBounds(fallbackDisplay, scale);
+        return {
+            ...resetBounds,
+            scale,
+            displayId: fallbackDisplay.id,
+        };
+    }
+
+    const matchedDisplay = screen.getDisplayMatching(provisionalBounds) || fallbackDisplay;
+    const workArea = getOverlayDisplayBounds(matchedDisplay);
+    const clampedWidth = Math.min(width, workArea.width);
+    const clampedHeight = Math.min(height, workArea.height);
+    const finalScale = clampNumber(
+        Math.min(clampedWidth / SKIN_BASE_SIZE.width, clampedHeight / SKIN_BASE_SIZE.height),
+        SKIN_MIN_SCALE,
+        SKIN_MAX_SCALE
+    );
+    const finalWidth = Math.round(SKIN_BASE_SIZE.width * finalScale);
+    const finalHeight = Math.round(SKIN_BASE_SIZE.height * finalScale);
+    const x = clampNumber(rawX, workArea.x, workArea.x + workArea.width - finalWidth);
+    const y = clampNumber(rawY, workArea.y, workArea.y + workArea.height - finalHeight);
+
+    return {
+        x,
+        y,
+        width: finalWidth,
+        height: finalHeight,
+        scale: finalScale,
+        displayId: matchedDisplay.id,
+    };
+}
+
+function loadSkinStateFromDisk() {
+    const fallbackBounds = getDefaultSkinBounds();
+    const fallbackState = {
+        interactive: false,
+        scale: 1.0,
+        displayId: screen.getPrimaryDisplay().id,
+        bounds: fallbackBounds,
+    };
+
+    try {
+        const statePath = getSkinStatePath();
+        if (!fs.existsSync(statePath)) return fallbackState;
+        const rawState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+        const normalizedBounds = normalizeSkinBounds(rawState?.bounds || rawState, rawState?.displayId ?? null);
+        return {
+            interactive: false,
+            scale: normalizedBounds.scale,
+            displayId: normalizedBounds.displayId,
+            bounds: {
+                x: normalizedBounds.x,
+                y: normalizedBounds.y,
+                width: normalizedBounds.width,
+                height: normalizedBounds.height,
+            },
+        };
+    } catch (err) {
+        console.warn(`[Skin] No se pudo cargar estado persistido: ${err.message}`);
+        return fallbackState;
+    }
+}
+
+function persistSkinStateToDisk() {
+    if (!app.isReady() || !skinRuntimeState) return;
+
+    try {
+        fs.mkdirSync(app.getPath('userData'), { recursive: true });
+        fs.writeFileSync(
+            getSkinStatePath(),
+            JSON.stringify({
+                bounds: skinRuntimeState.bounds,
+                scale: skinRuntimeState.scale,
+                displayId: skinRuntimeState.displayId,
+            }, null, 2),
+            'utf8'
+        );
+    } catch (err) {
+        console.error(`[Skin] No se pudo persistir estado: ${err.message}`);
+    }
+}
+
+function scheduleSkinStatePersist() {
+    clearTimeout(skinStateSaveTimer);
+    skinStateSaveTimer = setTimeout(() => {
+        persistSkinStateToDisk();
+    }, SKIN_SAVE_DEBOUNCE_MS);
+}
+
+function updateSkinWindowInteractivity() {
+    if (!skinWindow || skinWindow.isDestroyed()) return;
+
+    const shouldIgnoreMouse = !skinRuntimeState?.interactive;
+
+    try {
+        // Sin { forward: true }: en Windows instala un hook global de mouse que hace
+        // parpadear/saltar CUALQUIER ventana del sistema al arrastrarla, incluso con
+        // esta ventana oculta (electron#35030, cerrado not-planned). El hover lo
+        // detecta el cursor poller del main process, asi que forward es innecesario.
+        skinWindow.setIgnoreMouseEvents(shouldIgnoreMouse);
+    } catch (err) {
+        console.error(`[Skin] No se pudo actualizar click-through: ${err.message}`);
+    }
+}
+
+// ── Cursor poller: detecta hover desde main process (fallback robusto
+//    para Windows donde setIgnoreMouseEvents forward es poco fiable) ──
+
+const SKIN_CURSOR_POLL_MS = 150;
+const SKIN_CURSOR_MARGIN_PX = 8;
+let skinCursorPollTimer = null;
+let skinVoiceActive = false;
+let skinCursorOutsideCount = 0;
+let lastSkinMoveAt = 0;
+
+function startSkinCursorPoll() {
+    if (skinCursorPollTimer) return;
+    skinCursorOutsideCount = 0;
+    skinCursorPollTimer = setInterval(() => {
+        if (!skinWindow || skinWindow.isDestroyed() || !skinWindow.isVisible()) return;
+
+        const p = screen.getCursorScreenPoint();
+        const b = skinWindow.getBounds();
+        const inside = p.x >= b.x - SKIN_CURSOR_MARGIN_PX
+            && p.x <= b.x + b.width + SKIN_CURSOR_MARGIN_PX
+            && p.y >= b.y - SKIN_CURSOR_MARGIN_PX
+            && p.y <= b.y + b.height + SKIN_CURSOR_MARGIN_PX;
+
+        if (inside && !skinRuntimeState?.interactive) {
+            skinCursorOutsideCount = 0;
+            setSkinInteractive(true);
+        } else if (!inside && skinRuntimeState?.interactive) {
+            if (skinChatSavedBounds || skinVoiceActive) return;
+            if (Date.now() - lastSkinMoveAt < 500) return;
+            skinCursorOutsideCount += 1;
+            if (skinCursorOutsideCount >= 2) {
+                setSkinInteractive(false);
+                skinCursorOutsideCount = 0;
+            }
+        } else if (inside) {
+            skinCursorOutsideCount = 0;
+        }
+    }, SKIN_CURSOR_POLL_MS);
+}
+
+function stopSkinCursorPoll() {
+    if (skinCursorPollTimer) {
+        clearInterval(skinCursorPollTimer);
+        skinCursorPollTimer = null;
+    }
+    skinCursorOutsideCount = 0;
+}
+
+function getSkinStateSnapshot() {
+    const fallbackBounds = getDefaultSkinBounds();
+    const activeBounds = skinWindow && !skinWindow.isDestroyed()
+        ? skinWindow.getBounds()
+        : (skinRuntimeState?.bounds || fallbackBounds);
+
+    return {
+        mode: currentSkinMode,
+        interactive: !!skinRuntimeState?.interactive,
+        visible: !!(skinWindow && !skinWindow.isDestroyed() && skinWindow.isVisible()),
+        displayId: skinRuntimeState?.displayId ?? null,
+        scale: skinRuntimeState?.scale ?? 1.0,
+        bounds: activeBounds,
+        minScale: SKIN_MIN_SCALE,
+        maxScale: SKIN_MAX_SCALE,
+        baseWidth: SKIN_BASE_SIZE.width,
+        baseHeight: SKIN_BASE_SIZE.height,
+        characterConfig: characterPreferences,
+        characterRuntime: overlayCharacterRuntime,
+        skins: scanAvailableSkinsCached(),
+    };
+}
+
+function broadcastSkinState() {
+    if (!app.isReady()) return;
+    const snapshot = getSkinStateSnapshot();
+    if (skinWindow && !skinWindow.isDestroyed()) {
+        skinWindow.webContents.send('skin-state', snapshot);
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('skin-state', snapshot);
+    }
+}
+
+function commitSkinBounds(nextBounds, options = {}) {
+    if (!skinWindow || skinWindow.isDestroyed()) return getSkinStateSnapshot();
+
+    const normalizedBounds = normalizeSkinBounds(nextBounds, options.displayId ?? skinRuntimeState?.displayId ?? null);
+    const finalBounds = {
+        x: normalizedBounds.x,
+        y: normalizedBounds.y,
+        width: normalizedBounds.width,
+        height: normalizedBounds.height,
+    };
+
+    skinRuntimeState = {
+        ...(skinRuntimeState || {}),
+        interactive: !!skinRuntimeState?.interactive,
+        bounds: finalBounds,
+        scale: normalizedBounds.scale,
+        displayId: normalizedBounds.displayId,
+    };
+
+    skinWindow.setBounds(finalBounds, Boolean(options.animate));
+    scheduleSkinStatePersist();
+    broadcastSkinState();
+    return getSkinStateSnapshot();
+}
+
+function setSkinInteractive(nextInteractive) {
+    if (!skinRuntimeState) {
+        skinRuntimeState = loadSkinStateFromDisk();
+    }
+
+    skinRuntimeState = {
+        ...skinRuntimeState,
+        interactive: !!nextInteractive,
+    };
+
+    updateSkinWindowInteractivity();
+    broadcastSkinState();
+    return getSkinStateSnapshot();
+}
+
+let cachedSkins = null;
+let cachedSkinsAt = 0;
+const SKINS_CACHE_TTL_MS = 2000;
+const SPRITE_FRAME_NAMES = ['idle', 'talk', 'blink', 'blink_talk'];
+const SKIN_NAME_INVALID_CHARS = /[<>:"/\\|?*\x00-\x1f]/g;
+
+function scanAvailableSkinsCached() {
+    const now = Date.now();
+    if (cachedSkins && (now - cachedSkinsAt) < SKINS_CACHE_TTL_MS) return cachedSkins;
+    cachedSkins = scanAvailableSkins();
+    cachedSkinsAt = now;
+    return cachedSkins;
+}
+
+function invalidateSkinsCache() {
+    cachedSkins = null;
+    cachedSkinsAt = 0;
+}
+
+// "Girl xsd" -> "girl-xsd" (gmini-skin:// usa el id como hostname: lowercase, sin espacios).
+function slugifySkinId(name) {
+    const base = String(name || '')
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    return base || 'skin';
+}
+
+function dedupeSkinId(candidate, usedIds) {
+    let id = candidate;
+    let n = 2;
+    while (usedIds.has(id)) {
+        id = `${candidate}-${n}`;
+        n += 1;
+    }
+    usedIds.add(id);
+    return id;
+}
+
+// Escanea data/skins/<groupDir>/* — carpeta = personaje. Si no hay skin.json,
+// auto-detecta: 3D -> primer .vrm/.glb/.gltf; 2D -> requiere idle.png y suma
+// talk/blink/blink_talk + emociones (CHARACTER_EMOTIONS) si existen los PNG.
+function scanSkinGroup(groupDir, group, usedIds) {
+    const results = [];
+    const groupPath = path.join(DATA_SKINS_DIR, groupDir);
+    let entries;
+    try {
+        entries = fs.readdirSync(groupPath, { withFileTypes: true });
+    } catch (err) {
+        return results;
+    }
+
+    for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const dir = `${groupDir}/${entry.name}`;
+        const folderPath = path.join(groupPath, entry.name);
+
+        let manifest = null;
+        const manifestPath = path.join(folderPath, 'skin.json');
+        if (fs.existsSync(manifestPath)) {
+            try {
+                manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+            } catch (err) {
+                console.warn(`[Skin] Manifiesto invalido en ${dir}: ${err.message}`);
+            }
+        }
+
+        let type = manifest?.type ? String(manifest.type) : null;
+        let resolved = manifest ? { ...manifest } : null;
+
+        if (resolved) {
+            if (group === '3d') {
+                if (!resolved.model || !fs.existsSync(path.join(folderPath, String(resolved.model)))) continue;
+                if (!type) type = 'glb';
+            } else {
+                if (!resolved.sprites?.idle || !fs.existsSync(path.join(folderPath, String(resolved.sprites.idle)))) continue;
+                if (!type) type = 'sprite2d';
+            }
+        } else {
+            let files;
+            try {
+                files = fs.readdirSync(folderPath, { withFileTypes: true })
+                    .filter((f) => f.isFile())
+                    .map((f) => f.name);
+            } catch (err) {
+                continue;
+            }
+
+            if (group === '3d') {
+                const vrmFile = files.find((f) => /\.vrm$/i.test(f));
+                const glbFile = files.find((f) => /\.(glb|gltf)$/i.test(f));
+                if (vrmFile) {
+                    type = 'vrm';
+                    resolved = { name: entry.name, model: vrmFile };
+                } else if (glbFile) {
+                    type = 'glb';
+                    resolved = { name: entry.name, model: glbFile };
+                } else {
+                    continue;
+                }
+            } else {
+                const lowerMap = new Map(files.map((f) => [f.toLowerCase(), f]));
+                if (!lowerMap.has('idle.png')) continue;
+                const sprites = {};
+                for (const frame of SPRITE_FRAME_NAMES) {
+                    const fname = `${frame}.png`;
+                    if (lowerMap.has(fname)) sprites[frame] = lowerMap.get(fname);
+                }
+                const emotions = {};
+                for (const emo of CHARACTER_EMOTIONS) {
+                    if (emo === 'neutral') continue;
+                    const fname = `${emo}.png`;
+                    if (lowerMap.has(fname)) emotions[emo] = lowerMap.get(fname);
+                }
+                if (Object.keys(emotions).length) sprites.emotions = emotions;
+                type = 'sprite2d';
+                resolved = { name: entry.name, sprites };
+            }
+        }
+
+        const id = dedupeSkinId(slugifySkinId(resolved.id || entry.name), usedIds);
+        resolved.id = id;
+        resolved.name = String(resolved.name || entry.name);
+        resolved.type = type;
+
+        results.push({ id, name: resolved.name, type, group, dir, manifest: resolved });
+    }
+
+    return results;
+}
+
+function scanAvailableSkins() {
+    const usedIds = new Set(['energy-ball']);
+    const skins = [
+        {
+            id: 'energy-ball',
+            name: 'Bola de energia',
+            type: 'procedural',
+            group: '3d',
+            dir: null,
+            manifest: { id: 'energy-ball', name: 'Bola de energia' },
+        },
+    ];
+
+    try {
+        skins.push(...scanSkinGroup('3D', '3d', usedIds));
+        skins.push(...scanSkinGroup('2D', '2d', usedIds));
+    } catch (err) {
+        console.warn(`[Skin] No se pudo escanear skins: ${err.message}`);
+    }
+
+    return skins;
+}
+
+// Crea data/skins/<3D|2D>/<Nombre>/ a partir de archivos elegidos via skin:pick-file.
+// 3D requiere un modelo .vrm/.glb/.gltf; 2D requiere los 4 sprites base
+// (idle/talk/blink/blink_talk); emociones (CHARACTER_EMOTIONS) son opcionales.
+function createSkin(payload = {}) {
+    const group = payload.group === '2d' ? '2d' : payload.group === '3d' ? '3d' : null;
+    if (!group) return { ok: false, error: 'invalid-group' };
+
+    const name = String(payload.name || '')
+        .trim()
+        .replace(SKIN_NAME_INVALID_CHARS, '')
+        .replace(/[.\s]+$/, '');
+    if (!name) return { ok: false, error: 'invalid-name' };
+
+    const id = slugifySkinId(name);
+    if (scanAvailableSkins().some((s) => s.id === id)) {
+        return { ok: false, error: 'duplicate' };
+    }
+
+    const groupDir = group === '3d' ? '3D' : '2D';
+    const targetDir = path.join(DATA_SKINS_DIR, groupDir, name);
+    if (fs.existsSync(targetDir)) {
+        return { ok: false, error: 'duplicate' };
+    }
+
+    let manifestObj;
+    try {
+        if (group === '3d') {
+            const modelSrc = String(payload.model || '');
+            const ext = path.extname(modelSrc).toLowerCase();
+            if (!modelSrc || !fs.existsSync(modelSrc) || !['.vrm', '.glb', '.gltf'].includes(ext)) {
+                return { ok: false, error: 'missing-model' };
+            }
+            fs.mkdirSync(targetDir, { recursive: true });
+            const modelFile = `model${ext}`;
+            fs.copyFileSync(modelSrc, path.join(targetDir, modelFile));
+            manifestObj = { id, name, type: ext === '.vrm' ? 'vrm' : 'glb', model: modelFile };
+        } else {
+            const sprites = payload.sprites || {};
+            for (const frame of SPRITE_FRAME_NAMES) {
+                const src = String(sprites[frame] || '');
+                if (!src || !fs.existsSync(src)) {
+                    return { ok: false, error: 'missing-sprites' };
+                }
+            }
+            fs.mkdirSync(targetDir, { recursive: true });
+            const spritesOut = {};
+            for (const frame of SPRITE_FRAME_NAMES) {
+                const fname = `${frame}.png`;
+                fs.copyFileSync(String(sprites[frame]), path.join(targetDir, fname));
+                spritesOut[frame] = fname;
+            }
+            const emotionsOut = {};
+            const emotions = sprites.emotions || {};
+            for (const emo of CHARACTER_EMOTIONS) {
+                if (emo === 'neutral') continue;
+                const src = String(emotions[emo] || '');
+                if (!src || !fs.existsSync(src)) continue;
+                const fname = `${emo}.png`;
+                fs.copyFileSync(src, path.join(targetDir, fname));
+                emotionsOut[emo] = fname;
+            }
+            if (Object.keys(emotionsOut).length) spritesOut.emotions = emotionsOut;
+            manifestObj = { id, name, type: 'sprite2d', sprites: spritesOut };
+        }
+
+        fs.writeFileSync(path.join(targetDir, 'skin.json'), JSON.stringify(manifestObj, null, 2));
+    } catch (err) {
+        try {
+            fs.rmSync(targetDir, { recursive: true, force: true });
+        } catch (cleanupErr) {
+            // ignore
+        }
+        return { ok: false, error: 'copy-failed', detail: err.message };
+    }
+
+    invalidateSkinsCache();
+    broadcastSkinState();
+    return { ok: true, skin: { id, name, type: manifestObj.type, group, dir: `${groupDir}/${name}` } };
+}
+
+// ── Skin Mode (avatar flotante vs ventana de chat) ──────────
+
+function setSkinMode(mode) {
+    const nextMode = mode === 'skin' ? 'skin' : 'chat';
+    currentSkinMode = nextMode;
+
+    if (nextMode === 'skin') {
+        if (!skinWindow || skinWindow.isDestroyed()) {
+            createSkinWindow();
+        }
+        if (skinWindow) {
+            if (typeof skinWindow.showInactive === 'function') {
+                skinWindow.showInactive();
+            } else {
+                skinWindow.show();
+            }
+            setSkinInteractive(false);
+            broadcastSkinState();
+            startSkinCursorPoll();
+        }
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.hide();
+        }
+    } else {
+        stopSkinCursorPoll();
+        if (skinWindow && !skinWindow.isDestroyed()) {
+            setSkinInteractive(false);
+            if (skinChatSavedBounds) {
+                skinWindow.setBounds(skinChatSavedBounds);
+                skinChatSavedBounds = null;
+            }
+            skinWindow.hide();
+            broadcastSkinState();
+        }
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.show();
+            mainWindow.focus();
+        }
+    }
+
+    refreshTrayMenu();
+    return getSkinStateSnapshot();
 }
 
 function focusPrimaryWindow() {
@@ -808,6 +1430,7 @@ function createMainWindow() {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
+            backgroundThrottling: false,
         },
         icon: path.join(__dirname, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
         title: 'G-Mini Agent',
@@ -816,7 +1439,7 @@ function createMainWindow() {
     mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
 
     mainWindow.once('ready-to-show', () => {
-        if (!appPreferences.startHiddenToTray) {
+        if (!appPreferences.startHiddenToTray && currentSkinMode !== 'skin') {
             mainWindow.show();
             mainWindow.focus();
         }
@@ -925,6 +1548,74 @@ function createOverlayWindow() {
     });
 }
 
+// ── Skin Window (avatar 2D/3D transparente, click-through) ──
+
+function createSkinWindow() {
+    skinRuntimeState = loadSkinStateFromDisk();
+    const skinBounds = skinRuntimeState.bounds || getDefaultSkinBounds();
+
+    skinWindow = new BrowserWindow({
+        width: skinBounds.width,
+        height: skinBounds.height,
+        x: skinBounds.x,
+        y: skinBounds.y,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        resizable: false,
+        focusable: true,
+        hasShadow: false,
+        show: false,
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.js'),
+            contextIsolation: true,
+            nodeIntegration: false,
+            backgroundThrottling: false,
+        },
+    });
+
+    skinWindow.loadFile(path.join(__dirname, 'src', 'skin.html'));
+    skinWindow.setVisibleOnAllWorkspaces(true);
+    updateSkinWindowInteractivity();
+
+    skinWindow.webContents.on('did-finish-load', () => {
+        broadcastSkinState();
+        skinWindow.webContents.send('overlay-character-runtime', overlayCharacterRuntime);
+    });
+
+    let skinMoveBroadcastTimer = null;
+    skinWindow.on('move', () => {
+        if (skinWindow.isDestroyed()) return;
+        if (skinChatSavedBounds) return;
+        const bounds = skinWindow.getBounds();
+        const normalizedBounds = normalizeSkinBounds(bounds, skinRuntimeState?.displayId ?? null);
+        skinRuntimeState = {
+            ...(skinRuntimeState || {}),
+            interactive: !!skinRuntimeState?.interactive,
+            scale: normalizedBounds.scale,
+            displayId: normalizedBounds.displayId,
+            bounds: {
+                x: bounds.x,
+                y: bounds.y,
+                width: bounds.width,
+                height: bounds.height,
+            },
+        };
+        scheduleSkinStatePersist();
+        if (skinMoveBroadcastTimer) clearTimeout(skinMoveBroadcastTimer);
+        skinMoveBroadcastTimer = setTimeout(() => {
+            skinMoveBroadcastTimer = null;
+            broadcastSkinState();
+        }, 100);
+    });
+
+    skinWindow.on('closed', () => {
+        stopSkinCursorPoll();
+        skinWindow = null;
+    });
+}
+
 // ── Tray ─────────────────────────────────────────────────────
 
 function createTray() {
@@ -953,6 +1644,19 @@ function createTray() {
     refreshTrayMenu();
 
     tray.on('click', () => {
+        if (currentSkinMode === 'skin') {
+            if (!skinWindow || skinWindow.isDestroyed()) {
+                createSkinWindow();
+            }
+            if (skinWindow) {
+                if (typeof skinWindow.showInactive === 'function') skinWindow.showInactive();
+                else skinWindow.show();
+                broadcastSkinState();
+                startSkinCursorPoll();
+            }
+            refreshTrayMenu();
+            return;
+        }
         if (mainWindow) {
             if (mainWindow.isVisible()) {
                 mainWindow.focus();
@@ -978,12 +1682,16 @@ function toggleOverlay(enable) {
             } else {
                 overlayWindow.show();
             }
+            // Reaplicar con la ventana ya visible para que forward se active.
+            updateOverlayWindowInteractivity();
             broadcastOverlayState();
         }
     } else {
         if (overlayWindow) {
             setOverlayInteractive(false, { force: true });
             overlayWindow.hide();
+            // Reaplicar con la ventana oculta para desinstalar el hook de forward.
+            updateOverlayWindowInteractivity();
         }
     }
     refreshTrayMenu();
@@ -992,6 +1700,65 @@ function toggleOverlay(enable) {
 // ── IPC Handlers ─────────────────────────────────────────────
 
 ipcMain.handle('get-backend-url', () => BACKEND_URL);
+
+// ── Guardar media generada (imagen/video/audio) en una carpeta a eleccion ──
+function _fetchBufferFromUrl(url) {
+    return new Promise((resolve, reject) => {
+        let lib;
+        try {
+            lib = url.startsWith('https:') ? require('https') : require('http');
+        } catch (e) {
+            reject(e);
+            return;
+        }
+        const req = lib.get(url, (res) => {
+            if (res.statusCode !== 200) {
+                res.resume();
+                reject(new Error('HTTP ' + res.statusCode));
+                return;
+            }
+            const chunks = [];
+            res.on('data', (c) => chunks.push(c));
+            res.on('end', () => resolve(Buffer.concat(chunks)));
+        });
+        req.on('error', reject);
+        req.setTimeout(30000, () => req.destroy(new Error('timeout')));
+    });
+}
+
+ipcMain.handle('save-media-as', async (_, url, filename) => {
+    try {
+        if (!url) return { ok: false, error: 'sin url' };
+
+        const suggested = filename || (() => {
+            try { return decodeURIComponent(url.split('/').pop().split('?')[0]) || 'archivo'; }
+            catch (e) { return 'archivo'; }
+        })();
+
+        const result = await dialog.showSaveDialog(mainWindow, {
+            title: 'Guardar archivo generado',
+            defaultPath: suggested,
+        });
+        if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+
+        let buf;
+        if (url.startsWith('data:')) {
+            const comma = url.indexOf(',');
+            const meta = url.slice(5, comma);
+            const dataPart = url.slice(comma + 1);
+            buf = meta.includes('base64')
+                ? Buffer.from(dataPart, 'base64')
+                : Buffer.from(decodeURIComponent(dataPart), 'utf8');
+        } else {
+            buf = await _fetchBufferFromUrl(url);
+        }
+
+        fs.writeFileSync(result.filePath, buf);
+        return { ok: true, path: result.filePath };
+    } catch (e) {
+        return { ok: false, error: String((e && e.message) || e) };
+    }
+});
 
 ipcMain.handle('minimize-window', () => {
     if (mainWindow) mainWindow.minimize();
@@ -1087,6 +1854,158 @@ ipcMain.handle('overlay:set-bounds', (_, rawBounds = {}) => {
         return getOverlayStateSnapshot();
     }
     return commitOverlayBounds(rawBounds);
+});
+
+// ── Skin IPC ─────────────────────────────────────────────────
+
+ipcMain.handle('skin:set-mode', (_, mode) => {
+    return setSkinMode(mode);
+});
+
+ipcMain.handle('skin:get-state', () => {
+    return getSkinStateSnapshot();
+});
+
+ipcMain.handle('skin:list', () => {
+    return scanAvailableSkins();
+});
+
+ipcMain.handle('skin:pick-file', async (_, kind) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return null;
+    const filters = kind === 'model'
+        ? [{ name: 'Modelo 3D (VRoid)', extensions: ['vrm', 'glb', 'gltf'] }]
+        : [{ name: 'Imagen PNG', extensions: ['png'] }];
+    const result = await dialog.showOpenDialog(mainWindow, {
+        title: kind === 'model' ? 'Selecciona el modelo .vrm o .glb' : 'Selecciona la imagen PNG',
+        properties: ['openFile'],
+        filters,
+    });
+    if (result.canceled || !result.filePaths.length) return null;
+    return result.filePaths[0];
+});
+
+ipcMain.handle('skin:create', (_, payload = {}) => {
+    return createSkin(payload || {});
+});
+
+ipcMain.handle('skin:set-interactive', (_, interactive) => {
+    return setSkinInteractive(interactive);
+});
+
+ipcMain.handle('skin:move-by', (_, dx, dy) => {
+    if (!skinWindow || skinWindow.isDestroyed()) {
+        return getSkinStateSnapshot();
+    }
+    lastSkinMoveAt = Date.now();
+    const bounds = skinWindow.getBounds();
+    return commitSkinBounds({
+        x: Math.round(bounds.x + toFiniteNumber(dx, 0)),
+        y: Math.round(bounds.y + toFiniteNumber(dy, 0)),
+        width: bounds.width,
+        height: bounds.height,
+    });
+});
+
+ipcMain.handle('skin:resize-by', (_, delta) => {
+    if (!skinWindow || skinWindow.isDestroyed()) {
+        return getSkinStateSnapshot();
+    }
+
+    const currentBounds = skinWindow.getBounds();
+    const currentScale = clampNumber(
+        toFiniteNumber(skinRuntimeState?.scale, currentBounds.width / SKIN_BASE_SIZE.width),
+        SKIN_MIN_SCALE,
+        SKIN_MAX_SCALE
+    );
+    const nextScale = clampNumber(currentScale + toFiniteNumber(delta, 0), SKIN_MIN_SCALE, SKIN_MAX_SCALE);
+    const nextWidth = Math.round(SKIN_BASE_SIZE.width * nextScale);
+    const nextHeight = Math.round(SKIN_BASE_SIZE.height * nextScale);
+    const widthDelta = nextWidth - currentBounds.width;
+    const heightDelta = nextHeight - currentBounds.height;
+
+    // Ancla abajo-centro: los "pies" del personaje quedan fijos al redimensionar.
+    const nextX = currentBounds.x - Math.round(widthDelta / 2);
+    const nextY = currentBounds.y - heightDelta;
+
+    return commitSkinBounds({
+        x: nextX,
+        y: nextY,
+        width: nextWidth,
+        height: nextHeight,
+    });
+});
+
+ipcMain.handle('skin:set-bounds', (_, rawBounds = {}) => {
+    if (!skinWindow || skinWindow.isDestroyed()) {
+        return getSkinStateSnapshot();
+    }
+    return commitSkinBounds(rawBounds);
+});
+
+ipcMain.handle('skin:minimize', () => {
+    stopSkinCursorPoll();
+    if (skinWindow && !skinWindow.isDestroyed()) {
+        setSkinInteractive(false);
+        if (skinChatSavedBounds) {
+            skinWindow.setBounds(skinChatSavedBounds);
+            skinChatSavedBounds = null;
+        }
+        skinWindow.hide();
+        broadcastSkinState();
+    }
+    refreshTrayMenu();
+    return getSkinStateSnapshot();
+});
+
+// ── Skin: mini-chat burbuja (proxy IPC, sin segundo socket) ────
+
+ipcMain.handle('skin:chat-open', () => {
+    if (!skinWindow || skinWindow.isDestroyed()) return null;
+    const bounds = skinWindow.getBounds();
+    if (!skinChatSavedBounds) {
+        skinChatSavedBounds = { ...bounds };
+        skinWindow.setBounds({ ...bounds, width: bounds.width + SKIN_CHAT_BUBBLE_WIDTH });
+    }
+    return skinChatSavedBounds;
+});
+
+ipcMain.handle('skin:chat-close', () => {
+    if (skinWindow && !skinWindow.isDestroyed() && skinChatSavedBounds) {
+        skinWindow.setBounds(skinChatSavedBounds);
+    }
+    skinChatSavedBounds = null;
+    return getSkinStateSnapshot();
+});
+
+ipcMain.handle('skin:chat-send', (_, text) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('skin-chat-send', String(text || ''));
+    }
+    return true;
+});
+
+ipcMain.handle('skin:chat-relay', (_, payload) => {
+    if (skinWindow && !skinWindow.isDestroyed()) {
+        skinWindow.webContents.send('skin-chat-relay', payload);
+    }
+    return true;
+});
+
+// ── Skin: boton mic (proxy hacia voz en tiempo real de mainWindow) ────
+
+ipcMain.handle('skin:voice-toggle', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('skin-voice-toggle');
+    }
+    return true;
+});
+
+ipcMain.handle('skin:voice-state', (_, payload) => {
+    skinVoiceActive = !!payload?.active;
+    if (skinWindow && !skinWindow.isDestroyed()) {
+        skinWindow.webContents.send('skin-voice-state', payload);
+    }
+    return true;
 });
 
 ipcMain.handle('get-app-runtime-settings', () => {
@@ -1393,7 +2312,10 @@ function createActionOverlayWindow() {
     </html>
     `);
 
-    actionOverlayWindow.setIgnoreMouseEvents(true, { forward: true });
+    // Sin forward: esta ventana nunca es interactiva y el hook global de mouse
+    // que forward instala en Windows hace saltar otras ventanas al arrastrarlas
+    // (electron#35030).
+    actionOverlayWindow.setIgnoreMouseEvents(true);
     actionOverlayWindow.setVisibleOnAllWorkspaces(true);
     actionOverlayWindow.hide();
 
@@ -1412,7 +2334,16 @@ ipcMain.handle('show-click-indicator', async (_, x, y, type) => {
     try {
         if (!actionOverlayWindow || actionOverlayWindow.isDestroyed()) {
             createActionOverlayWindow();
-            await new Promise(resolve => setTimeout(resolve, 200));
+            // Wait for page ready instead of fixed timeout
+            await new Promise(resolve => {
+                if (!actionOverlayWindow || actionOverlayWindow.isDestroyed()) return resolve();
+                if (actionOverlayWindow.webContents.isLoading()) {
+                    actionOverlayWindow.webContents.once('did-finish-load', resolve);
+                    setTimeout(resolve, 600); // fallback
+                } else {
+                    resolve();
+                }
+            });
         }
         if (actionOverlayWindow && !actionOverlayWindow.isDestroyed()) {
             actionOverlayWindow.show();
@@ -1420,11 +2351,12 @@ ipcMain.handle('show-click-indicator', async (_, x, y, type) => {
             await actionOverlayWindow.webContents.executeJavaScript(
                 `window.showClick && window.showClick(${Number(x) || 0}, ${Number(y) || 0}, '${safeType}')`
             );
+            // Keep visible for animation duration, then hide
             setTimeout(() => {
                 if (actionOverlayWindow && !actionOverlayWindow.isDestroyed()) {
                     actionOverlayWindow.hide();
                 }
-            }, 1500);
+            }, 1400);
         }
     } catch (err) {
         console.error('[IPC] show-click-indicator error:', err.message);
@@ -1517,12 +2449,36 @@ app.whenReady().then(async () => {
         console.warn('[App] Backend no confirmó arranque — la UI intentará reconectar');
     }
 
+    // Protocolo gmini-skin:// para servir assets de data/skins/<id>/...
+    protocol.handle('gmini-skin', (request) => {
+        try {
+            const url = new URL(request.url);
+            const skinId = url.hostname;
+            const relPath = decodeURIComponent(url.pathname.replace(/^\/+/, ''));
+            const entry = scanAvailableSkinsCached().find((s) => s.id === skinId);
+            if (!entry || !entry.dir) {
+                return new Response('Not found', { status: 404 });
+            }
+            const baseDir = path.resolve(DATA_SKINS_DIR, entry.dir);
+            const filePath = path.resolve(baseDir, relPath);
+            if ((filePath !== baseDir && !filePath.startsWith(baseDir + path.sep)) || !fs.existsSync(filePath)) {
+                return new Response('Not found', { status: 404 });
+            }
+            return net.fetch(`file://${filePath.replace(/\\/g, '/')}`);
+        } catch (err) {
+            console.error(`[Skin] Error sirviendo gmini-skin://: ${err.message}`);
+            return new Response('Error', { status: 500 });
+        }
+    });
+
     // 2. Crear UI
     createMainWindow();
     createOverlayWindow();
+    createSkinWindow();
     createActionOverlayWindow();  // Pre-crear overlay de acciones
     createTray();
     applyAppPreferences(appPreferences);
+    setSkinMode(characterPreferences.mode);
 
     // Global shortcuts
     globalShortcut.register('Alt+G', () => {
@@ -1556,8 +2512,10 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
     clearTimeout(configReloadTimer);
     clearTimeout(overlayStateSaveTimer);
+    clearTimeout(skinStateSaveTimer);
     unwatchConfigFiles();
     persistOverlayStateToDisk();
+    persistSkinStateToDisk();
     globalShortcut.unregisterAll();
     stopBackend();
 });
@@ -1568,6 +2526,9 @@ app.on('activate', () => {
     }
     if (overlayWindow === null) {
         createOverlayWindow();
+    }
+    if (skinWindow === null) {
+        createSkinWindow();
     }
     focusPrimaryWindow();
 });

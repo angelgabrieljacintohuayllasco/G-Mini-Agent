@@ -361,6 +361,10 @@ class MCPRuntime:
         arguments: dict[str, Any] | None = None,
         timeout_seconds: int | None = None,
     ) -> dict[str, Any]:
+        _logger.info(
+            "MCP call_tool: server_id=%s, tool=%s, arguments=%s",
+            server_id, tool_name, arguments,
+        )
         server = self._prepare_server(server_id)
         requested_tool = str(tool_name or "").strip()
         if not requested_tool:
@@ -372,6 +376,29 @@ class MCPRuntime:
         if not session.initialized:
             session.initialize()
 
+        # Validar que la tool existe en el servidor antes de llamarla
+        cached_tools = self.get_cached_tools(server_id)
+        if cached_tools is not None:
+            known_names = [t.get("name", "") for t in cached_tools]
+            if requested_tool not in known_names:
+                return {
+                    "success": False,
+                    "server_id": server["id"],
+                    "server_name": server["name"],
+                    "transport": server.get("transport", ""),
+                    "tool": requested_tool,
+                    "is_error": True,
+                    "content": [],
+                    "structured_content": None,
+                    "raw_result": {},
+                    "stderr": "",
+                    "notifications": [],
+                    "error": (
+                        f"Tool '{requested_tool}' NO existe en servidor '{server_id}'. "
+                        f"Tools disponibles: {', '.join(known_names)}"
+                    ),
+                }
+
         response = session.request(
             "tools/call",
             {
@@ -380,7 +407,7 @@ class MCPRuntime:
             },
         )
         result = response.get("result") if isinstance(response.get("result"), dict) else {}
-        return {
+        call_result = {
             "success": not bool(result.get("isError", False)),
             "server_id": server["id"],
             "server_name": server["name"],
@@ -395,6 +422,14 @@ class MCPRuntime:
             "notifications": session.notifications,
             "error": None,
         }
+        _logger.info(
+            "MCP call_tool result: server=%s tool=%s success=%s is_error=%s content_items=%d",
+            server_id, requested_tool, call_result["success"],
+            call_result["is_error"], len(call_result["content"]),
+        )
+        if call_result["stderr"]:
+            _logger.debug("MCP call_tool stderr: %s", call_result["stderr"][:500])
+        return call_result
 
     def get_cached_tools(self, server_id: str) -> list[dict[str, Any]] | None:
         """Devuelve tools cacheadas si existen y no expiraron."""

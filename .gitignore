@@ -117,3 +117,13 @@ coverage.xml
 # Archivos del sistema
 *.bak
 *.tmp
+
+# Skins / avatares 3D pesados (VRM/FBX/GLB) — 213MB, girl.fbx supera el limite de 100MB de GitHub.
+# Si se quieren versionar, usar Git LFS.
+data/skins/
+
+# Config local de Claude Code (por-usuario, no compartir)
+.claude/settings.local.json
+
+# Log de desarrollo / runtime
+_dev_log.txt

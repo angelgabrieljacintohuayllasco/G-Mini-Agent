@@ -79,12 +79,20 @@ class GminiWebSocket {
             this._emit('agent:screenshot', data);
         });
 
+        this.socket.on('agent:media', (data) => {
+            this._emit('agent:media', data);
+        });
+
         this.socket.on('agent:audio', (data) => {
             this._emit('agent:audio', data);
         });
 
         this.socket.on('agent:lipsync', (data) => {
             this._emit('agent:lipsync', data);
+        });
+
+        this.socket.on('agent:emotion', (data) => {
+            this._emit('agent:emotion', data);
         });
 
         this.socket.on('agent:stt_result', (data) => {

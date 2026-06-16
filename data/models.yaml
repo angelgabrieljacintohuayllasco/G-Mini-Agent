@@ -33,6 +33,62 @@ llm:
     - "claude-sonnet-4-6"
     - "claude-haiku-4-5-20251001"
   google:
+    # ── Gemini 3.5 (estable, latest) ───────────────────────────────
+    gemini-3.5-flash:
+      display_name: "Gemini 3.5 Flash"
+      version_type: "stable"
+      inputs: ["text", "image", "video", "audio", "pdf"]
+      outputs: ["text"]
+      input_tokens: 1048576
+      output_tokens: 65536
+      cutoff_date: "2025-06"
+      updated_date: "2026-05"
+      features:
+        live_api: false
+        batch_api: true
+        caching: true
+        code_execution: true
+        file_search: true
+        function_calling: true
+        grounding_search: true
+        grounding_maps: true
+        image_generation: false
+        audio_generation: false
+        structured_output: true
+        thinking: true
+        computer_use: true
+        flex_inference: true
+        priority_inference: true
+        url_context: true
+
+    # ── Gemini 3.1 (estable + preview) ─────────────────────────────
+    gemini-3.1-flash-lite:
+      display_name: "Gemini 3.1 Flash Lite"
+      version_type: "stable"
+      inputs: ["text", "image", "video", "audio", "pdf"]
+      outputs: ["text"]
+      input_tokens: 1048576
+      output_tokens: 65536
+      cutoff_date: "2025-01"
+      updated_date: "2026-04"
+      features:
+        live_api: false
+        batch_api: true
+        caching: true
+        code_execution: true
+        file_search: true
+        function_calling: true
+        grounding_search: true
+        grounding_maps: true
+        image_generation: false
+        audio_generation: false
+        structured_output: true
+        thinking: true
+        computer_use: false
+        flex_inference: true
+        priority_inference: true
+        url_context: true
+
     # ── Gemini 3 (preview) ─────────────────────────────────────────
     gemini-3.1-pro-preview:
       display_name: "Gemini 3.1 Pro Preview"

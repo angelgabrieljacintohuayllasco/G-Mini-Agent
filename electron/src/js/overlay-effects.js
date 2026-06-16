@@ -39,7 +39,7 @@ class OverlayEffects {
         this.screenshotOverlay.id = 'screenshot-overlay';
         this.screenshotOverlay.innerHTML = `
             <div class="screenshot-flash"></div>
-            <div class="screenshot-text">📸 Capturando pantalla...</div>
+            <div class="screenshot-text"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:4px"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg> Capturando pantalla...</div>
         `;
         document.body.appendChild(this.screenshotOverlay);
     }
@@ -67,9 +67,9 @@ class OverlayEffects {
         
         // Mostrar en un toast/notificación en la app ya que no podemos posicionar
         // fuera de la ventana de Electron
-        const label = type === 'double_click' ? '🖱️🖱️ Doble click' 
-                    : type === 'right_click' ? '🖱️ Click derecho'
-                    : '🖱️ Click';
+        const label = type === 'double_click' ? 'Doble click'
+                    : type === 'right_click' ? 'Click derecho'
+                    : 'Click';
         this._showActionNotification(`${label} en (${x}, ${y})`);
 
         // Pedir a Electron que muestre el overlay global
@@ -123,36 +123,23 @@ class OverlayEffects {
      * Muestra el indicador de escritura
      */
     showTypingEffect(text) {
-        this._showActionNotification(`⌨️ Escribiendo: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`);
+        this._showActionNotification(`Escribiendo: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`);
     }
 
-    /**
-     * Muestra el indicador de tecla presionada
-     */
     showKeyPress(key) {
-        this._showActionNotification(`⌨️ Tecla: ${key.toUpperCase()}`);
+        this._showActionNotification(`Tecla: ${key.toUpperCase()}`);
     }
 
-    /**
-     * Muestra el indicador de hotkey
-     */
     showHotkey(keys) {
-        this._showActionNotification(`⌨️ Atajo: ${keys.toUpperCase()}`);
+        this._showActionNotification(`Atajo: ${keys.toUpperCase()}`);
     }
 
-    /**
-     * Muestra el indicador de scroll
-     */
     showScroll(direction) {
-        const arrow = direction < 0 ? '⬇️' : '⬆️';
-        this._showActionNotification(`${arrow} Scroll ${direction < 0 ? 'abajo' : 'arriba'}`);
+        this._showActionNotification(`Scroll ${direction < 0 ? 'abajo' : 'arriba'}`);
     }
 
-    /**
-     * Muestra el indicador de movimiento del mouse
-     */
     showMove(x, y) {
-        this._showActionNotification(`↗️ Mover a (${x}, ${y})`);
+        this._showActionNotification(`Mover a (${x}, ${y})`);
         if (window.gmini && window.gmini.showCursorBubble) {
             window.gmini.showCursorBubble(x, y);
         }
@@ -162,7 +149,7 @@ class OverlayEffects {
      * Muestra el indicador de drag
      */
     showDrag(x, y) {
-        this._showActionNotification(`✋ Arrastrando a (${x}, ${y})`);
+        this._showActionNotification(`Arrastrando a (${x}, ${y})`);
         if (window.gmini && window.gmini.showCursorBubble) {
             window.gmini.showCursorBubble(x, y);
         }

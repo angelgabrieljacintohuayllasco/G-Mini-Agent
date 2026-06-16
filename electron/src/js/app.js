@@ -6,6 +6,21 @@
 (function () {
     'use strict';
 
+    // ── SVG icon constants (replacing emojis) ────────
+    // Mic: push-to-talk voice input
+    const SVG_MIC = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>';
+    // Waveform: realtime voice conversation (native Live API)
+    const SVG_WAVEFORM = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="8" x2="4" y2="16"/><line x1="8" y1="4" x2="8" y2="20"/><line x1="12" y1="6" x2="12" y2="18"/><line x1="16" y1="4" x2="16" y2="20"/><line x1="20" y1="8" x2="20" y2="16"/></svg>';
+    // Simulated voice: mic with waves (STT → LLM → TTS pipeline)
+    const SVG_MIC_SIMULATED = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><path d="M18 4c2 2 2 6 0 8" opacity="0.5"/><path d="M20 2c3 3 3 10 0 13" opacity="0.3"/></svg>';
+    const SVG_STOP = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
+    const SVG_RECORD = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8" fill="#ef4444"/></svg>';
+    const SVG_MONITOR = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>';
+
+    function _setButtonIcon(btn, svgHtml) {
+        if (btn) btn.innerHTML = svgHtml;
+    }
+
     // ── DOM elements ──────────────────────────────────
     const userInput = document.getElementById('user-input');
     const btnSend = document.getElementById('btn-send');
@@ -28,6 +43,107 @@
         void window.gmini.overlaySetCharacterRuntime(payload).catch((error) => {
             console.warn('[Overlay] No se pudo actualizar runtime del personaje:', error);
         });
+    }
+
+    // Reenvia eventos del agente a la burbuja del mini-chat (skinWindow), si existe.
+    function _relaySkinChat(event, data) {
+        if (!window.gmini || typeof window.gmini.skinChatRelay !== 'function') return;
+        void window.gmini.skinChatRelay({ event, data }).catch(() => {});
+    }
+
+    // Notifica a la skinWindow el estado del boton de voz en tiempo real
+    // (disponibilidad/activo) para reflejarlo en el boton mic del avatar.
+    function _pushSkinVoiceState(payload) {
+        if (!window.gmini || typeof window.gmini.skinVoiceState !== 'function') return;
+        void window.gmini.skinVoiceState(payload).catch(() => {});
+    }
+
+    // Empuja la amplitud del audio de voz en tiempo real a ~20Hz para animar
+    // la boca del avatar mientras dura la conversacion realtime.
+    let _mouthPushTimer = null;
+    function _startMouthPusher() {
+        if (_mouthPushTimer) return;
+        _mouthPushTimer = setInterval(() => {
+            pushOverlayCharacterRuntime({ status: agentRuntimeState, mouth: voiceRealtime.getLevel() });
+        }, 50);
+    }
+    function _stopMouthPusher() {
+        if (_mouthPushTimer) {
+            clearInterval(_mouthPushTimer);
+            _mouthPushTimer = null;
+        }
+        pushOverlayCharacterRuntime({ status: agentRuntimeState, mouth: 0 });
+    }
+
+    // ── Modo avatar: reproduccion de TTS no-streaming con boca animada ──────
+    let _skinMode = 'chat';
+    if (window.gmini) {
+        if (typeof window.gmini.skinGetState === 'function') {
+            window.gmini.skinGetState().then((state) => {
+                _skinMode = state?.mode === 'skin' ? 'skin' : 'chat';
+            }).catch(() => {});
+        }
+        if (typeof window.gmini.onSkinState === 'function') {
+            window.gmini.onSkinState((state) => {
+                _skinMode = state?.mode === 'skin' ? 'skin' : 'chat';
+                if (_skinMode === 'skin') {
+                    _pushSkinVoiceState({ active: voiceRealtime.active, available: !!_realtimeMode });
+                }
+            });
+        }
+    }
+
+    let _ttsAudioCtx = null;
+    let _ttsAnalyser = null;
+    let _ttsAnalyserBuffer = null;
+    let _ttsMouthTimer = null;
+
+    function _base64ToArrayBuffer(b64) {
+        const raw = atob(b64);
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+        return bytes.buffer;
+    }
+
+    async function _playSkinTtsAudio(audioB64) {
+        try {
+            if (!_ttsAudioCtx) {
+                _ttsAudioCtx = new AudioContext();
+            }
+            const audioBuffer = await _ttsAudioCtx.decodeAudioData(_base64ToArrayBuffer(audioB64));
+            const source = _ttsAudioCtx.createBufferSource();
+            source.buffer = audioBuffer;
+
+            if (!_ttsAnalyser) {
+                _ttsAnalyser = _ttsAudioCtx.createAnalyser();
+                _ttsAnalyser.fftSize = 256;
+                _ttsAnalyser.smoothingTimeConstant = 0.6;
+                _ttsAnalyserBuffer = new Uint8Array(_ttsAnalyser.fftSize);
+            }
+            source.connect(_ttsAnalyser);
+            _ttsAnalyser.connect(_ttsAudioCtx.destination);
+
+            if (_ttsMouthTimer) clearInterval(_ttsMouthTimer);
+            _ttsMouthTimer = setInterval(() => {
+                _ttsAnalyser.getByteTimeDomainData(_ttsAnalyserBuffer);
+                let sumSquares = 0;
+                for (let i = 0; i < _ttsAnalyserBuffer.length; i++) {
+                    const norm = (_ttsAnalyserBuffer[i] - 128) / 128;
+                    sumSquares += norm * norm;
+                }
+                const rms = Math.sqrt(sumSquares / _ttsAnalyserBuffer.length);
+                pushOverlayCharacterRuntime({ status: agentRuntimeState, mouth: Math.min(1, rms * 4) });
+            }, 50);
+
+            source.onended = () => {
+                clearInterval(_ttsMouthTimer);
+                _ttsMouthTimer = null;
+                pushOverlayCharacterRuntime({ status: agentRuntimeState, mouth: 0 });
+            };
+            source.start();
+        } catch (err) {
+            console.warn('[Skin] No se pudo reproducir audio TTS:', err);
+        }
     }
 
     // ── Initialize modules ────────────────────────────
@@ -128,6 +244,7 @@
 
     ws.on('agent:message', (data) => {
         chatManager.handleAgentMessage(data);
+        _relaySkinChat('agent:message', data);
 
         // Update overlay
         if (data.text && window.gmini) {
@@ -168,6 +285,7 @@
     ws.on('agent:status', (data) => {
         const status = data?.status || 'idle';
         agentRuntimeState = status;
+        _relaySkinChat('agent:status', data);
         pushOverlayCharacterRuntime(
             status === 'responding' || status === 'calling'
                 ? { status }
@@ -222,7 +340,10 @@
             }
             return;
         }
-        // Non-realtime TTS — solo overlay hint
+        // Non-realtime TTS — en modo avatar reproducir con boca animada
+        if (_skinMode === 'skin' && data.audio) {
+            void _playSkinTtsAudio(data.audio);
+        }
         const durationMs = Number.isFinite(Number(data?.duration))
             ? Math.max(0, Math.round(Number(data.duration) * 1000))
             : 1800;
@@ -239,9 +360,27 @@
         });
     });
 
+    ws.on('agent:emotion', (data) => {
+        if (!data || typeof data.emotion !== 'string') return;
+        pushOverlayCharacterRuntime({
+            status: agentRuntimeState,
+            emotion: data.emotion,
+        });
+    });
+
     ws.on('agent:screenshot', (data) => {
         if (data && data.image) {
+            console.log(`[Screenshot] Received: ${data.image.length} chars, starts: ${data.image.substring(0, 30)}`);
             chatManager.addScreenshot(data.image, data.caption || '');
+        } else {
+            console.warn('[Screenshot] Event received but no image data:', data);
+        }
+    });
+
+    ws.on('agent:media', (data) => {
+        if (data && data.url && data.type) {
+            const fullUrl = `http://127.0.0.1:8765${data.url}`;
+            chatManager.addMediaPlayer(data.type, fullUrl, data.filename || '');
         }
     });
 
@@ -314,7 +453,7 @@
         if (!data || !data.actionId) return;
         const cardEl = pendingActionCards.get(data.actionId);
         if (cardEl) {
-            chatManager.updateActionCard(cardEl, data.success, data.result || '');
+            chatManager.updateActionCard(cardEl, data.success, data.result || '', data.durationMs);
             pendingActionCards.delete(data.actionId);
         }
     });
@@ -399,7 +538,7 @@
         if (!text || isGenerating) return;
 
         if (!ws.connected) {
-            chatManager.addSystemMessage('⚠️ No hay conexión con el backend. Intenta de nuevo.');
+            chatManager.addSystemMessage('No hay conexion con el backend. Intenta de nuevo.');
             return;
         }
 
@@ -408,6 +547,24 @@
 
         updateComposerValue('');
         userInput.focus();
+    }
+
+    // Mensaje enviado desde la burbuja de mini-chat del avatar (skinWindow).
+    if (window.gmini && typeof window.gmini.onSkinChatSend === 'function') {
+        window.gmini.onSkinChatSend((text) => {
+            const trimmed = String(text || '').trim();
+            if (!trimmed || isGenerating) return;
+            if (!ws.connected) {
+                _relaySkinChat('agent:message', {
+                    text: 'No hay conexion con el backend. Intenta de nuevo.',
+                    type: 'system',
+                    done: true,
+                });
+                return;
+            }
+            chatManager.addUserMessage(trimmed);
+            ws.sendMessage(trimmed);
+        });
     }
 
     function updateComposerValue(value) {
@@ -545,7 +702,7 @@
                 _mediaRecorder.onstop = async () => {
                     _voiceRecording = false;
                     btnVoice.classList.remove('recording');
-                    btnVoice.textContent = '🎙';
+                    _setButtonIcon(btnVoice, SVG_MIC);
                     stream.getTracks().forEach((t) => t.stop());
 
                     if (chunks.length === 0) return;
@@ -561,13 +718,13 @@
                 _mediaRecorder.start();
                 _voiceRecording = true;
                 btnVoice.classList.add('recording');
-                btnVoice.textContent = '⏹';
+                _setButtonIcon(btnVoice, SVG_STOP);
             } catch (err) {
                 console.error('Mic access error:', err);
                 _voiceRecording = false;
                 if (btnVoice) {
                     btnVoice.classList.remove('recording');
-                    btnVoice.textContent = '🎙';
+                    _setButtonIcon(btnVoice, SVG_MIC);
                 }
             }
         });
@@ -580,31 +737,47 @@
     let _realtimeVoices = []; // voces disponibles
     let _realtimeMode = '';  // 'native' | 'simulated'
 
-    if (btnRealtime) {
-        // Ocultar por defecto hasta que el backend confirme soporte RT
-        btnRealtime.style.display = 'none';
-
-        btnRealtime.addEventListener('click', async () => {
-            if (voiceRealtime.active) {
-                await voiceRealtime.stop();
+    // Arranca/detiene la conversacion en tiempo real. Reutilizable desde el
+    // boton de la ventana principal y desde el boton mic del avatar (skinWindow).
+    async function _toggleRealtimeVoice() {
+        if (voiceRealtime.active) {
+            await voiceRealtime.stop();
+            _stopMouthPusher();
+            if (btnRealtime) {
                 btnRealtime.classList.remove('realtime-active', 'realtime-simulated');
-                btnRealtime.textContent = _realtimeMode === 'simulated' ? '🎙️' : '📞';
+                _setButtonIcon(btnRealtime, _realtimeMode === 'simulated' ? SVG_MIC_SIMULATED : SVG_WAVEFORM);
                 btnRealtime.title = _realtimeMode === 'simulated'
                     ? 'Conversación por voz (STT → Modelo → TTS)'
                     : 'Conversación en tiempo real';
-            } else {
-                // Enviar mode al backend para que sepa qué pipeline usar
-                const provider = _realtimeProvider || settingsManager?.currentProvider || '';
-                const started = await voiceRealtime.start(provider, _realtimeVoice, _realtimeMode);
-                if (started) {
+            }
+            _pushSkinVoiceState({ active: false, available: !!_realtimeMode });
+        } else {
+            // Enviar mode al backend para que sepa qué pipeline usar
+            const provider = _realtimeProvider || settingsManager?.currentProvider || '';
+            const started = await voiceRealtime.start(provider, _realtimeVoice, _realtimeMode);
+            if (started) {
+                if (btnRealtime) {
                     btnRealtime.classList.add('realtime-active');
                     if (_realtimeMode === 'simulated') {
                         btnRealtime.classList.add('realtime-simulated');
                     }
-                    btnRealtime.textContent = '🔴';
+                    _setButtonIcon(btnRealtime, SVG_RECORD);
                 }
+                _startMouthPusher();
+                _pushSkinVoiceState({ active: true, available: !!_realtimeMode });
             }
-        });
+        }
+    }
+
+    if (btnRealtime) {
+        // Ocultar por defecto hasta que el backend confirme soporte RT
+        btnRealtime.style.display = 'none';
+        btnRealtime.addEventListener('click', () => { void _toggleRealtimeVoice(); });
+    }
+
+    // Toggle de voz solicitado desde el boton mic del avatar (skinWindow).
+    if (window.gmini && typeof window.gmini.onSkinVoiceToggle === 'function') {
+        window.gmini.onSkinVoiceToggle(() => { void _toggleRealtimeVoice(); });
     }
 
     // Selector de voz para realtime (voice-select existente o creado dinámicamente)
@@ -644,10 +817,10 @@
 
             // Actualizar apariencia según modo
             if (_realtimeMode === 'simulated') {
-                btnRealtime.textContent = '🎙️';
+                _setButtonIcon(btnRealtime, SVG_MIC_SIMULATED);
                 btnRealtime.title = 'Conversación por voz (STT → Modelo → TTS)';
             } else {
-                btnRealtime.textContent = '📞';
+                _setButtonIcon(btnRealtime, SVG_WAVEFORM);
                 btnRealtime.title = 'Conversación en tiempo real';
             }
 
@@ -655,6 +828,7 @@
 
             // Guardar capacidades del modelo para el botón de video
             _modelSupportsVideo = !!data.supports_video;
+            _pushSkinVoiceState({ active: voiceRealtime.active, available: true });
         } else {
             _realtimeProvider = '';
             _realtimeMode = '';
@@ -668,9 +842,11 @@
             // Si estaba activo, detener
             if (voiceRealtime.active) {
                 voiceRealtime.stop();
+                _stopMouthPusher();
                 btnRealtime.classList.remove('realtime-active', 'realtime-simulated');
-                btnRealtime.textContent = '📞';
+                _setButtonIcon(btnRealtime, SVG_WAVEFORM);
             }
+            _pushSkinVoiceState({ active: false, available: false });
         }
     });
 
@@ -682,7 +858,7 @@
             if (chatManager.isStreaming) {
                 chatManager.finishStreaming();
             }
-            chatManager.addUserMessage(`🎤 ${text}`);
+            chatManager.addUserMessage(text);
         }
     });
 
@@ -695,7 +871,7 @@
                 if (data?.mode === 'simulated') {
                     btnRealtime.classList.add('realtime-simulated');
                 }
-                btnRealtime.textContent = '🔴';
+                _setButtonIcon(btnRealtime, SVG_RECORD);
             }
             // Mostrar botón de video si el modelo tiene live_api: true (siempre soporta video)
             if (btnVideoStream && _modelSupportsVideo) {
@@ -704,7 +880,7 @@
         } else if (status === 'realtime_stopped') {
             if (btnRealtime) {
                 btnRealtime.classList.remove('realtime-active', 'realtime-simulated');
-                btnRealtime.textContent = _realtimeMode === 'simulated' ? '🎙️' : '📞';
+                _setButtonIcon(btnRealtime, _realtimeMode === 'simulated' ? SVG_MIC_SIMULATED : SVG_WAVEFORM);
                 btnRealtime.title = _realtimeMode === 'simulated'
                     ? 'Conversación por voz (STT → Modelo → TTS)'
                     : 'Conversación en tiempo real';
@@ -713,7 +889,7 @@
             if (btnVideoStream) {
                 btnVideoStream.style.display = 'none';
                 btnVideoStream.classList.remove('video-stream-active');
-                btnVideoStream.textContent = '�️';
+                _setButtonIcon(btnVideoStream, SVG_MONITOR);
                 _videoStreamActive = false;
             }
         }
@@ -732,7 +908,7 @@
             _videoStreamActive = !_videoStreamActive;
             ws.toggleScreenStream(_videoStreamActive);
             btnVideoStream.classList.toggle('video-stream-active', _videoStreamActive);
-            btnVideoStream.textContent = _videoStreamActive ? '🔴' : '�️';
+            _setButtonIcon(btnVideoStream, _videoStreamActive ? SVG_RECORD : SVG_MONITOR);
             btnVideoStream.title = _videoStreamActive
                 ? 'Detener streaming de pantalla'
                 : 'Mostrar pantalla a la IA (Live API streaming)';
@@ -744,7 +920,7 @@
         _videoStreamActive = !!data?.active;
         if (btnVideoStream) {
             btnVideoStream.classList.toggle('video-stream-active', _videoStreamActive);
-            btnVideoStream.textContent = _videoStreamActive ? '🔴' : '🖥️';
+            _setButtonIcon(btnVideoStream, _videoStreamActive ? SVG_RECORD : SVG_MONITOR);
             btnVideoStream.title = _videoStreamActive
                 ? 'Detener streaming de pantalla'
                 : 'Mostrar pantalla a la IA (Live API streaming)';

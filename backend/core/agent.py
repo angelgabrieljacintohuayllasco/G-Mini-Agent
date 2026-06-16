@@ -28,6 +28,8 @@ from backend.core.subagents import SubAgentOrchestrator
 from backend.core.terminal_manager import TerminalManager
 from backend.core.token_manager import count_messages_tokens, count_tokens, truncate_messages
 from backend.core.cost_tracker import BudgetLimitExceeded, get_cost_tracker
+from backend.core.avatar_context import build_avatar_context
+from backend.core.emotion_tags import EmotionTagFilter, extract_emotion_tags
 from backend.core.workspace_manager import WorkspaceManager
 from backend.providers.base import LLMMessage
 from backend.providers.router import ModelRouter
@@ -36,7 +38,9 @@ from backend.api.websocket_handler import (
     emit_message,
     emit_message_chunk,
     emit_message_done,
+    emit_emotion,
     emit_screenshot,
+    emit_media,
     emit_approval_state,
     emit_subagents_state,
     emit_status,
@@ -98,6 +102,13 @@ def _load_system_prompt() -> str:
 _FALLBACK_SYSTEM_PROMPT = """# G-MINI AGENT — AGENTE AUTÓNOMO DE CONTROL DE PC
 Eres G-Mini Agent, un agente IA que controla la computadora del usuario.
 Usa [ACTION:...] para ejecutar acciones. Responde en español."""
+
+EMOTION_TAGS_PROMPT = """[EXPRESIONES DEL AVATAR]
+Tu avatar puede mostrar emociones faciales y corporales. Cuando sea natural,
+antepone a tu respuesta (o a la oración relevante) UNO de estos tags para
+reflejar tu estado de animo: [happy] [sad] [angry] [surprised] [relaxed] [neutral].
+No abuses de ellos (maximo 1-2 por respuesta), no los expliques ni los
+menciones, y no los uses si no aportan nada."""
 
 DEFAULT_DELEGATION_PLANNER_PROMPT = """Eres el orquestador de sub-agentes de G-Mini Agent.
 Decide si una solicitud analitica conviene dividirla en 2 o 3 subtareas paralelas.
@@ -426,6 +437,7 @@ class AgentCore:
         self._adb = None
         self._browser = None
         self._planner = None
+        self._computer_use_agent = None
         self._phase2_available = False
 
         try:
@@ -1074,6 +1086,91 @@ class AgentCore:
             },
         )
 
+    async def _handle_computer_use_delegation(
+        self, sid: str, task: str, target_monitor: int = 0
+    ):
+        """Delega una tarea de interacción UI al sub-agente de computer use."""
+        if not self._computer_use_agent:
+            logger.warning("Computer Use sub-agent no disponible para delegación")
+            await emit_message(
+                sid,
+                "Sub-agente de computer use no disponible. "
+                "Verifica que la API key de Google esté configurada y computer_use.enabled = true.",
+                "warning",
+                done=False,
+            )
+            return None
+
+        logger.info(f"Delegando a computer use: {task[:100]} | monitor={target_monitor}")
+        await emit_message(
+            sid,
+            f"Delegando tarea al sub-agente de computer use: {task[:150]}",
+            "info",
+            done=False,
+        )
+        await self._set_agent_status(sid, AgentStatus.EXECUTING)
+
+        async def _on_progress(data: dict):
+            iteration = data.get("iteration", 0)
+            action_name = data.get("action", "")
+            max_iter = data.get("max_iterations", 0)
+            await emit_status(sid, f"Computer Use: paso {iteration}/{max_iter} — {action_name}")
+
+        try:
+            from backend.core.computer_use_agent import ComputerUseResult
+            cu_result: ComputerUseResult = await self._computer_use_agent.execute_task(
+                task,
+                target_monitor=target_monitor,
+                cancel_event=self._cancel_event,
+                on_progress=_on_progress,
+                session_id=self._memory.session_id,
+                mode_key=self._current_mode,
+                parent_task_limit_usd=self._get_current_task_budget_limit(),
+            )
+
+            status_emoji = {
+                "completed": "OK",
+                "failed": "ERROR",
+                "cancelled": "CANCELADO",
+                "timeout": "TIMEOUT",
+            }.get(cu_result.status, cu_result.status.upper())
+
+            await emit_message(
+                sid,
+                f"Computer Use [{status_emoji}]: {cu_result.summary or cu_result.status}",
+                "info" if cu_result.status == "completed" else "warning",
+                done=False,
+            )
+
+            # Tomar screenshot de verificación post-delegación
+            if self._vision:
+                try:
+                    verify_screen = await self._vision.analyze_screen(
+                        mode="computer_use",
+                        monitor=target_monitor or int(config.get("vision", "target_monitor", default=0)),
+                    )
+                    verify_b64 = verify_screen.get("image_base64")
+                    if verify_b64:
+                        await emit_screenshot(sid, verify_b64)
+                        self._memory.add_user_message(
+                            "Screenshot de verificación post-delegación adjunto.",
+                            images=[verify_b64],
+                        )
+                except Exception as exc:
+                    logger.debug(f"Screenshot de verificación falló: {exc}")
+
+            return cu_result
+
+        except Exception as exc:
+            logger.error(f"Error en delegación computer use: {exc}")
+            await emit_message(
+                sid,
+                f"Error en sub-agente computer use: {exc}",
+                "error",
+                done=False,
+            )
+            return None
+
     async def _run_critic_review(self, actions: list[Any], local_review: dict[str, Any]) -> dict[str, Any] | None:
         if not self._router:
             return None
@@ -1513,11 +1610,16 @@ class AgentCore:
                 screenshot_dims = data.get("screen_dimensions")
                 await emit_screenshot(sid, screenshot_b64)
 
-            # Emitir imágenes generadas por IA al frontend
-            if action_name == "generate_image" and isinstance(data, dict):
+            # Emitir archivos multimedia generados al frontend como reproductor inline
+            # rico (preview + zoom + descarga). Una sola tarjeta por archivo: antes se
+            # emitia ADEMAS emit_screenshot(generated_image) para imagenes, lo que
+            # duplicaba la imagen (tarjeta plana + reproductor).
+            if action_name in ("generate_image", "generate_video", "generate_music") and isinstance(data, dict):
+                media_type = "image" if action_name == "generate_image" else "video" if action_name == "generate_video" else "audio"
                 for gen_file in (data.get("files") or []):
-                    if gen_file.get("base64"):
-                        await emit_screenshot(sid, gen_file["base64"], caption="generated_image")
+                    fname = gen_file.get("filename", "")
+                    if fname:
+                        await emit_media(sid, media_type, fname, f"/api/media/{fname}")
 
         if action_feedback_parts:
             summary = summary_title + "\n" + "\n".join(action_feedback_parts)
@@ -1525,7 +1627,9 @@ class AgentCore:
             for line in action_feedback_parts:
                 logger.info(line)
             logger.info("=== ACTION FEEDBACK TO MODEL END ===")
-            await emit_message(sid, summary, "text", done=False)
+            # Send as "action" type so the frontend renders it as a system-level
+            # activity summary, not as LLM streaming text
+            await emit_message(sid, summary, "action", done=False)
 
             # Persist action feedback for UI history
             await self._memory.persist_display_message(
@@ -1723,10 +1827,13 @@ class AgentCore:
         except Exception as exc:
             logger.debug(f"CostOptimizer pre-check omitido: {exc}")
 
+        emotions_enabled = config.get("character", "emotions_enabled", default=False)
+
         for attempt in range(1, policy.max_attempts + 1):
             await self._set_agent_status(sid, AgentStatus.RESPONDING)
             full_response = ""
             chunk_count = 0
+            emotion_filter = EmotionTagFilter() if emotions_enabled else None
 
             try:
                 async for chunk in self._router.generate_cost_aware(
@@ -1746,7 +1853,19 @@ class AgentCore:
 
                     full_response += chunk
                     chunk_count += 1
-                    await emit_message_chunk(sid, chunk)
+                    if emotion_filter:
+                        clean_chunk, emotion = emotion_filter.feed(chunk)
+                        if emotion:
+                            await emit_emotion(sid, emotion)
+                        if clean_chunk:
+                            await emit_message_chunk(sid, clean_chunk)
+                    else:
+                        await emit_message_chunk(sid, chunk)
+
+                if emotion_filter:
+                    rest = emotion_filter.flush()
+                    if rest:
+                        await emit_message_chunk(sid, rest)
             except asyncio.CancelledError:
                 await emit_message_done(sid)
                 logger.info("Generación cancelada")
@@ -1928,30 +2047,58 @@ class AgentCore:
     def _apply_system_prompt(self) -> None:
         prompt = build_mode_system_prompt(self._base_system_prompt, self._current_mode)
 
-        # Inyectar contexto MCP dinámico si hay tools disponibles
+        autonomy = config.get("agent", "autonomy_level", default="supervisado")
+        prompt = prompt + f"\n\n[AUTONOMÍA ACTUAL: {autonomy}]"
+
+        prompt = prompt + "\n\n" + build_avatar_context()
+
+        if config.get("character", "emotions_enabled", default=False):
+            prompt = prompt + "\n\n" + EMOTION_TAGS_PROMPT
+
         mcp_context = self._get_mcp_tools_context()
         if mcp_context:
             prompt = prompt + "\n\n" + mcp_context
 
         self._memory.set_system_prompt(prompt)
+        logger.debug(
+            f"System prompt aplicado: total_len={len(prompt)}, "
+            f"base_len={len(self._base_system_prompt)}, "
+            f"mcp_context_len={len(mcp_context) if mcp_context else 0}, "
+            f"mode={self._current_mode}, autonomy={autonomy}, "
+            f"has_mcpcontrol={'mcpcontrol' in prompt.lower()}"
+        )
+        logger.trace(
+            f"SYSTEM PROMPT APPLIED [len={len(prompt)}]:\n"
+            f"--- SYSTEM PROMPT START ---\n{prompt}\n--- SYSTEM PROMPT END ---"
+        )
 
     def _get_mcp_tools_context(self) -> str:
         """Genera contexto MCP para inyectar en el system prompt."""
         if not self._planner:
+            logger.debug("_get_mcp_tools_context: planner no disponible")
             return ""
         try:
             runtime = getattr(self._planner, '_mcp_runtime', None)
             if not runtime:
+                logger.debug("_get_mcp_tools_context: mcp_runtime no disponible en planner")
                 return ""
             summary = runtime.get_all_tools_summary()
             if not summary:
+                logger.debug("_get_mcp_tools_context: get_all_tools_summary retornó vacío")
                 return ""
+            logger.debug(
+                f"_get_mcp_tools_context: summary_len={len(summary)}, "
+                f"has_mcpcontrol={'mcpcontrol' in summary.lower()}, "
+                f"has_chrome={'chrome' in summary.lower()}"
+            )
             template_text, _ = get_prompt_text("mcp_tools_context", fallback="")
             if template_text and "{{mcp_tools_summary}}" in template_text:
-                return template_text.replace("{{mcp_tools_summary}}", summary)
+                result = template_text.replace("{{mcp_tools_summary}}", summary)
+                logger.trace(f"MCP TOOLS CONTEXT [len={len(result)}]:\n{result[:500]}...")
+                return result
             return summary
         except Exception as exc:
-            logger.debug(f"No se pudo generar contexto MCP: {exc}")
+            logger.warning(f"No se pudo generar contexto MCP: {exc}", exc_info=True)
             return ""
 
     def reload_prompt_configuration(self) -> None:
@@ -2127,6 +2274,20 @@ class AgentCore:
                 except Exception:
                     pass
 
+        # Phase 2b: Computer Use Sub-Agent
+        if self._vision and self._automation and bool(config.get("computer_use", "enabled", default=True)):
+            try:
+                from backend.core.computer_use_agent import ComputerUseAgent
+                self._computer_use_agent = ComputerUseAgent(
+                    vision=self._vision,
+                    automation=self._automation,
+                )
+                await self._computer_use_agent.initialize()
+                logger.info("Phase 2b (Computer Use Sub-Agent) inicializado")
+            except Exception as exc:
+                logger.warning(f"Computer Use sub-agent no disponible: {exc}")
+                self._computer_use_agent = None
+
         # Phase 3: Voice
         try:
             if self._voice:
@@ -2141,7 +2302,7 @@ class AgentCore:
         self._cancel_event.clear()
 
         # Phase 4: MCP auto-discovery — descubre tools y re-aplica system prompt con contexto MCP
-        if self._planner and bool(config.get("mcp", "enabled", default=False)):
+        if self._planner and bool(config.get("mcp", "enabled", default=True)):
             try:
                 import asyncio
                 mcp_summary = await asyncio.to_thread(
@@ -2263,7 +2424,7 @@ class AgentCore:
                 return
 
             # 3. Loop autónomo
-            await self._run_agent_loop(sid, max_iterations, loop_timeout)
+            await self._run_agent_loop(sid, max_iterations, loop_timeout, is_task_request=is_task_request)
 
         except asyncio.CancelledError:
             logger.info("Tarea de procesamiento cancelada")
@@ -2307,6 +2468,7 @@ class AgentCore:
         sid: str,
         max_iterations: int,
         timeout_seconds: float,
+        is_task_request: bool = True,
     ) -> None:
         """
         Loop autónomo del agente.
@@ -2431,9 +2593,47 @@ class AgentCore:
                     break
 
                 actions = self._planner.parse_actions(full_response)
+
+                # --- Computer Use: bloquear acciones desktop directas del agente principal ---
+                _BLOCKED_DESKTOP_ACTIONS = {
+                    "click", "double_click", "right_click", "type", "focus_type",
+                    "press", "key", "hotkey", "scroll", "move", "drag",
+                }
+                desktop_found = [a for a in actions if a.type in _BLOCKED_DESKTOP_ACTIONS]
+                if desktop_found:
+                    blocked_names = ", ".join(a.type for a in desktop_found)
+                    logger.warning(f"Acciones desktop bloqueadas en agente principal: {blocked_names}")
+                    self._memory.add_user_message(
+                        f"No puedes ejecutar acciones de escritorio directamente ({blocked_names}). "
+                        "Usa [ACTION:delegate_computer_use(task=descripcion de la tarea)] "
+                        "para delegar interacciones de UI al sub-agente de computer use."
+                    )
+                    actions = [a for a in actions if a.type not in _BLOCKED_DESKTOP_ACTIONS]
+
+                # --- Computer Use: manejar delegate_computer_use ---
+                cu_actions = [a for a in actions if a.type == "delegate_computer_use"]
+                other_actions = [a for a in actions if a.type != "delegate_computer_use"]
+                for cu_action in cu_actions:
+                    cu_task = str(cu_action.params.get("task", "")).strip()
+                    cu_monitor = int(cu_action.params.get("monitor", 0) or 0)
+                    if cu_task:
+                        cu_result = await self._handle_computer_use_delegation(
+                            sid, cu_task, cu_monitor
+                        )
+                        if cu_result:
+                            self._memory.add_user_message(
+                                f"Resultado de delegacion computer use:\n"
+                                f"Estado: {cu_result.status}\n"
+                                f"Resumen: {cu_result.summary}\n"
+                                f"Iteraciones: {cu_result.iterations_used}\n"
+                                f"Acciones: {', '.join(cu_result.action_history[-5:]) if cu_result.action_history else 'ninguna'}"
+                                + (f"\nError: {cu_result.error}" if cu_result.error else "")
+                            )
+                actions = other_actions
+
                 if not actions:
                     consecutive_no_action_iterations += 1
-                    if iteration == 1:
+                    if iteration == 1 and is_task_request:
                         reinforcement = render_prompt_text(
                             "no_actions_reinforcement",
                             fallback=(
@@ -2441,7 +2641,7 @@ class AgentCore:
                                 "Debes actuar sobre el entorno, verificar el estado y continuar con acciones concretas."
                             ),
                         )
-                        logger.warning("Primera iteración sin acciones - inyectando refuerzo")
+                        logger.warning("Primera iteración sin acciones en tarea operativa - inyectando refuerzo")
                         self._memory.add_user_message(reinforcement)
                         await asyncio.sleep(0.2)
                         continue
@@ -2791,6 +2991,7 @@ class AgentCore:
         try:
             import re
             clean_text = re.sub(r'\[ACTION:.*?\]', '', text).strip()
+            clean_text, _ = extract_emotion_tags(clean_text)
             if clean_text:
                 audio = await self._voice.synthesize(clean_text[:500])
                 if audio:
@@ -2813,6 +3014,12 @@ class AgentCore:
         self._cancel_event.set()
         self._paused = False
         self._pause_event.set()
+        # Cancelar operaciones de media en curso
+        try:
+            from backend.providers.google_media import cancel_media_generation
+            cancel_media_generation()
+        except Exception:
+            pass
         await self._stop_planner_previews(context="al hacer stop")
         logger.info("AgentCore: Stop solicitado")
         if self._active_sid:
@@ -2965,18 +3172,33 @@ class AgentCore:
             ui_summary = str(raw_data.get("ui_elements_summary", "") or "").strip()
             if ui_summary:
                 parts.append(f"resumen_ui: {ui_summary[:800]}")
-            # Incluir etiquetas de elementos detectados
+            # Incluir etiquetas de elementos detectados CON coordenadas para click preciso
             ui_elements = raw_data.get("ui_elements", [])
             if isinstance(ui_elements, list) and ui_elements:
                 labels = []
                 for el in ui_elements[:30]:
                     if isinstance(el, dict):
-                        label = str(el.get("label", el.get("content", "")) or "").strip()
+                        label = str(el.get("label", el.get("content", el.get("text", ""))) or "").strip()
                         el_type = str(el.get("type", "") or "").strip()
+                        # Extraer coordenadas del centro para click
+                        cx = el.get("center_x") or el.get("cx")
+                        cy = el.get("center_y") or el.get("cy")
+                        if cx is None or cy is None:
+                            center = el.get("center")
+                            if isinstance(center, (list, tuple)) and len(center) >= 2:
+                                cx, cy = int(center[0]), int(center[1])
+                            else:
+                                bbox = el.get("bbox")
+                                if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+                                    cx = int((bbox[0] + bbox[2]) / 2)
+                                    cy = int((bbox[1] + bbox[3]) / 2)
                         if label:
-                            labels.append(f"{el_type}:{label}" if el_type else label)
+                            coord_str = f"@({cx},{cy})" if cx is not None and cy is not None else ""
+                            prefix = f"{el_type}:" if el_type else ""
+                            labels.append(f"{prefix}{label}{coord_str}")
                 if labels:
-                    parts.append(f"elementos: {', '.join(labels)}")
+                    parts.append(f"elementos_clickables: {', '.join(labels)}")
+            parts.append("INSTRUCCIÓN: analiza el frame de imagen recibido para verificar coordenadas antes de hacer click")
             # Incluir texto OCR si está disponible
             ocr_text = str(raw_data.get("text", "") or "").strip()
             if ocr_text:
@@ -3080,8 +3302,19 @@ class AgentCore:
                 await emit_message_done(sid)
                 sim_text_buffer.clear()
 
-            # Pasar el system prompt real del agente (con modo aplicado) + prompt de voz configurable
+            # Pasar el system prompt real del agente (con modo aplicado) + MCP context + autonomía + prompt de voz
             agent_prompt = build_mode_system_prompt(self._base_system_prompt, self._current_mode)
+
+            autonomy = config.get("agent", "autonomy_level", default="supervisado")
+            agent_prompt = agent_prompt + f"\n\n[AUTONOMÍA ACTUAL: {autonomy}]"
+
+            mcp_context = self._get_mcp_tools_context()
+            if mcp_context:
+                agent_prompt = agent_prompt + "\n\n" + mcp_context
+                logger.info(f"SimulatedRT: MCP context inyectado en prompt ({len(mcp_context)} chars)")
+            else:
+                logger.warning("SimulatedRT: NO hay MCP context disponible para inyectar en prompt de voz")
+
             voice_prompt, _ = get_prompt_text("voice_realtime")
 
             return await self._simulated_realtime.start_session(
@@ -3103,8 +3336,52 @@ class AgentCore:
         if not self._realtime_voice:
             return False
 
+        # ── Inyectar contexto MCP al RT si el modo es "preloaded" ──
+        integration_mode = config.get("mcp", "integration_mode", default="preloaded")
+        if integration_mode == "preloaded":
+            mcp_context = self._get_mcp_tools_context()
+            if mcp_context:
+                self._realtime_voice._mcp_context = mcp_context
+                logger.info(f"RT: contexto MCP inyectado ({len(mcp_context)} chars, modo=preloaded)")
+            else:
+                self._realtime_voice._mcp_context = ""
+                logger.debug("RT: no hay contexto MCP disponible (sin servidores activos o MCP deshabilitado)")
+        else:
+            self._realtime_voice._mcp_context = ""
+            logger.info(f"RT: modo MCP '{integration_mode}' — sin inyección de contexto")
+
         # Buffer para acumular texto del agente por turno (para persistir)
         rt_agent_text_buffer: list[str] = []
+        # Dedup: track last tool call to skip identical consecutive calls
+        _last_rt_tool: dict = {"name": None, "args_key": None, "ts": 0.0}
+        # Stuck-loop detection: track repeated click coordinates
+        _click_repeat_tracker: dict = {"coords": None, "count": 0}
+
+        async def on_error(error_msg: str):
+            """Errores fatales de la sesión RT (quota, auth, modelo inválido)."""
+            raw = error_msg.lower()
+            if "quota" in raw or "exceeded" in raw or "billing" in raw:
+                friendly = (
+                    "⚠️ Cuota de Google Gemini Live agotada. "
+                    "Revisa tu plan y facturación en https://aistudio.google.com. "
+                    "También puedes usar el modelo gemini-2.5-flash-native-audio-preview-12-2025 "
+                    "si tienes acceso, o cambiar a modo de voz simulado."
+                )
+            elif "permission" in raw or "unauthorized" in raw or "api key" in raw:
+                friendly = (
+                    "⚠️ Error de autenticación con Google Live API. "
+                    "Verifica tu API key de Google en Configuración."
+                )
+            elif "not found" in raw or "does not exist" in raw or "invalid_argument" in raw:
+                friendly = (
+                    "⚠️ El modelo de voz en tiempo real no está disponible. "
+                    "Intenta con gemini-2.5-flash-native-audio-preview-12-2025 en Configuración."
+                )
+            else:
+                friendly = f"⚠️ Error en la sesión de voz en tiempo real: {error_msg}"
+            logger.warning(f"RT fatal error notificado al frontend: {error_msg}")
+            await emit_message(sid, friendly, "error", done=True)
+            await sio.emit("agent:status", {"status": "realtime_stopped"}, to=sid)
 
         async def on_audio(audio_bytes: bytes):
             import base64
@@ -3118,8 +3395,11 @@ class AgentCore:
 
         async def on_user_text(text: str):
             """Muestra la transcripción del habla del usuario en el chat y la persiste."""
-            # Cerrar burbuja de streaming del agente antes de mostrar texto del usuario
-            await emit_message_done(sid)
+            # Cerrar burbuja de streaming del agente si está abierta, para mostrar texto del usuario en orden correcto
+            # Nota: si hubo barge-in (interrupted=True sin on_turn_complete), la burbuja puede tener texto parcial —
+            # se cierra aquí con lo que haya acumulado hasta ahora
+            if rt_agent_text_buffer:
+                await emit_message_done(sid)
             await sio.emit(
                 "agent:realtime_user_text",
                 {"text": text},
@@ -3148,12 +3428,70 @@ class AgentCore:
 
         async def on_tool_call(tool_call: dict):
             """Ejecuta herramientas agénticas invocadas por el modelo RT."""
+            import time as _time
             function_responses = []
+            _screenshot_responses: list[str] = []
             for fc in tool_call.get("functionCalls", []):
                 fn_name = fc.get("name", "")
                 fn_args = fc.get("args", {})
                 fn_id = fc.get("id", "")
+
+                # Dedup: skip if model calls same tool with same args < 2s ago
+                # Prevents double-type, double-click, double-enter issues
+                _now = _time.monotonic()
+                _args_key = str(sorted(fn_args.items()) if isinstance(fn_args, dict) else fn_args)
+                if (fn_name == _last_rt_tool["name"]
+                        and _args_key == _last_rt_tool["args_key"]
+                        and _now - _last_rt_tool["ts"] < 2.0):
+                    logger.warning(f"RT dedup: skip duplicate tool call {fn_name}({fn_args})")
+                    # Still need to return a response so model doesn't hang
+                    function_responses.append({"name": fn_name, "id": fn_id, "response": {"result": "skipped_duplicate"}})
+                    continue
+                _last_rt_tool["name"] = fn_name
+                _last_rt_tool["args_key"] = _args_key
+                _last_rt_tool["ts"] = _now
+
                 logger.info(f"RT tool call: {fn_name}({fn_args})")
+
+                # Defense-in-depth: el coordinador (voz) no tiene acciones de escritorio nativas.
+                # Toda interacción de UI debe ir por delegate_computer_use.
+                if fn_name in {"click", "double_click", "right_click", "type", "focus_type",
+                               "press", "key", "hotkey", "scroll", "move", "drag"}:
+                    logger.warning(f"RT bloqueado tool desktop nativo: {fn_name}")
+                    function_responses.append({"name": fn_name, "id": fn_id, "response": {"error": (
+                        "Acción de escritorio directa no disponible para el coordinador. "
+                        "Usa delegate_computer_use(task=\"...\", monitor=N) para que el sub-agente realice la interacción."
+                    )}})
+                    continue
+
+                # Stuck-loop detection: if clicking same coords 3+ times, override with error
+                if fn_name in ("click", "double_click", "right_click"):
+                    _coords = (fn_args.get("x"), fn_args.get("y"))
+                    if _coords == _click_repeat_tracker["coords"]:
+                        _click_repeat_tracker["count"] += 1
+                    else:
+                        _click_repeat_tracker["coords"] = _coords
+                        _click_repeat_tracker["count"] = 1
+
+                    if _click_repeat_tracker["count"] >= 3:
+                        logger.warning(f"RT stuck-loop: click at {_coords} repeated {_click_repeat_tracker['count']} times")
+                        function_responses.append({
+                            "name": fn_name, "id": fn_id,
+                            "response": {
+                                "error": (
+                                    f"STUCK: Has hecho click en ({_coords[0]}, {_coords[1]}) "
+                                    f"{_click_repeat_tracker['count']} veces sin resultado. "
+                                    "El click NO está funcionando en esta coordenada. "
+                                    "DETENTE. Toma un screenshot nuevo, analiza la imagen, "
+                                    "y usa coordenadas DIFERENTES basadas en lo que VES en la pantalla actual. "
+                                    "Si el elemento que buscas no es clickeable, prueba otra estrategia."
+                                ),
+                            },
+                        })
+                        continue
+                elif fn_name != "screenshot":
+                    _click_repeat_tracker["coords"] = None
+                    _click_repeat_tracker["count"] = 0
 
                 # Generar ID único para esta acción (para vincular card con resultado)
                 import uuid as _uuid
@@ -3164,7 +3502,84 @@ class AgentCore:
 
                 result_data = {"error": f"Tool '{fn_name}' no disponible"}
                 try:
-                    if self._planner:
+                    if fn_name == "set_emotion":
+                        # Expresión facial/corporal del avatar (VRM/sprite). El frontend
+                        # enruta agent:emotion → skin.setEmotion. Sin computer use.
+                        _emo = str(fn_args.get("emotion", "")).strip().lower()
+                        _valid_emos = {"happy", "sad", "angry", "surprised", "relaxed", "neutral"}
+                        if _emo in _valid_emos:
+                            await emit_emotion(sid, _emo)
+                            result_data = {"result": f"Expresión '{_emo}' aplicada a tu avatar."}
+                        else:
+                            result_data = {"error": (
+                                f"Emoción inválida: '{_emo}'. Válidas: {', '.join(sorted(_valid_emos))}."
+                            )}
+                    elif fn_name == "delegate_computer_use":
+                        cu_task = str(fn_args.get("task", "")).strip()
+                        cu_monitor = int(fn_args.get("monitor", 0) or 0)
+                        if not cu_task:
+                            result_data = {"error": "Falta 'task' para delegate_computer_use"}
+                        else:
+                            cu_result = await self._handle_computer_use_delegation(sid, cu_task, cu_monitor)
+                            if cu_result:
+                                recent = ", ".join(cu_result.action_history[-6:]) if cu_result.action_history else "ninguna"
+                                result_data = {"result": (
+                                    f"Computer use [{cu_result.status}]: {cu_result.summary or cu_result.status}. "
+                                    f"Acciones: {recent}."
+                                    + (f" Error: {cu_result.error}" if cu_result.error else "")
+                                )}
+                                # Adjuntar frame de verificación para que el modelo live lo analice
+                                try:
+                                    _verify_mon = cu_monitor or int(config.get("vision", "target_monitor", default=0))
+                                    _vs = await self._vision.analyze_screen(mode="computer_use", monitor=_verify_mon)
+                                    _vb = _vs.get("image_base64")
+                                    if _vb:
+                                        result_data["_screenshot_b64"] = _vb
+                                except Exception as _exc:
+                                    logger.debug(f"RT verificación post-delegación falló: {_exc}")
+                            else:
+                                result_data = {"error": "Sub-agente de computer use no disponible o falló."}
+                    elif fn_name == "mcp_call_tool":
+                        # ── MCP tool execution via runtime ──
+                        mcp_server_id = str(fn_args.get("server_id", "")).strip()
+                        mcp_tool_name = str(fn_args.get("tool", "")).strip()
+                        mcp_arguments = fn_args.get("arguments") or {}
+                        if not mcp_server_id or not mcp_tool_name:
+                            result_data = {"error": "Faltan 'server_id' y/o 'tool' para mcp_call_tool."}
+                        else:
+                            try:
+                                mcp_runtime = getattr(self._planner, '_mcp_runtime', None) if self._planner else None
+                                if not mcp_runtime:
+                                    result_data = {"error": "MCP runtime no disponible. Verifica que MCP esté habilitado en Configuración > Integraciones."}
+                                else:
+                                    import asyncio as _aio
+                                    mcp_result = await _aio.to_thread(
+                                        mcp_runtime.call_tool,
+                                        server_id=mcp_server_id,
+                                        tool_name=mcp_tool_name,
+                                        arguments=mcp_arguments if isinstance(mcp_arguments, dict) else {},
+                                    )
+                                    if mcp_result.get("success"):
+                                        # Extraer contenido legible del resultado MCP
+                                        content_parts = mcp_result.get("content", [])
+                                        text_parts = []
+                                        for part in content_parts:
+                                            if isinstance(part, dict) and part.get("type") == "text":
+                                                text_parts.append(part.get("text", ""))
+                                            elif isinstance(part, str):
+                                                text_parts.append(part)
+                                        mcp_text = "\n".join(text_parts) if text_parts else json.dumps(mcp_result.get("raw_result", {}), ensure_ascii=False)
+                                        # Truncar si es demasiado largo para el contexto del modelo
+                                        if len(mcp_text) > 4000:
+                                            mcp_text = mcp_text[:4000] + "\n... [truncado]"
+                                        result_data = {"result": f"MCP {mcp_server_id}/{mcp_tool_name}: {mcp_text}"}
+                                    else:
+                                        mcp_err = mcp_result.get('error') or 'error desconocido'
+                                        result_data = {"error": f"MCP tool falló: {mcp_err}"}
+                            except Exception as mcp_exc:
+                                logger.error(f"RT mcp_call_tool error: {mcp_exc}")
+                                result_data = {"error": f"Error ejecutando MCP tool: {mcp_exc}"}
+                    elif self._planner:
                         from backend.core.planner import Action
                         action = Action(type=fn_name, params=fn_args)
                         result = await self._planner._execute_single(action)
@@ -3173,16 +3588,24 @@ class AgentCore:
                             # Sanitizar resultado para tool response (no enviar datos binarios/enormes a Gemini)
                             result_summary = self._sanitize_tool_result(fn_name, raw_data, result)
                             result_data = {"result": result_summary}
-                            # Si hay screenshot, emitir imagen al frontend
+                            # Si hay screenshot, emitir imagen al frontend y prepararla para tool response
                             if fn_name == "screenshot" and isinstance(raw_data, dict) and raw_data.get("image_base64"):
                                 await emit_screenshot(sid, raw_data["image_base64"])
-                                # Enviar imagen al modelo RT para que pueda "ver" la pantalla
-                                await self._realtime_voice.send_image(raw_data["image_base64"])
-                            # Si se generó imagen, emitirla al frontend
-                            if fn_name == "generate_image" and isinstance(raw_data, dict):
+                                # Incluir la imagen DENTRO del tool response (no como frame separado)
+                                # para que el modelo la analice como resultado directo del screenshot
+                                _img_b64 = raw_data["image_base64"]
+                                if _img_b64.startswith("data:"):
+                                    _img_b64 = _img_b64.split(",", 1)[-1]
+                                result_data["_screenshot_b64"] = _img_b64
+                            # Emitir archivos multimedia generados al frontend
+                            if fn_name in ("generate_image", "generate_video", "generate_music") and isinstance(raw_data, dict):
                                 for gen_file in (raw_data.get("files") or []):
-                                    if gen_file.get("base64"):
+                                    fname = gen_file.get("filename", "")
+                                    if fn_name == "generate_image" and gen_file.get("base64"):
                                         await emit_screenshot(sid, gen_file["base64"], caption="generated_image")
+                                    if fname:
+                                        media_type = "image" if fn_name == "generate_image" else "video" if fn_name == "generate_video" else "audio"
+                                        await emit_media(sid, media_type, fname, f"/api/media/{fname}")
                         else:
                             result_data = {"error": str(result.get("message") or result.get("error", "fallo"))}
                 except Exception as exc:
@@ -3199,11 +3622,19 @@ class AgentCore:
                     "result": result_text,
                 }, to=sid)
 
-                function_responses.append({
+                # Build function response — include screenshot image inline if available
+                _screenshot_b64 = result_data.pop("_screenshot_b64", None)
+                _fr = {
                     "name": fn_name,
                     "id": fn_id,
                     "response": result_data,
-                })
+                }
+                function_responses.append(_fr)
+
+                # Send screenshot as a SEPARATE inline image in the tool response
+                # so the model sees it as the direct result of the screenshot tool
+                if _screenshot_b64:
+                    _screenshot_responses.append(_screenshot_b64)
 
                 # Persistir tool call y resultado en la memoria
                 try:
@@ -3225,14 +3656,26 @@ class AgentCore:
             # Enviar respuestas de herramientas de vuelta al modelo
             await self._realtime_voice.send_tool_response(function_responses)
 
+            # Send screenshot images AFTER tool response as video frames
+            # so the model can see the screen state for its next decision
+            for _ss_b64 in _screenshot_responses:
+                await self._realtime_voice.send_image(_ss_b64)
+
         return await self._realtime_voice.start_session(
             provider, on_audio, on_text, on_user_text, on_tool_call, voice=voice,
             on_turn_complete=on_turn_complete,
             conversation_history=self._memory.messages if self._memory.messages else None,
+            on_error=on_error,
         )
 
     async def stop_realtime_voice(self) -> None:
         """Detiene la sesión de voz en tiempo real (nativa o simulada)."""
+        # Cancelar operaciones de media en curso (video polling, etc.)
+        try:
+            from backend.providers.google_media import cancel_media_generation
+            cancel_media_generation()
+        except Exception:
+            pass
         if self._simulated_realtime and self._simulated_realtime.is_active:
             await self._simulated_realtime.stop_session()
         if self._realtime_voice:

@@ -26,7 +26,7 @@ from backend.core.resilience import ActionAttemptRecord, ActionExecutionResultMo
 from backend.core.ide_manager import IDEManager
 from backend.core.cost_tracker import get_cost_tracker
 from backend.core.gateway_service import get_gateway
-from backend.core.mcp_registry import MCPRegistry
+from backend.core.mcp_registry import MCPRegistry, get_mcp_registry
 from backend.core.mcp_runtime import MCPRuntime
 from backend.core.payment_registry import PaymentRegistry
 from backend.core.scheduler import get_scheduler
@@ -45,17 +45,56 @@ def set_planner_socket(sio, sid):
     _sio = sio
     _current_sid = sid
 
-async def _emit_action_event(action_type: str, params: dict):
-    """Emite un evento de acción al frontend para efectos visuales."""
+
+async def _emit_action_start(action_id: str, action_type: str, params: dict) -> None:
+    """Emite el INICIO de una accion: crea la tarjeta (con SVG) en el frontend.
+
+    Lleva un `actionId` para que el frontend pueda emparejar el resultado
+    (`agent:action_result`) y DETENER el contador de tiempo de la tarjeta.
+    Tambien dispara los efectos visuales del overlay (segun el tipo).
+    """
     global _sio, _current_sid
     if _sio and _current_sid:
         try:
             await _sio.emit("agent:action", {
+                "actionId": action_id,
                 "type": action_type,
                 "params": params,
             }, to=_current_sid)
         except Exception as exc:
             logger.debug(f"No se pudo emitir agent:action ({action_type}): {exc}")
+
+
+async def _emit_action_result(
+    action_id: str,
+    action_type: str,
+    success: bool,
+    message: str,
+    duration_ms: float | None = None,
+) -> None:
+    """Emite el RESULTADO de una accion: actualiza la tarjeta (OK/ERROR),
+    detiene el contador y guarda la duracion exacta. Sin esto el contador
+    'Esperando Ns' corria infinitamente."""
+    global _sio, _current_sid
+    if _sio and _current_sid:
+        try:
+            await _sio.emit("agent:action_result", {
+                "actionId": action_id,
+                "type": action_type,
+                "success": bool(success),
+                "result": str(message or ""),
+                "durationMs": round(float(duration_ms), 1) if duration_ms is not None else None,
+            }, to=_current_sid)
+        except Exception as exc:
+            logger.debug(f"No se pudo emitir agent:action_result ({action_type}): {exc}")
+
+
+async def _emit_action_event(action_type: str, params: dict):
+    """DEPRECADO. La creacion de tarjetas ahora la centraliza `execute_actions`
+    via `_emit_action_start` (con actionId) + `_emit_action_result`. Se mantiene
+    como no-op para no romper las llamadas por-caso existentes en `_execute_single`
+    y evitar tarjetas duplicadas sin actionId (que dejaban el contador colgado)."""
+    return None
 
 
 @dataclass
@@ -151,6 +190,9 @@ ACTION_TYPE_ALIASES = {
     "emit_heartbeat": "schedule_emit_heartbeat",
     "trigger_webhook": "schedule_trigger_webhook",
     "fire_webhook": "schedule_trigger_webhook",
+    "computer_use": "delegate_computer_use",
+    "ui_task": "delegate_computer_use",
+    "desktop_task": "delegate_computer_use",
     "editor_detect": "ide_detect",
     "vscode_detect": "ide_detect",
     "editor_open_workspace": "ide_open_workspace",
@@ -206,6 +248,16 @@ ACTION_TYPE_ALIASES = {
     "editor_batch_edit": "ide_apply_workspace_edits",
     "vscode_batch_edit": "ide_apply_workspace_edits",
 }
+
+# Acciones de escritorio nativas (mouse/teclado directo) deshabilitadas para el
+# agente principal (coordinador). El sub-agente de computer use usa pc_controller
+# directamente y NO pasa por _execute_single, así que conserva control total.
+# El coordinador debe usar MCPControl (mcp_call_tool) o delegate_computer_use.
+_BLOCKED_MAIN_DESKTOP_ACTIONS = frozenset({
+    "click", "double_click", "right_click", "type", "focus_type",
+    "press", "key", "hotkey", "scroll", "move", "drag",
+    "browser_desktop_fallback_click",
+})
 
 
 def _coerce_bool(value: Any, default: bool = False) -> bool:
@@ -492,8 +544,9 @@ class ActionPlanner:
         self._workspace = workspace
         self._ide = ide
         self._editor_bridge = editor_bridge
+        self._browseruse: object | None = None  # Lazy BrowserUseBridge fallback
         self._skills = skill_registry or SkillRegistry()
-        self._mcp = mcp_registry or MCPRegistry()
+        self._mcp = mcp_registry or get_mcp_registry()
         self._payments = payment_registry or PaymentRegistry()
         self._skill_runtime = skill_runtime or SkillRuntime(self._skills)
         self._mcp_runtime = mcp_runtime or MCPRuntime(self._mcp)
@@ -536,6 +589,20 @@ class ActionPlanner:
             logger.info("=== ACTIONS PARSED END ===")
         else:
             logger.info("=== ACTIONS PARSED: none ===")
+            if "[ACTION:" in llm_text or "ACTION:" in llm_text:
+                import re as _re_diag
+                bracket_matches = _re_diag.findall(r'\[ACTION:[^\]]{0,300}', llm_text)
+                loose_matches = _re_diag.findall(r'\bACTION\s*:\s*\S+[^\n]{0,200}', llm_text, flags=_re_diag.IGNORECASE)
+                logger.warning(
+                    f"parse_actions: text contains ACTION patterns but none parsed! "
+                    f"text_len={len(llm_text)}, "
+                    f"bracket_patterns={bracket_matches[:5]}, "
+                    f"loose_patterns={loose_matches[:5]}"
+                )
+                logger.trace(
+                    f"parse_actions FULL TEXT for failed parse:\n"
+                    f"--- PARSE INPUT START ---\n{llm_text}\n--- PARSE INPUT END ---"
+                )
 
         return actions
 
@@ -1363,9 +1430,17 @@ class ActionPlanner:
         Ejecuta una lista de acciones y retorna resultados.
         """
         results = []
+        batch_stamp = int(time.time() * 1000)
 
         for index, action in enumerate(actions):
             logger.info(f"Ejecutando acción: {action.type} — {action.params}")
+
+            # Ciclo de vida de la tarjeta de accion (frontend):
+            # START crea la tarjeta con su SVG y arranca el contador;
+            # RESULT la cierra (OK/ERROR), detiene el contador y guarda la duracion.
+            action_id = f"act_{batch_stamp}_{index}"
+            await _emit_action_start(action_id, action.type, action.params)
+
             result = await self._execute_with_resilience(action)
             if action.type == "task_complete":
                 result = self._validate_task_completion(
@@ -1378,6 +1453,14 @@ class ActionPlanner:
             logger.info(
                 f"[ACTION RESULT] type={result['action']} success={result['success']} "
                 f"message={result.get('message', '')} attempts={result.get('attempts', 1)}"
+            )
+
+            await _emit_action_result(
+                action_id,
+                action.type,
+                bool(result.get("success")),
+                str(result.get("message", "")),
+                result.get("duration_ms"),
             )
 
             if not result.get("success") and action.type != "task_complete":
@@ -1449,6 +1532,52 @@ class ActionPlanner:
 
         return new_x, new_y
 
+    async def _ensure_browser_session(self) -> bool:
+        """Auto-inicializa sesión de browser si no hay una activa. Retorna True si listo.
+        Checks extension connection first to avoid useless initialization attempts."""
+        if not self._browser or not self._browser.is_available():
+            return False
+        # If already connected via extension, reuse
+        if self._browser._mode is not None:
+            # Verify extension is still actually connected
+            ext = getattr(self._browser, '_ext', None)
+            if ext and hasattr(ext, 'is_connected') and not ext.is_connected:
+                logger.info("[Planner] Extension disconnected, clearing stale browser session")
+                self._browser._mode = None
+                return False
+            return True
+        # Check if extension is connected before trying to init
+        ext = getattr(self._browser, '_ext', None)
+        if ext and hasattr(ext, 'is_connected') and not ext.is_connected:
+            logger.debug("[Planner] Extension not connected, skipping browser session init")
+            return False
+        try:
+            logger.info("[Planner] Auto-init: inicializando sesión de browser (human profile)...")
+            await self._browser.ensure_human_profile()
+            return self._browser._mode is not None
+        except Exception as e:
+            logger.warning(f"[Planner] Auto-init browser falló: {e}")
+            return False
+
+    async def _get_browseruse(self):
+        """Lazy-init BrowserUseBridge como fallback cuando la extensión no está conectada."""
+        if self._browseruse is not None:
+            return self._browseruse
+        try:
+            from backend.automation.browseruse_bridge import BrowserUseBridge
+            bridge = BrowserUseBridge()
+            await bridge.initialize()
+            if not bridge.is_available():
+                logger.info("[Planner] browser-use no disponible (no instalado)")
+                return None
+            await bridge.ensure_automation_profile("g-mini-auto")
+            self._browseruse = bridge
+            logger.info("[Planner] BrowserUseBridge inicializado como fallback")
+            return bridge
+        except Exception as e:
+            logger.warning(f"[Planner] BrowserUseBridge fallback falló: {e}")
+            return None
+
     async def _execute_single(self, action: Action) -> dict[str, Any]:
         """Ejecuta una sola acción."""
         result = {
@@ -1457,8 +1586,28 @@ class ActionPlanner:
             "message": "",
         }
 
+        # Computer use nativo deshabilitado en el agente principal (coordinador).
+        if action.type in _BLOCKED_MAIN_DESKTOP_ACTIONS:
+            logger.warning(f"Acción de escritorio nativa bloqueada en el agente principal: {action.type}")
+            result["message"] = (
+                "Acción de escritorio directa deshabilitada en el agente principal. "
+                "Usa MCPControl (mcp_call_tool con server_id='mcpcontrol') si está disponible, "
+                "o delega con [ACTION:delegate_computer_use(task=...)]."
+            )
+            return result
+
         try:
             match action.type:
+                case "delegate_computer_use":
+                    task = str(action.params.get("task", "")).strip()
+                    monitor = int(action.params.get("monitor", 0) or 0)
+                    if not task:
+                        result["message"] = "Falta 'task' en delegate_computer_use"
+                        return result
+                    result["success"] = True
+                    result["data"] = {"task": task, "monitor": monitor, "delegated": True}
+                    result["message"] = f"Delegacion computer use: {task[:100]}"
+
                 case "click":
                     x = int(action.params.get("x", 0))
                     y = int(action.params.get("y", 0))
@@ -1555,12 +1704,13 @@ class ActionPlanner:
                     result["success"] = ok
 
                 case "screenshot":
-                    # Emitir evento visual ANTES de la captura
                     await _emit_action_event("screenshot", {})
-                    # Pequeña pausa para que se muestre el overlay
                     await asyncio.sleep(0.3)
-                    # Forzar modo computer_use para obtener imagen base64
-                    screen_data = await self._vision.analyze_screen(mode="computer_use")
+                    target_mon = int(action.params.get("monitor", 0) or config.get("vision", "target_monitor", default=0))
+                    # Usar modo hybrid para incluir también texto OCR — ayuda al modelo a entender qué está en pantalla
+                    _use_hybrid = config.get("vision", "screenshot_hybrid_mode", default=True)
+                    _mode = "hybrid" if _use_hybrid else "computer_use"
+                    screen_data = await self._vision.analyze_screen(mode=_mode, monitor=target_mon)
                     # Guardar dimensiones para escalar coordenadas futuras
                     if screen_data.get("screen_dimensions"):
                         self._screen_dims = screen_data["screen_dimensions"]
@@ -1723,7 +1873,7 @@ class ActionPlanner:
                     if server_id:
                         try:
                             data = {
-                                "enabled": bool(config.get("mcp", "enabled", default=False)),
+                                "enabled": bool(config.get("mcp", "enabled", default=True)),
                                 "server": self._mcp.get_server(server_id),
                             }
                         except KeyError:
@@ -1871,6 +2021,10 @@ class ActionPlanner:
                 case "mcp_call_tool":
                     server_id = str(action.params.get("server_id", "")).strip()
                     tool = str(action.params.get("tool", action.params.get("name", ""))).strip()
+                    logger.info(
+                        f"mcp_call_tool: server_id={server_id!r}, tool={tool!r}, "
+                        f"raw_params={action.params}"
+                    )
                     if not server_id:
                         result["message"] = "Falta server_id en mcp_call_tool"
                         return result
@@ -1883,6 +2037,10 @@ class ActionPlanner:
                     elif isinstance(raw_arguments, dict):
                         arguments_payload = raw_arguments
                     else:
+                        logger.warning(
+                            f"mcp_call_tool: arguments no es dict: type={type(raw_arguments).__name__}, "
+                            f"value={raw_arguments!r}"
+                        )
                         result["message"] = "El parametro arguments de mcp_call_tool debe ser un objeto JSON"
                         return result
                     data = await asyncio.to_thread(
@@ -2867,6 +3025,11 @@ class ActionPlanner:
                     if not command:
                         result["message"] = "Falta command en terminal_run"
                         return result
+                    # Normalizar rutas Windows: LLMs suelen escapar backslashes
+                    # (\\\\→\\, \\→\) lo cual rompe PowerShell paths
+                    resolved_shell = str(shell_key) if shell_key else "powershell"
+                    if resolved_shell in ("powershell", "cmd"):
+                        command = command.replace("\\\\", "\\")
                     data = await self._terminals.run_command(
                         command=command,
                         cwd=str(cwd) if cwd else None,
@@ -2964,12 +3127,9 @@ class ActionPlanner:
                     result["message"] = f"Browser conectado al perfil de automatizacion {profile_name}"
 
                 case "browser_navigate":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
-                        return result
                     url = str(action.params.get("url", ""))
 
-                    # ── Bloqueo de sitios baneados (configurable) ──
+                    # ── Bloqueo de sitios baneados (configurable) — check before any backend ──
                     blocked_enabled, blocked_sites = _get_blocked_sites_config()
                     if blocked_enabled and blocked_sites:
                         from urllib.parse import urlparse
@@ -2987,16 +3147,40 @@ class ActionPlanner:
                                     )
                                     return result
                         except Exception:
-                            pass  # Si falla el parseo de URL, permitir (no bloquear por error)
+                            pass
 
-                    data = await self._browser.navigate(url)
-                    result["success"] = True
-                    result["data"] = data
-                    result["message"] = f"Navegado a {data['url']}"
+                    # ── Priority: 1) Extension  2) browser-use  3) error with CU instructions ──
+                    _extension_ready = await self._ensure_browser_session()
+                    if _extension_ready:
+                        data = await self._browser.navigate(url)
+                        result["success"] = True
+                        result["data"] = data
+                        result["message"] = f"Navegado a {data['url']}"
+                    else:
+                        logger.info(f"[Planner] Extensión no disponible, intentando browser-use para: {url}")
+                        _bu = await self._get_browseruse()
+                        if _bu:
+                            try:
+                                data = await _bu.navigate(url)
+                                result["success"] = True
+                                result["data"] = data
+                                result["message"] = f"Navegado via browser-use a {data.get('url', url)}"
+                            except Exception as _bu_err:
+                                result["message"] = (
+                                    f"browser-use falló: {_bu_err}. "
+                                    "Usa computer use: click barra de direcciones Chrome (x=centro, y≈55) → "
+                                    "hotkey ctrl+a → type URL completa → press enter."
+                                )
+                        else:
+                            result["message"] = (
+                                "Extensión desconectada y browser-use no instalado. "
+                                "Usa computer use: click barra de direcciones Chrome (x=centro, y≈55) → "
+                                "hotkey ctrl+a → type URL completa → press enter."
+                            )
 
                 case "browser_click":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     selector = str(action.params.get("selector", ""))
                     force = _coerce_bool(action.params.get("force", False))
@@ -3006,8 +3190,8 @@ class ActionPlanner:
                     result["message"] = f"Click en selector {selector}" + (" (force)" if force else "")
 
                 case "browser_force_click":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     selector = str(action.params.get("selector", ""))
                     data = await self._browser.click(selector, force=True)
@@ -3016,8 +3200,8 @@ class ActionPlanner:
                     result["message"] = f"Force click en selector {selector} (bypass overlays)"
 
                 case "browser_remove_overlays":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     data = await self._browser.remove_overlays()
                     result["success"] = True
@@ -3025,8 +3209,8 @@ class ActionPlanner:
                     result["message"] = f"Overlays eliminados: {data['removed_elements']} elementos removidos"
 
                 case "browser_check_downloads":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     expected_ext = action.params.get("expected_ext")
                     filename_contains = action.params.get("filename_contains")
@@ -3045,8 +3229,8 @@ class ActionPlanner:
                         result["message"] = "No se encontraron descargas recientes que coincidan"
 
                 case "browser_type":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     selector = str(action.params.get("selector", ""))
                     input_text = str(action.params.get("text", action.params.get("value", "")))
@@ -3060,8 +3244,8 @@ class ActionPlanner:
                     result["message"] = f"Texto escrito en selector {selector}"
 
                 case "browser_press":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     key = str(action.params.get("key", "Enter"))
                     data = await self._browser.press(key)
@@ -3070,8 +3254,8 @@ class ActionPlanner:
                     result["message"] = f"Tecla enviada al browser: {key}"
 
                 case "browser_extract":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     selector = str(action.params.get("selector", "body"))
                     instruction = action.params.get("instruction")
@@ -3084,8 +3268,8 @@ class ActionPlanner:
                         result["message"] = f"Contenido extraido de {selector}"
 
                 case "browser_snapshot":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     data = await self._browser.snapshot()
                     result["success"] = True
@@ -3093,8 +3277,8 @@ class ActionPlanner:
                     result["message"] = f"Snapshot del browser en {data['url']}"
 
                 case "browser_eval":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     script = str(action.params.get("script", ""))
                     data = await self._browser.evaluate(script)
@@ -3110,8 +3294,8 @@ class ActionPlanner:
                         result["message"] = f"Script ejecutado en browser: {preview_text}"
 
                 case "browser_screenshot":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     data = await self._browser.screenshot()
                     result["success"] = True
@@ -3119,8 +3303,8 @@ class ActionPlanner:
                     result["message"] = f"Screenshot del browser en {data['url']}"
 
                 case "browser_state":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     data = await self._browser.current_state()
                     result["success"] = True
@@ -3128,8 +3312,8 @@ class ActionPlanner:
                     result["message"] = f"Browser activo en {data['url']}"
 
                 case "browser_scroll":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     direction = str(action.params.get("direction", "down"))
                     amount = int(action.params.get("amount", 3))
@@ -3139,8 +3323,8 @@ class ActionPlanner:
                     result["message"] = f"Scroll {direction} x{amount} en browser"
 
                 case "browser_wait_for":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     selector = str(action.params.get("selector", ""))
                     timeout_ms = int(action.params.get("timeout_ms", 15000))
@@ -3151,8 +3335,8 @@ class ActionPlanner:
                     result["message"] = f"Elemento {selector} encontrado ({state})"
 
                 case "browser_wait_load":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     state = str(action.params.get("state", "domcontentloaded"))
                     data = await self._browser.wait_for_load(state=state)
@@ -3161,8 +3345,8 @@ class ActionPlanner:
                     result["message"] = f"Pagina cargada ({state})"
 
                 case "browser_go_back":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     data = await self._browser.go_back()
                     result["success"] = True
@@ -3170,8 +3354,8 @@ class ActionPlanner:
                     result["message"] = f"Navegado atras: {data['url']}"
 
                 case "browser_go_forward":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     data = await self._browser.go_forward()
                     result["success"] = True
@@ -3179,8 +3363,8 @@ class ActionPlanner:
                     result["message"] = f"Navegado adelante: {data['url']}"
 
                 case "browser_tabs":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     data = await self._browser.list_tabs()
                     result["success"] = True
@@ -3188,8 +3372,8 @@ class ActionPlanner:
                     result["message"] = f"Tabs abiertas: {data['count']}"
 
                 case "browser_switch_tab":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     index = int(action.params.get("index", 0))
                     data = await self._browser.switch_tab(index)
@@ -3198,8 +3382,8 @@ class ActionPlanner:
                     result["message"] = f"Cambiado a tab {index}: {data['url']}"
 
                 case "browser_close_tab":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     index = action.params.get("index")
                     data = await self._browser.close_tab(index=int(index) if index is not None else None)
@@ -3208,8 +3392,8 @@ class ActionPlanner:
                     result["message"] = f"Tab cerrada. Restantes: {data['remaining_tabs']}"
 
                 case "browser_new_tab":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     url = action.params.get("url")
                     data = await self._browser.new_tab(url=str(url) if url else None)
@@ -3218,8 +3402,8 @@ class ActionPlanner:
                     result["message"] = f"Nueva tab abierta: {data['url']}"
 
                 case "browser_hover":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     selector = str(action.params.get("selector", ""))
                     data = await self._browser.hover(selector)
@@ -3228,8 +3412,8 @@ class ActionPlanner:
                     result["message"] = f"Hover en selector {selector}"
 
                 case "browser_select":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     selector = str(action.params.get("selector", ""))
                     value = str(action.params.get("value", ""))
@@ -3239,8 +3423,8 @@ class ActionPlanner:
                     result["message"] = f"Opcion seleccionada: {value}"
 
                 case "browser_fill":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     selector = str(action.params.get("selector", ""))
                     input_text = str(action.params.get("text", action.params.get("value", "")))
@@ -3250,8 +3434,8 @@ class ActionPlanner:
                     result["message"] = f"Campo rellenado: {selector}"
 
                 case "browser_page_info":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     data = await self._browser.get_page_info()
                     result["success"] = True
@@ -3259,8 +3443,8 @@ class ActionPlanner:
                     result["message"] = f"Pagina: {data['title']} ({data['url']})"
 
                 case "browser_download_click":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     selector = str(action.params.get("selector", ""))
                     timeout_ms = int(action.params.get("timeout_ms", 30000))
@@ -3281,8 +3465,8 @@ class ActionPlanner:
                         )
 
                 case "browser_list_downloads":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     limit = int(action.params.get("limit", 20))
                     data = {"downloads": self._browser.list_downloads(limit=limit)}
@@ -3291,8 +3475,8 @@ class ActionPlanner:
                     result["message"] = f"Descargas registradas: {len(data['downloads'])}"
 
                 case "browser_scan_file":
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     file_path = str(action.params.get("path", ""))
                     data = await self._browser.scan_file_with_virustotal(file_path)
@@ -3346,6 +3530,36 @@ class ActionPlanner:
                     ok = await self._adb.input_text(text)
                     result["success"] = ok
 
+                # ── Media Generation (Imagen, Veo, Lyria) ────
+                case "generate_image":
+                    from backend.providers.google_media import generate_image as _gen_image
+                    prompt = str(action.params.get("prompt", ""))
+                    aspect_ratio = str(action.params.get("aspect_ratio", "1:1"))
+                    model = action.params.get("model") or None
+                    data = await _gen_image(prompt=prompt, model=model, aspect_ratio=aspect_ratio)
+                    result["success"] = data.get("success", False) or bool(data.get("files"))
+                    result["data"] = data
+                    result["message"] = data.get("message", "Imagen generada" if result["success"] else "Error generando imagen")
+
+                case "generate_video":
+                    from backend.providers.google_media import generate_video as _gen_video
+                    prompt = str(action.params.get("prompt", ""))
+                    model = action.params.get("model") or None
+                    duration = action.params.get("duration_seconds")
+                    data = await _gen_video(prompt=prompt, model=model, duration_seconds=duration)
+                    result["success"] = data.get("success", False) or bool(data.get("files"))
+                    result["data"] = data
+                    result["message"] = data.get("message", "Video generado" if result["success"] else "Error generando video")
+
+                case "generate_music":
+                    from backend.providers.google_media import generate_music as _gen_music
+                    prompt = str(action.params.get("prompt", ""))
+                    model = action.params.get("model") or None
+                    data = await _gen_music(prompt=prompt, model=model)
+                    result["success"] = data.get("success", False) or bool(data.get("files"))
+                    result["data"] = data
+                    result["message"] = data.get("message", "Música generada" if result["success"] else "Error generando música")
+
                 # ── Task Control ────
                 case "task_complete":
                     summary = str(action.params.get("summary", "Tarea completada"))
@@ -3356,8 +3570,8 @@ class ActionPlanner:
                 case "browser_desktop_fallback_click":
                     # Fallback: toma un screenshot del browser, luego hace click en coordenadas
                     # de escritorio usando pyautogui. Útil cuando selectores CSS fallan.
-                    if not self._browser or not self._browser.is_available():
-                        result["message"] = "Browser automation no disponible: falta Playwright"
+                    if not await self._ensure_browser_session():
+                        result["message"] = "Browser automation no disponible: no se pudo inicializar sesión de browser"
                         return result
                     x = int(action.params.get("x", 0))
                     y = int(action.params.get("y", 0))
@@ -3378,6 +3592,24 @@ class ActionPlanner:
                     result["message"] = (
                         f"Desktop fallback click en ({x_scaled}, {y_scaled}) — {description}"
                     )
+
+                case "open_application":
+                    import subprocess as _subproc
+                    app_name = str(action.params.get("name", "") or action.params.get("app", "")).strip()
+                    if not app_name:
+                        result["message"] = "Falta el nombre de la aplicación en open_application"
+                        return result
+                    try:
+                        _subproc.Popen(
+                            ["cmd", "/c", "start", "", app_name],
+                            shell=False,
+                            stdout=_subproc.DEVNULL,
+                            stderr=_subproc.DEVNULL,
+                        )
+                        result["success"] = True
+                        result["message"] = f"Aplicación '{app_name}' abierta"
+                    except Exception as app_exc:
+                        result["message"] = f"No se pudo abrir '{app_name}': {app_exc}"
 
                 case _:
                     result["message"] = f"Acción desconocida: {action.type}"

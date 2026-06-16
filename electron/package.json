@@ -8,10 +8,13 @@
     "dev": "electron . --dev",
     "build": "electron-builder",
     "dist:win": "electron-builder --win",
-    "dist:linux": "electron-builder --linux"
+    "dist:linux": "electron-builder --linux",
+    "vendor:skin": "node scripts/copy-skin-vendor.js"
   },
   "dependencies": {
-    "socket.io-client": "^4.7.5"
+    "@pixiv/three-vrm": "^3.4.1",
+    "socket.io-client": "^4.7.5",
+    "three": "^0.170.0"
   },
   "devDependencies": {
     "electron": "^30.1.0",

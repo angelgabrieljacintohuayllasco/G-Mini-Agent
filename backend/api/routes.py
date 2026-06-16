@@ -13,12 +13,14 @@ from typing import Any
 import yaml
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from loguru import logger
 
 from backend.config import config
 from backend.core.modes import PREDEFINED_MODES, get_mode, get_mode_behavior_prompt, list_modes
 from backend.core.mcp_registry import MCPRegistry
 from backend.core.mcp_runtime import MCPRuntime
+from backend.core.mcp_registry import get_mcp_registry
 from backend.core.payment_registry import PaymentRegistry
 from backend.core.prompt_manager import list_core_prompts, reset_prompt_override, set_prompt_override
 from backend.core.cost_tracker import get_cost_tracker as get_cost_tracker_service
@@ -29,6 +31,8 @@ from backend.core.skill_runtime import SkillRuntime
 from backend.core.workspace_manager import WorkspaceManager
 from backend.voice.engine import (
     DEFAULT_TTS_ENGINE,
+    DEFAULT_GOOGLE_VOICE,
+    GOOGLE_VOICE_CATALOG,
     get_tts_engine_descriptor,
     list_tts_engines,
     migrate_voice_config,
@@ -95,6 +99,29 @@ router = APIRouter()
 
 _start_time = time.time()
 
+# ── Servir archivos multimedia generados ──────────────────────────
+_GENERATED_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "generated"
+_MIME_MAP = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".mp4": "video/mp4", ".webm": "video/webm",
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+}
+
+
+@router.get("/media/{filename}")
+async def serve_generated_media(filename: str):
+    import re
+    if not re.match(r"^[\w\-]+\.\w{2,5}$", filename):
+        raise HTTPException(400, "Nombre de archivo inválido")
+    fpath = _GENERATED_DIR / filename
+    if not fpath.exists() or not fpath.is_file():
+        raise HTTPException(404, "Archivo no encontrado")
+    if not fpath.resolve().is_relative_to(_GENERATED_DIR.resolve()):
+        raise HTTPException(403, "Acceso denegado")
+    suffix = fpath.suffix.lower()
+    mime = _MIME_MAP.get(suffix, "application/octet-stream")
+    return FileResponse(fpath, media_type=mime, filename=filename)
+
 
 def _get_workspace_manager() -> WorkspaceManager:
     from backend.api.websocket_handler import _agent_core
@@ -110,7 +137,7 @@ def _get_skill_registry() -> SkillRegistry:
 
 
 def _get_mcp_registry() -> MCPRegistry:
-    return MCPRegistry()
+    return get_mcp_registry()
 
 
 def _get_payment_registry() -> PaymentRegistry:
@@ -219,14 +246,18 @@ def _build_voice_metadata() -> dict[str, Any]:
     if normalization_warning and normalization_warning not in runtime.get("warnings", []):
         runtime["warnings"] = [*runtime.get("warnings", []), normalization_warning]
 
+    google_voice = str(config.get("voice", "google_voice", default=DEFAULT_GOOGLE_VOICE) or DEFAULT_GOOGLE_VOICE).strip()
+
     return {
         "engines": list_tts_engines(),
+        "google_voices": GOOGLE_VOICE_CATALOG,
         "settings": {
             "tts_primary": requested_engine,
             "tts_speed": float(config.get("voice", "tts_speed", default=1.0)),
             "auto_tts": bool(config.get("voice", "auto_tts", default=False)),
             "enabled": bool(config.get("voice", "enabled", default=True)),
             "elevenlabs_voice_id": voice_id,
+            "google_voice": google_voice,
         },
         "runtime": runtime,
     }
@@ -1010,7 +1041,7 @@ async def update_config(req: ConfigUpdateRequest):
                 f"persisted_voice_tts_primary={persisted_voice_engine}"
             )
 
-        if _agent_core is not None and req.section == "agent" and req.key == "system_prompt_file":
+        if _agent_core is not None and req.section == "agent" and req.key in ("system_prompt_file", "autonomy_level"):
             _agent_core.reload_prompt_configuration()
 
         # Solo recargar el motor de voz cuando el cambio afecta al engine activo.
@@ -1052,6 +1083,12 @@ async def update_config(req: ConfigUpdateRequest):
                     response_data["warning"] = (
                         f"No se pudo inicializar el motor '{target_value}': {message}"
                     )
+
+        if req.section == "mcp":
+            registry = get_mcp_registry()
+            registry.reload()
+            if _agent_core is not None:
+                _agent_core.reload_prompt_configuration()
 
         if req.section == "scheduler":
             scheduler = _get_scheduler_service()
@@ -1205,7 +1242,80 @@ async def set_active_model(data: dict):
         "model": config.get("model_router", "default_model"),
     }
 
-# ?? Modes ????????????????????????????????????????????????????????
+@router.get("/providers/google/backend")
+async def get_google_backend_config():
+    """Devuelve la configuración del backend de Google (AI Studio vs Vertex AI)."""
+    return {
+        "backend": config.get("providers", "google", "backend", default="ai_studio"),
+        "project_id": config.get("providers", "google", "project_id", default=""),
+        "location": config.get("providers", "google", "location", default="us-central1"),
+        "credentials_file": config.get("providers", "google", "credentials_file", default=""),
+    }
+
+
+@router.put("/providers/google/backend")
+async def set_google_backend_config(data: dict):
+    """Cambia el backend de Google y reconfigura el provider."""
+    from backend.api.websocket_handler import _agent_core
+
+    backend = data.get("backend")
+    project_id = data.get("project_id")
+    location = data.get("location")
+    credentials_file = data.get("credentials_file")
+
+    if backend is not None:
+        if backend not in ("ai_studio", "vertex_ai"):
+            raise HTTPException(status_code=400, detail="backend debe ser 'ai_studio' o 'vertex_ai'")
+        config.set("providers", "google", "backend", value=backend)
+    if project_id is not None:
+        config.set("providers", "google", "project_id", value=project_id)
+    if location is not None:
+        config.set("providers", "google", "location", value=location)
+    if credentials_file is not None:
+        config.set("providers", "google", "credentials_file", value=credentials_file)
+
+    reconfigure_error = None
+    try:
+        if _agent_core and _agent_core._router:
+            provider_obj = _agent_core._router.get_provider("google")
+            if provider_obj and hasattr(provider_obj, '_configure'):
+                provider_obj._configure()
+    except Exception as exc:
+        reconfigure_error = str(exc)
+        logger.warning(f"Error reconfigurando Google provider: {exc}")
+
+    return {
+        "success": reconfigure_error is None,
+        "backend": config.get("providers", "google", "backend", default="ai_studio"),
+        "project_id": config.get("providers", "google", "project_id", default=""),
+        "location": config.get("providers", "google", "location", default="us-central1"),
+        "credentials_file": config.get("providers", "google", "credentials_file", default=""),
+        "error": reconfigure_error,
+    }
+
+
+# ── Monitors ────────────────────────────────────────────────────
+
+@router.get("/monitors")
+async def list_monitors():
+    """Lista los monitores disponibles y el monitor activo."""
+    from backend.api.websocket_handler import _agent_core
+    monitors = []
+    if _agent_core and _agent_core._vision:
+        monitors = _agent_core._vision.list_monitors()
+    target = config.get("vision", "target_monitor", default=0)
+    return {"monitors": monitors, "target_monitor": target}
+
+
+@router.put("/monitors/target")
+async def set_target_monitor(data: dict):
+    """Cambia el monitor objetivo para screenshots y acciones."""
+    monitor = data.get("monitor", 0)
+    config.set("vision", "target_monitor", value=monitor)
+    return {"success": True, "target_monitor": monitor}
+
+
+# ── Modes ───────────────────────────────────────────────────────
 
 @router.get("/modes")
 async def get_modes():

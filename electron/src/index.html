@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src ws://127.0.0.1:8765 http://127.0.0.1:8765; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src ws://127.0.0.1:8765 http://127.0.0.1:8765; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: http://127.0.0.1:8765; media-src 'self' http://127.0.0.1:8765 blob:;">
     <title>G-Mini Agent</title>
     <link rel="stylesheet" href="css/main.css">
 </head>
@@ -34,7 +34,7 @@
             </div>
             <div id="chat-list" class="chat-list">
                 <div class="chat-list-empty">
-                    <div class="chat-list-empty-icon">💬</div>
+                    <div class="chat-list-empty-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div>
                     <div>No hay conversaciones guardadas</div>
                 </div>
             </div>
@@ -78,10 +78,10 @@
                         </div>
                         <div class="input-footer">
                             <span id="char-count" class="char-count">0</span>
-                            <button id="btn-attach" class="btn-small btn-disabled" title="Adjuntar imagen (próximamente)" disabled>📎</button>
-                            <button id="btn-voice" class="btn-small" title="Entrada por voz">🎙</button>
-                            <button id="btn-realtime" class="btn-small" title="Conversación en tiempo real">📞</button>
-                            <button id="btn-video-stream" class="btn-small" title="Mostrar pantalla a la IA (Live API streaming)" style="display:none">🖥️</button>
+                            <button id="btn-attach" class="btn-small btn-disabled" title="Adjuntar imagen (próximamente)" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg></button>
+                            <button id="btn-voice" class="btn-small" title="Entrada por voz"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
+                            <button id="btn-realtime" class="btn-small" title="Conversación en tiempo real"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="8" x2="4" y2="16"/><line x1="8" y1="4" x2="8" y2="20"/><line x1="12" y1="6" x2="12" y2="18"/><line x1="16" y1="4" x2="16" y2="20"/><line x1="20" y1="8" x2="20" y2="16"/></svg></button>
+                            <button id="btn-video-stream" class="btn-small" title="Mostrar pantalla a la IA (Live API streaming)" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></button>
                         </div>
                     </div>
                 </div>
@@ -457,7 +457,7 @@
             <nav class="settings-nav">
                 <button class="settings-nav-item active" data-page="general">⚙ General</button>
                 <button class="settings-nav-item" data-page="model">🤖 Modelo IA</button>
-                <button class="settings-nav-item" data-page="voice">🎙️ Voz</button>
+                <button class="settings-nav-item" data-page="voice"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg> Voz</button>
                 <button class="settings-nav-item" data-page="prompts">📝 Prompts</button>
                 <button class="settings-nav-item" data-page="security">🔒 Seguridad</button>
                 <button class="settings-nav-item" data-page="integrations">🔗 Integraciones</button>
@@ -483,11 +483,27 @@
                     <div class="setting-group">
                         <label>Nivel de Autonomia</label>
                         <select id="select-autonomy-level" class="setting-select">
-                            <option value="libre">Libre: no pide aprobacion</option>
-                            <option value="supervisado">Supervisado: solo acciones sensibles</option>
-                            <option value="asistido">Asistido: apruebas cada accion</option>
+                            <option value="asistido">Asistido: pide permiso antes de cada accion</option>
+                            <option value="supervisado">Supervisado: lee solo, pregunta antes de modificar</option>
+                            <option value="libre">Libre: ejecuta acciones sin pedir permiso</option>
                         </select>
+                        <div class="setting-help-text" style="font-size: 11px; margin-top: 4px;">
+                            Controla cuanto puede hacer el agente por su cuenta.<br>
+                            En todos los modos, el agente solo actua cuando le pides una tarea operativa. Un "Hola" nunca dispara acciones.
+                        </div>
                         <div id="autonomy-meta" class="setting-help-text"></div>
+                    </div>
+
+                    <div class="setting-group">
+                        <label>Monitor objetivo</label>
+                        <div class="setting-help-text" style="font-size: 11px; margin-bottom: 6px;">
+                            Pantalla donde el agente toma screenshots y ejecuta acciones. Cada monitor tiene su propia resolucion.
+                        </div>
+                        <select id="select-target-monitor" class="setting-select">
+                            <option value="0">Todos los monitores (combinado)</option>
+                        </select>
+                        <button id="btn-refresh-monitors" class="btn-save-key" style="margin-top: 4px;">Detectar monitores</button>
+                        <div id="monitor-meta" class="setting-help-text"></div>
                     </div>
 
                     <div class="setting-group">
@@ -551,6 +567,45 @@
                         </select>
                     </div>
 
+                    <!-- ═══ GOOGLE BACKEND CONFIG ═══ -->
+                    <div class="setting-group" id="google-backend-group" style="display: none;">
+                        <label>Backend de Google</label>
+                        <div class="setting-help-text">AI Studio usa API key (gratis con límites). Vertex AI usa credenciales GCP y consume los créditos de Google Cloud ($300 Free Trial).</div>
+                        <select id="select-google-backend" class="setting-select">
+                            <option value="ai_studio">AI Studio (API Key)</option>
+                            <option value="vertex_ai">Vertex AI (Google Cloud / $300 créditos)</option>
+                        </select>
+                        <span id="google-backend-status" class="api-key-status" style="margin-top: 4px; display: block;">—</span>
+
+                        <div id="google-vertex-config" style="display: none; margin-top: 10px;">
+                            <div style="margin-bottom: 8px;">
+                                <label style="font-size: 12px; color: var(--text-secondary);">Project ID (GCP)</label>
+                                <input type="text" id="input-google-project-id" class="setting-input" placeholder="my-first-project-12345" autocomplete="off">
+                            </div>
+                            <div style="margin-bottom: 8px;">
+                                <label style="font-size: 12px; color: var(--text-secondary);">Región</label>
+                                <select id="select-google-location" class="setting-select">
+                                    <option value="global">global (recomendado para Gemini 3.x)</option>
+                                    <option value="us-central1">us-central1 (Iowa) — solo Gemini 2.5</option>
+                                    <option value="us-east4">us-east4 (N. Virginia)</option>
+                                    <option value="us-west1">us-west1 (Oregon)</option>
+                                    <option value="europe-west1">europe-west1 (Belgium)</option>
+                                    <option value="europe-west4">europe-west4 (Netherlands)</option>
+                                    <option value="asia-northeast1">asia-northeast1 (Tokyo)</option>
+                                    <option value="asia-southeast1">asia-southeast1 (Singapore)</option>
+                                    <option value="southamerica-east1">southamerica-east1 (São Paulo)</option>
+                                </select>
+                                <div class="setting-help-text" style="font-size: 11px; margin-top: 2px;">Usa "global" para Gemini 3.x preview. Las regiones específicas solo tienen Gemini 2.5.</div>
+                            </div>
+                            <div style="margin-bottom: 8px;">
+                                <label style="font-size: 12px; color: var(--text-secondary);">Archivo de credenciales (opcional)</label>
+                                <input type="text" id="input-google-credentials-file" class="setting-input" placeholder="C:\ruta\a\service-account-key.json" autocomplete="off">
+                                <div class="setting-help-text" style="font-size: 11px; margin-top: 2px;">Si se deja vacío, usa Application Default Credentials (gcloud auth application-default login)</div>
+                            </div>
+                            <button id="btn-save-google-backend" class="btn-save-key" style="margin-top: 4px;">Guardar y conectar</button>
+                        </div>
+                    </div>
+
                     <div class="setting-group">
                         <label>Temperatura: <span id="temp-value">0.7</span></label>
                         <input type="range" id="input-temperature" class="setting-range" min="0" max="2" step="0.1" value="0.7">
@@ -600,6 +655,42 @@
                             <button id="btn-save-model-assignments" class="btn-secondary">Guardar asignaciones</button>
                         </div>
                     </div>
+
+                    <div class="setting-group">
+                        <label>Sub-agente Computer Use</label>
+                        <div class="setting-help-text">Sub-agente dedicado a la interacción de UI (clicks, typing, scrolling). El agente principal delega aquí cuando no usa MCPControl. Soporta varios proveedores: elige proveedor y modelo de computer use.</div>
+                        <label class="setting-toggle">
+                            <input type="checkbox" id="cb-computer-use-enabled" checked>
+                            <span>Activar sub-agente computer use</span>
+                        </label>
+                        <div style="display: flex; gap: 12px; margin-top: 8px;">
+                            <div style="flex: 1;">
+                                <label style="font-size: 12px;">Proveedor</label>
+                                <select id="select-computer-use-provider" class="setting-select"></select>
+                            </div>
+                            <div style="flex: 2;">
+                                <label style="font-size: 12px;">Modelo</label>
+                                <select id="select-computer-use-model" class="setting-select"></select>
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 12px; margin-top: 8px;">
+                            <div style="flex: 1;">
+                                <label style="font-size: 12px;">Max iteraciones</label>
+                                <input type="number" id="input-computer-use-max-iter" class="setting-input" value="30" min="1" max="100">
+                            </div>
+                            <div style="flex: 1;">
+                                <label style="font-size: 12px;">Timeout (seg)</label>
+                                <input type="number" id="input-computer-use-timeout" class="setting-input" value="180" min="30" max="600">
+                            </div>
+                            <div style="flex: 1;">
+                                <label style="font-size: 12px;">Delay estabilización (seg)</label>
+                                <input type="number" id="input-computer-use-delay" class="setting-input" value="3" min="1" max="15" step="0.5">
+                            </div>
+                        </div>
+                        <div class="setting-actions" style="margin-top: 10px;">
+                            <button id="btn-save-computer-use" class="btn-secondary">Guardar Computer Use</button>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- ═══ VOZ ═══ -->
@@ -612,6 +703,14 @@
                             <option value="">Cargando motores...</option>
                         </select>
                         <div id="voice-runtime-status" class="setting-help-text"></div>
+                    </div>
+
+                    <div id="voice-google-voice-config" class="setting-group hidden">
+                        <label>Voz Google TTS</label>
+                        <select id="select-google-voice" class="setting-select">
+                            <option value="Kore">Kore — Firme</option>
+                        </select>
+                        <div class="setting-help-text">Elige la voz que usar&aacute; Google Gemini TTS en todas las respuestas.</div>
                     </div>
 
                     <div id="voice-google-config" class="setting-group hidden">
@@ -651,9 +750,112 @@
                     <div class="setting-group">
                         <label>Personaje</label>
                         <select id="select-character-type" class="setting-select">
+                            <option value="3d">Personaje 3D</option>
                             <option value="2d">Personaje 2D (sprites)</option>
                             <option value="none">Sin personaje</option>
                         </select>
+                    </div>
+
+                    <div class="setting-group">
+                        <label>Modo de visualizacion</label>
+                        <select id="select-display-mode" class="setting-select">
+                            <option value="chat">Ventana de chat flotante</option>
+                            <option value="skin">Avatar flotante (sin chat)</option>
+                        </select>
+                        <div class="setting-help-text">En modo avatar, la ventana de chat se oculta y aparece un personaje flotante en el escritorio.</div>
+                    </div>
+
+                    <div class="setting-group">
+                        <label>Skin del avatar</label>
+                        <select id="select-avatar-skin" class="setting-select">
+                            <option value="energy-ball">Bola de energia</option>
+                        </select>
+                    </div>
+
+                    <div class="setting-group">
+                        <div class="setting-actions">
+                            <button id="btn-toggle-new-character" class="btn-secondary" type="button">+ Crear personaje</button>
+                        </div>
+
+                        <div id="new-character-form" class="setting-group hidden">
+                            <label>Nombre</label>
+                            <input id="input-new-character-name" class="setting-input" type="text" placeholder="Nombre del personaje" maxlength="40">
+
+                            <label>Tipo</label>
+                            <select id="select-new-character-type" class="setting-select">
+                                <option value="3d">3D (modelo VRM/GLB)</option>
+                                <option value="2d">2D (sprites)</option>
+                            </select>
+
+                            <div id="new-character-3d-pane">
+                                <div class="model-assignment-row">
+                                    <label>modelo</label>
+                                    <input id="input-character-model" class="setting-input" type="text" placeholder="Ningun archivo seleccionado" readonly>
+                                    <button id="btn-pick-character-model" class="btn-secondary" type="button">Elegir...</button>
+                                </div>
+                            </div>
+
+                            <div id="new-character-2d-pane" class="hidden">
+                                <div class="model-assignment-row">
+                                    <label>idle</label>
+                                    <input id="input-sprite-idle" class="setting-input" type="text" placeholder="Ningun archivo seleccionado" readonly>
+                                    <button class="btn-secondary btn-pick-sprite" data-sprite="idle" type="button">Elegir...</button>
+                                </div>
+                                <div class="model-assignment-row">
+                                    <label>talk</label>
+                                    <input id="input-sprite-talk" class="setting-input" type="text" placeholder="Ningun archivo seleccionado" readonly>
+                                    <button class="btn-secondary btn-pick-sprite" data-sprite="talk" type="button">Elegir...</button>
+                                </div>
+                                <div class="model-assignment-row">
+                                    <label>blink</label>
+                                    <input id="input-sprite-blink" class="setting-input" type="text" placeholder="Ningun archivo seleccionado" readonly>
+                                    <button class="btn-secondary btn-pick-sprite" data-sprite="blink" type="button">Elegir...</button>
+                                </div>
+                                <div class="model-assignment-row">
+                                    <label>blink talk</label>
+                                    <input id="input-sprite-blink_talk" class="setting-input" type="text" placeholder="Ningun archivo seleccionado" readonly>
+                                    <button class="btn-secondary btn-pick-sprite" data-sprite="blink_talk" type="button">Elegir...</button>
+                                </div>
+
+                                <div class="setting-actions">
+                                    <button id="btn-toggle-character-emotions" class="btn-secondary" type="button">Emociones (opcional)</button>
+                                </div>
+
+                                <div id="new-character-emotions-pane" class="hidden">
+                                    <div class="model-assignment-row">
+                                        <label>happy</label>
+                                        <input id="input-sprite-happy" class="setting-input" type="text" placeholder="Ningun archivo seleccionado" readonly>
+                                        <button class="btn-secondary btn-pick-sprite" data-sprite="happy" type="button">Elegir...</button>
+                                    </div>
+                                    <div class="model-assignment-row">
+                                        <label>sad</label>
+                                        <input id="input-sprite-sad" class="setting-input" type="text" placeholder="Ningun archivo seleccionado" readonly>
+                                        <button class="btn-secondary btn-pick-sprite" data-sprite="sad" type="button">Elegir...</button>
+                                    </div>
+                                    <div class="model-assignment-row">
+                                        <label>angry</label>
+                                        <input id="input-sprite-angry" class="setting-input" type="text" placeholder="Ningun archivo seleccionado" readonly>
+                                        <button class="btn-secondary btn-pick-sprite" data-sprite="angry" type="button">Elegir...</button>
+                                    </div>
+                                    <div class="model-assignment-row">
+                                        <label>surprised</label>
+                                        <input id="input-sprite-surprised" class="setting-input" type="text" placeholder="Ningun archivo seleccionado" readonly>
+                                        <button class="btn-secondary btn-pick-sprite" data-sprite="surprised" type="button">Elegir...</button>
+                                    </div>
+                                    <div class="model-assignment-row">
+                                        <label>relaxed</label>
+                                        <input id="input-sprite-relaxed" class="setting-input" type="text" placeholder="Ningun archivo seleccionado" readonly>
+                                        <button class="btn-secondary btn-pick-sprite" data-sprite="relaxed" type="button">Elegir...</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="setting-actions">
+                                <button id="btn-create-character" class="btn-secondary" type="button">Crear</button>
+                                <button id="btn-cancel-new-character" class="btn-secondary" type="button">Cancelar</button>
+                            </div>
+                            <div id="new-character-status" class="setting-help-text"></div>
+                        </div>
                     </div>
 
                     <div class="setting-group">
@@ -806,6 +1008,18 @@
                                 <input type="checkbox" id="cb-mcp-enabled">
                                 <span>Activar</span>
                             </label>
+                        </div>
+
+                        <div style="margin: 8px 0;">
+                            <label style="font-size: 12px; color: var(--text-secondary);">Modo de acceso a Integraciones (Voz RT)</label>
+                            <select id="select-mcp-integration-mode" class="setting-select">
+                                <option value="preloaded">Pre-cargadas (modelo conoce las tools MCP al iniciar)</option>
+                                <option value="on_demand">Bajo demanda (modelo solicita tools MCP manualmente)</option>
+                            </select>
+                            <div class="setting-help-text" style="font-size: 11px; margin-top: 4px;">
+                                Pre-cargadas: las herramientas MCP se inyectan en la sesión de voz en tiempo real al iniciar (recomendado).<br>
+                                Bajo demanda: el modelo no conoce las tools MCP hasta que las solicite explícitamente.
+                            </div>
                         </div>
 
                         <!-- Tabs -->
@@ -963,9 +1177,9 @@
                         <div class="crew-form">
                             <label>Templates rápidos</label>
                             <div class="setting-actions" style="margin-bottom: 8px;">
-                                <button class="btn-secondary crew-template-btn" data-template="dev-fullstack">🖥️ Dev Full-Stack</button>
+                                <button class="btn-secondary crew-template-btn" data-template="dev-fullstack">Dev Full-Stack</button>
                                 <button class="btn-secondary crew-template-btn" data-template="analisis">📊 Análisis</button>
-                                <button class="btn-secondary crew-template-btn" data-template="diseno">🎨 Diseño</button>
+                                <button class="btn-secondary crew-template-btn" data-template="diseno">Diseno</button>
                             </div>
                             <input id="input-crew-name" class="setting-input" type="text" placeholder="Nombre del equipo" required>
                             <select id="select-crew-process" class="setting-select">

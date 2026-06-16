@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import ctypes
+import ctypes.wintypes
 import io
 import platform
 import time
@@ -173,6 +174,55 @@ class VisionEngine:
         self._health.last_recovery_ts = time.time()
         await self.initialize()
 
+    def list_monitors(self) -> list[dict]:
+        if not HAS_MSS:
+            return []
+        with mss.mss() as sct:
+            result = []
+            for i, mon in enumerate(sct.monitors):
+                if i == 0:
+                    continue
+                result.append({
+                    "index": i,
+                    "x": mon["left"],
+                    "y": mon["top"],
+                    "width": mon["width"],
+                    "height": mon["height"],
+                    "primary": i == 1,
+                })
+            return result
+
+    @staticmethod
+    def _draw_cursor_on_image(img: "Image.Image", monitor_left: int = 0, monitor_top: int = 0) -> "Image.Image":
+        """Draws the mouse cursor position onto the screenshot as a visible circle+crosshair.
+        mss does not capture the OS cursor, so we composite it manually."""
+        if platform.system() != "Windows":
+            return img
+        try:
+            from PIL import ImageDraw
+            point = ctypes.wintypes.POINT()
+            ctypes.windll.user32.GetCursorPos(ctypes.byref(point))
+            cx = point.x - monitor_left
+            cy = point.y - monitor_top
+            if 0 <= cx < img.width and 0 <= cy < img.height:
+                draw = ImageDraw.Draw(img)
+                r = 8
+                draw.ellipse(
+                    [(cx - r, cy - r), (cx + r, cy + r)],
+                    outline=(255, 80, 80, 200), width=2,
+                )
+                cr = 3
+                draw.ellipse(
+                    [(cx - cr, cy - cr), (cx + cr, cy + cr)],
+                    fill=(255, 60, 60, 220),
+                )
+                line_len = 14
+                draw.line([(cx - line_len, cy), (cx + line_len, cy)], fill=(255, 80, 80, 160), width=1)
+                draw.line([(cx, cy - line_len), (cx, cy + line_len)], fill=(255, 80, 80, 160), width=1)
+        except Exception as exc:
+            logger.debug(f"No se pudo dibujar cursor en captura: {exc}")
+        return img
+
     def _capture_screen_once(
         self,
         monitor: int = 0,
@@ -191,7 +241,16 @@ class VisionEngine:
                 mon = sct.monitors[min(monitor, len(sct.monitors) - 1)]
 
             screenshot = sct.grab(mon)
-            png_bytes = mss.tools.to_png(screenshot.rgb, screenshot.size)
+
+            # Composite mouse cursor onto the screenshot (mss doesn't capture OS cursor)
+            if HAS_PIL:
+                img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
+                img = self._draw_cursor_on_image(img, mon.get("left", 0), mon.get("top", 0))
+                buf = io.BytesIO()
+                img.save(buf, format="PNG", optimize=True)
+                png_bytes = buf.getvalue()
+            else:
+                png_bytes = mss.tools.to_png(screenshot.rgb, screenshot.size)
 
         elapsed = (time.perf_counter() - start) * 1000
         self._last_screenshot = png_bytes

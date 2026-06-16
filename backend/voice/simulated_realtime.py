@@ -15,7 +15,10 @@ from typing import Any, Callable, Coroutine
 
 from loguru import logger
 
+from backend.config import config
 from backend.providers.base import LLMMessage
+from backend.core.emotion_tags import EmotionTagFilter
+from backend.api.websocket_handler import emit_emotion
 
 
 class SimulatedRealtimeVoice:
@@ -38,7 +41,7 @@ class SimulatedRealtimeVoice:
     _MIN_AUDIO_MS = 500
 
     # Tamaño de chunk para enviar audio TTS al frontend (24kHz PCM16 mono, ~100ms)
-    _TTS_CHUNK_SAMPLES = 2400  # 100ms a 24kHz
+    _TTS_CHUNK_SAMPLES = 6000  # 250ms a 24kHz — chunks mas grandes reducen gaps entre buffers
 
     # ── Sample rates ──────────────────────────────────────
 
@@ -127,6 +130,17 @@ class SimulatedRealtimeVoice:
             f"SimulatedRT: sesión iniciada "
             f"(STT: {voice_engine.stt_available}, TTS: {voice_engine.tts_engine_name}, "
             f"planner={'OK' if planner else 'NO'})"
+        )
+        logger.trace(
+            f"SimulatedRT SYSTEM PROMPT [len={len(self._system_prompt)}]:\n"
+            f"--- SYSTEM PROMPT START ---\n{self._system_prompt}\n--- SYSTEM PROMPT END ---"
+        )
+        logger.debug(
+            f"SimulatedRT: system_prompt_len={len(system_prompt)}, "
+            f"voice_prompt_len={len(voice_prompt) if voice_prompt else 0}, "
+            f"combined_len={len(self._system_prompt)}, "
+            f"has_mcp_context={'mcpcontrol' in self._system_prompt.lower()}, "
+            f"has_action_examples={'[ACTION:' in self._system_prompt}"
         )
         return True
 
@@ -228,67 +242,42 @@ class SimulatedRealtimeVoice:
                 except Exception as exc:
                     logger.warning(f"SimulatedRT: no se pudo persistir mensaje usuario: {exc}")
 
-            # ── 2. LLM: texto → respuesta streaming ──────
-            messages = self._build_messages(user_text)
-            raw_response = ""
-            visible_response = ""
-            sentence_buffer = ""
+            # ── 2. Bucle agentico: generar → ejecutar → confirmar/continuar ──
+            # Antes era de un solo turno: generaba, ejecutaba acciones y se iba a idle
+            # SIN confirmar que termino. El usuario tenia que decir "ya terminaste?".
+            # Ahora, tras ejecutar acciones, se hace otro turno para que el modelo vea
+            # el resultado y confirme (o continue con mas pasos). Acotado por max_turns
+            # para evitar bucles infinitos.
+            voice_max_tokens = int(config.get("voice", "max_tokens", default=8192))
+            max_turns = int(config.get("voice", "max_agentic_turns", default=5))
 
-            async for text_chunk in self._model_router.generate(
-                messages=messages,
-                model=self._model_router.get_current_model(),
-                provider_name=self._model_router.get_current_provider_name(),
-                temperature=0.7,
-                max_tokens=1024,
-                stream=True,
-            ):
+            for iteration in range(1, max_turns + 1):
                 if not self._active:
-                    return  # Sesión detenida durante generación
+                    return
 
-                raw_response += text_chunk
-                sentence_buffer += text_chunk
-
-                # Emitir texto progresivo al frontend ocultando bloques [ACTION:...]
-                next_visible_response = self._strip_action_blocks(raw_response)
-                if not next_visible_response.startswith(visible_response):
-                    logger.warning(
-                        "SimulatedRT: delta visible no monotónica; se reenviará texto limpio completo "
-                        f"(prev_len={len(visible_response)}, next_len={len(next_visible_response)})"
-                    )
-                    visible_response = ""
-                visible_delta = next_visible_response[len(visible_response):]
-                visible_response = next_visible_response
-
-                if visible_delta and self._on_text:
-                    await self._on_text(visible_delta)
-
-                # Buscar oraciones completas para sintetizar progresivamente
-                sentences, remainder = self._extract_complete_sentences(sentence_buffer)
-                sentence_buffer = remainder
-
-                for sentence in sentences:
-                    await self._synthesize_and_emit(sentence)
-
-            # Sintetizar el texto restante
-            if sentence_buffer.strip():
-                await self._synthesize_and_emit(sentence_buffer.strip())
-
-            # Persistir respuesta del agente
-            clean_response = self._strip_action_blocks(raw_response).strip()
-            if raw_response != clean_response:
-                logger.debug(
-                    "SimulatedRT: bloques ACTION removidos de la respuesta visible "
-                    f"(raw_len={len(raw_response)}, clean_len={len(clean_response)})"
+                messages = (
+                    self._build_messages(user_text)
+                    if iteration == 1
+                    else self._build_messages_base()
                 )
-            if clean_response and self._memory:
-                try:
-                    self._memory.add_assistant_message(clean_response)
-                    await self._memory.persist_message("assistant", clean_response)
-                except Exception as exc:
-                    logger.warning(f"SimulatedRT: no se pudo persistir respuesta agente: {exc}")
+                logger.info(f"SimulatedRT: turno agentico {iteration}/{max_turns}")
 
-            # ── 3. Ejecutar acciones [ACTION:...] del LLM ──
-            await self._execute_llm_actions(raw_response)
+                raw_response = await self._generate_and_speak(messages, max_tokens=voice_max_tokens)
+                if not self._active:
+                    return
+
+                # ── Ejecutar acciones [ACTION:...] del LLM ──
+                actions_ran = await self._execute_llm_actions(raw_response)
+
+                # Si el turno NO produjo acciones, el modelo dio su respuesta final
+                # (la confirmacion / contestacion) → terminamos el bucle.
+                if not actions_ran:
+                    break
+            else:
+                logger.warning(
+                    f"SimulatedRT: alcanzado max_agentic_turns={max_turns}; "
+                    "cerrando turno para evitar bucle infinito"
+                )
 
             # Señalar fin de turno
             if self._on_turn_complete:
@@ -312,30 +301,169 @@ class SimulatedRealtimeVoice:
         finally:
             self._processing = False
 
-    async def _execute_llm_actions(self, full_response: str) -> None:
+    async def _flush_message_bubble(self) -> None:
+        """Cierra la burbuja de chat en streaming actual (emite done=True) para que
+        el siguiente turno del bucle agentico empiece en una burbuja NUEVA. Sin esto,
+        el texto de varios turnos ("Voy a abrir..." + "Listo, terminé.") se mezclaba
+        en una sola burbuja. Burbujas vacias se descartan solas en el frontend."""
+        if not self._sio or not self._sid:
+            return
+        try:
+            from backend.api.websocket_handler import emit_message_done
+            await emit_message_done(self._sid)
+        except Exception as exc:
+            logger.debug(f"SimulatedRT: no se pudo cerrar burbuja: {exc}")
+
+    async def _generate_and_speak(self, messages: list[LLMMessage], *, max_tokens: int) -> str:
+        """Un turno de generacion: stream del LLM → emite texto visible (ocultando
+        bloques [ACTION:...]) → TTS progresivo → persiste el texto limpio en memoria.
+        Retorna la respuesta RAW (con bloques de accion) para parsear acciones.
+
+        NOTA: max_tokens alto (8192) es CRITICO con modelos de razonamiento
+        (gemini-3.x thinking). Los tokens de pensamiento consumen el presupuesto
+        de max_output_tokens; con 1024 el modelo "pensaba" ~700-1100 tokens y la
+        salida visible (incluyendo bloques [ACTION:...]) se truncaba a la mitad.
+        """
+        # Cerrar cualquier burbuja anterior para que este turno tenga la suya propia.
+        await self._flush_message_bubble()
+
+        raw_response = ""
+        visible_response = ""
+        tts_pending = ""  # SOLO texto visible (sin [ACTION:...]) aun no sintetizado
+
+        emotions_enabled = config.get("character", "emotions_enabled", default=False)
+        emotion_filter = EmotionTagFilter() if emotions_enabled else None
+
+        async for text_chunk in self._model_router.generate(
+            messages=messages,
+            model=self._model_router.get_current_model(),
+            provider_name=self._model_router.get_current_provider_name(),
+            temperature=0.7,
+            max_tokens=max_tokens,
+            stream=True,
+        ):
+            if not self._active:
+                return raw_response  # Sesión detenida durante generación
+
+            raw_response += text_chunk
+
+            # Texto visible = respuesta acumulada SIN bloques [ACTION:...]
+            next_visible_response = self._strip_action_blocks(raw_response)
+            if not next_visible_response.startswith(visible_response):
+                logger.warning(
+                    "SimulatedRT: delta visible no monotónica; se reenviará texto limpio completo "
+                    f"(prev_len={len(visible_response)}, next_len={len(next_visible_response)})"
+                )
+                visible_response = ""
+                tts_pending = ""
+                if emotion_filter:
+                    emotion_filter = EmotionTagFilter()
+            visible_delta = next_visible_response[len(visible_response):]
+            visible_response = next_visible_response
+
+            if emotion_filter:
+                visible_delta, emotion = emotion_filter.feed(visible_delta)
+                if emotion and self._sio and self._sid:
+                    await emit_emotion(self._sid, emotion)
+
+            if visible_delta and self._on_text:
+                await self._on_text(visible_delta)
+
+            # TTS SOLO sobre texto visible. ANTES se extraian oraciones del buffer RAW;
+            # el codigo dentro de [ACTION:create_file(content="...")] (lleno de . ; \n)
+            # se partia en fragmentos sueltos que ya no contenian el marcador [ACTION:,
+            # asi que el strip por-fragmento no los reconocia y el TTS leia el codigo.
+            tts_pending += visible_delta
+            sentences, tts_pending = self._extract_complete_sentences(tts_pending)
+            for sentence in sentences:
+                await self._synthesize_and_emit(sentence)
+
+        if emotion_filter:
+            rest = emotion_filter.flush()
+            if rest:
+                if self._on_text:
+                    await self._on_text(rest)
+                tts_pending += rest
+
+        # Sintetizar el texto visible restante
+        if tts_pending.strip():
+            await self._synthesize_and_emit(tts_pending.strip())
+
+        # Log completo de la respuesta raw del LLM
+        logger.trace(
+            f"SimulatedRT LLM RAW RESPONSE [len={len(raw_response)}]:\n"
+            f"--- RAW RESPONSE START ---\n{raw_response}\n--- RAW RESPONSE END ---"
+        )
+        logger.debug(
+            f"SimulatedRT: LLM response len={len(raw_response)}, "
+            f"has_action_blocks={'[ACTION:' in raw_response}, "
+            f"has_mcp_call={'mcp_call_tool' in raw_response}, "
+            f"model={self._model_router.get_current_model()}, "
+            f"provider={self._model_router.get_current_provider_name()}"
+        )
+
+        # Persistir respuesta del agente
+        clean_response = self._strip_action_blocks(raw_response).strip()
+        if raw_response != clean_response:
+            import re as _re_strip
+            stripped_blocks = _re_strip.findall(r'\[ACTION:[^\]]*\]', raw_response)
+            loose_actions = _re_strip.findall(r'\bACTION\s*:\s*\w+[^\n]*', raw_response, flags=_re_strip.IGNORECASE)
+            logger.warning(
+                f"SimulatedRT: bloques ACTION removidos de la respuesta visible "
+                f"(raw_len={len(raw_response)}, clean_len={len(clean_response)}, "
+                f"complete_blocks={stripped_blocks}, loose_patterns={loose_actions})"
+            )
+        if clean_response and self._memory:
+            try:
+                self._memory.add_assistant_message(clean_response)
+                await self._memory.persist_message("assistant", clean_response)
+            except Exception as exc:
+                logger.warning(f"SimulatedRT: no se pudo persistir respuesta agente: {exc}")
+
+        return raw_response
+
+    async def _execute_llm_actions(self, full_response: str) -> bool:
         """Parsea y ejecuta acciones [ACTION:...] de la respuesta del LLM.
         Emite eventos al frontend. Si hay imagen (screenshot), hace segundo turno LLM
-        con la imagen para que el modelo pueda describirla antes de volver a escuchar."""
+        con la imagen para que el modelo pueda describirla.
+        Retorna True si se ejecutaron acciones (para que el bucle agentico continue),
+        False si no habia acciones (el modelo dio su respuesta final)."""
         if not self._planner or not self._sio or not self._sid:
             if "[ACTION:" in full_response:
                 logger.warning(
-                    "SimulatedRT: respuesta contiene [ACTION:...] pero planner/sio/sid no disponibles"
+                    "SimulatedRT: respuesta contiene [ACTION:...] pero planner/sio/sid no disponibles — "
+                    f"planner={'OK' if self._planner else 'NONE'}, "
+                    f"sio={'OK' if self._sio else 'NONE'}, "
+                    f"sid={self._sid!r}"
                 )
-            return
+            return False
+
+        logger.debug(
+            f"SimulatedRT _execute_llm_actions: response_len={len(full_response)}, "
+            f"contains_ACTION={'[ACTION:' in full_response}, "
+            f"contains_mcp={'mcp_call_tool' in full_response}"
+        )
 
         try:
             actions = self._planner.parse_actions(full_response)
         except Exception as exc:
-            logger.error(f"SimulatedRT: error parseando acciones: {exc}")
-            return
+            logger.error(f"SimulatedRT: error parseando acciones: {exc}", exc_info=True)
+            return False
 
         if not actions:
-            return
+            if "[ACTION:" in full_response or "ACTION:" in full_response:
+                import re as _re_dbg
+                potential = _re_dbg.findall(r'(?:ACTION|action)[:\s][^\n]{0,200}', full_response)
+                logger.warning(
+                    f"SimulatedRT: respuesta contiene patrones ACTION pero parser retornó vacío. "
+                    f"Patrones encontrados: {potential}"
+                )
+            return False
 
         logger.info(f"SimulatedRT: ejecutando {len(actions)} acción(es) del LLM")
 
         from backend.core.planner import set_planner_socket
-        from backend.api.websocket_handler import emit_message, emit_screenshot
+        from backend.api.websocket_handler import emit_screenshot, emit_media
 
         set_planner_socket(self._sio, self._sid)
 
@@ -351,11 +479,31 @@ class SimulatedRealtimeVoice:
         # Recopilar imágenes de acciones visuales para segundo turno LLM
         captured_images: list[str] = []
 
-        for result in results or []:
+        for idx, result in enumerate(results or []):
             action_name = str(result.get("action", ""))
             success = result.get("success", False)
             data = result.get("data") or {}
             message = str(result.get("message", "")).strip()
+
+            # Persistir la accion como tarjeta en la conversacion (con duracion exacta)
+            # para que se conserve y se re-renderice como card al recargar el historial.
+            action_obj = actions[idx] if idx < len(actions) else None
+            if self._memory and action_obj is not None:
+                try:
+                    await self._memory.persist_message(
+                        "display",
+                        message or action_name,
+                        message_type="action",
+                        metadata={
+                            "tool_name": action_name,
+                            "params": action_obj.params,
+                            "success": bool(success),
+                            "duration_ms": result.get("duration_ms"),
+                            "result_preview": message[:200],
+                        },
+                    )
+                except Exception as exc:
+                    logger.debug(f"SimulatedRT: no se pudo persistir tarjeta de accion: {exc}")
 
             # Screenshot: emitir al chat Y guardar imagen para LLM
             if (
@@ -382,23 +530,39 @@ class SimulatedRealtimeVoice:
                     except Exception as exc:
                         logger.error(f"SimulatedRT: error emitiendo screenshot: {exc}")
 
-            # Emitir resultado como mensaje de actividad
-            if message:
-                status_icon = "✅" if success else "❌"
-                try:
-                    await emit_message(
-                        self._sid,
-                        f"{status_icon} **{action_name}**: {message}",
-                        "action",
-                        done=True,
-                    )
-                except Exception as exc:
-                    logger.debug(f"SimulatedRT: no se pudo emitir resultado: {exc}")
+            # Media generada (imagen/video/musica): emitir como reproductor inline.
+            # En modo texto esto lo hace agent.py; en voz simulada hay que hacerlo aqui
+            # o NO aparece ninguna preview de la imagen/cancion/video generado.
+            if (
+                action_name in ("generate_image", "generate_video", "generate_music")
+                and isinstance(data, dict)
+            ):
+                media_type = (
+                    "image" if action_name == "generate_image"
+                    else "video" if action_name == "generate_video"
+                    else "audio"
+                )
+                for gen_file in (data.get("files") or []):
+                    fname = str(gen_file.get("filename") or "")
+                    if not fname:
+                        continue
+                    try:
+                        await emit_media(self._sid, media_type, fname, f"/api/media/{fname}")
+                        logger.info(f"SimulatedRT: media emitida ({media_type}, {fname})")
+                    except Exception as exc:
+                        logger.error(f"SimulatedRT: error emitiendo media {fname}: {exc}")
+
+            # NOTA: el resultado de cada accion ya se muestra como tarjeta con icono
+            # SVG (agent:action / agent:action_result que emite el planner). NO emitir
+            # filas de texto "✅ **mcp_call_tool**: ..." — eran redundantes y se veian mal.
 
         # ── Segundo turno LLM si hay imágenes capturadas ──────────────────
         # El modelo recibe la imagen y genera descripción/análisis → TTS
         # STT permanece bloqueado (self._processing=True) durante todo este bloque
         if captured_images and self._model_router:
+            # Cerrar la burbuja del texto previo ("voy a tomar captura") para que la
+            # descripcion visual aparezca en su propia burbuja, no mezclada.
+            await self._flush_message_bubble()
             analysis_images = captured_images[-1:]
             if len(captured_images) > 1:
                 logger.info(
@@ -443,12 +607,15 @@ class SimulatedRealtimeVoice:
                 vision_sentence_buffer = ""
                 vision_chunk_count = 0
 
+                # max_tokens alto: modelos thinking consumen presupuesto pensando;
+                # 512 truncaba la descripcion visual (de ahi el parche de "repair" abajo).
+                vision_max_tokens = int(config.get("voice", "vision_max_tokens", default=4096))
                 async for chunk in self._model_router.generate(
                     messages=vision_messages,
                     model=model_name,
                     provider_name=provider_name,
                     temperature=0.7,
-                    max_tokens=512,
+                    max_tokens=vision_max_tokens,
                     stream=True,
                 ):
                     if not self._active:
@@ -478,12 +645,13 @@ class SimulatedRealtimeVoice:
                         content=repair_prompt,
                         images=analysis_images,
                     )
+                    repair_max_tokens = int(config.get("voice", "vision_repair_max_tokens", default=2048))
                     async for chunk in self._model_router.generate(
                         messages=vision_messages + [LLMMessage(role="assistant", content=vision_response)] + [repair_msg],
                         model=model_name,
                         provider_name=provider_name,
                         temperature=0.4,
-                        max_tokens=160,
+                        max_tokens=repair_max_tokens,
                         stream=True,
                     ):
                         if not self._active:
@@ -518,21 +686,33 @@ class SimulatedRealtimeVoice:
                 )
             except Exception as exc:
                 logger.error(f"SimulatedRT: error en segundo turno LLM con imagen: {exc}", exc_info=True)
-            return  # ya hicimos feedback visual, no persistir texto genérico
+            # El analisis visual ya se hablo; el bucle agentico hara un turno mas
+            # para que el modelo confirme/continue.
+            return True
 
-        # Feedback de acciones no-visuales a memoria
+        # Feedback de acciones no-visuales al contexto del LLM — el siguiente turno
+        # del bucle agentico lo lee para confirmar la finalizacion o continuar.
+        # SOLO en memoria (no se persiste a la DB): las tarjetas de accion ya se
+        # guardaron arriba como historial visible; persistir este texto crudo lo
+        # mostraria como una burbuja de "usuario" fea al recargar la conversacion.
         if results:
             feedback_lines = []
             for r in results:
                 status = "OK" if r.get("success") else "ERROR"
-                feedback_lines.append(f"[{status}] {r.get('action', '?')}: {str(r.get('message', ''))[:120]}")
+                duration = r.get("duration_ms")
+                dur_text = f" ({float(duration) / 1000:.1f}s)" if duration is not None else ""
+                feedback_lines.append(
+                    f"[{status}] {r.get('action', '?')}{dur_text}: {str(r.get('message', ''))[:120]}"
+                )
             feedback_text = "Resultado de acciones:\n" + "\n".join(feedback_lines)
             if self._memory:
                 try:
                     self._memory.add_user_message(feedback_text)
-                    await self._memory.persist_message("user", feedback_text)
                 except Exception as exc:
-                    logger.debug(f"SimulatedRT: no se pudo persistir feedback: {exc}")
+                    logger.debug(f"SimulatedRT: no se pudo agregar feedback al contexto: {exc}")
+
+        # Se ejecutaron acciones → el bucle agentico continua (confirmacion/siguiente paso).
+        return True
 
     async def _synthesize_and_emit(self, text: str) -> None:
         """Sintetiza una oración con TTS y emite los chunks de audio al frontend."""
@@ -565,10 +745,11 @@ class SimulatedRealtimeVoice:
                 chunk = pcm16_24k[offset:end]
                 await self._on_audio(chunk)
                 offset = end
-                # Pausa real de 100ms para sincronizar el envío con la reproducción.
-                # Esto mantiene _processing=True mientras el agente "habla", evitando 
+                # Pausa proporcional al chunk para sincronizar envío con reproducción.
+                # Mantiene _processing=True mientras el agente "habla", evitando
                 # que el STT escuche ecos del TTS (barge-in simple).
-                await asyncio.sleep(0.1)
+                # Usar ~220ms para chunks de 250ms: deja 30ms de margen para procesamiento.
+                await asyncio.sleep(0.22)
 
         except Exception as exc:
             logger.error(f"SimulatedRT TTS error: {exc}")
@@ -577,13 +758,28 @@ class SimulatedRealtimeVoice:
 
     @staticmethod
     def _strip_action_blocks(text: str) -> str:
-        """Elimina bloques [ACTION:...] y variantes del texto para que TTS no los lea."""
+        """Elimina bloques [ACTION:...] y variantes para que NO se lean por TTS ni se
+        muestren en el chat.
+
+        Usa el MISMO parser de brackets balanceados que el planner
+        (`_extract_action_matches`, que respeta comillas y escapes). El regex anterior
+        `\\[ACTION:[^\\]]*\\]` se cortaba en el primer ']' interno: un bloque como
+        `[ACTION:create_file(content="... arr=[1,2,3] ...")]` quedaba a medio remover y
+        el codigo (HTML/CSS/JS, lleno de ']') terminaba leido por el TTS.
+        """
         import re
-        # Formato estándar: [ACTION:tipo(params)]
-        cleaned = re.sub(r'\[ACTION:[^\]]*\]', '', text)
-        # Remover bloques incompletos al final si el LLM se cortó
-        cleaned = re.sub(r'\[ACTION:[^\]]*$', '', cleaned)
-        # Variante sin corchetes que algunos modelos generan: ACTION:\nscreenshot o ACTION: screenshot
+        cleaned = text
+        try:
+            from backend.core.planner import _extract_action_matches
+            for _type, _params, raw_action in _extract_action_matches(cleaned):
+                cleaned = cleaned.replace(raw_action, "", 1)
+        except Exception:
+            # Fallback al regex simple si el import o el parseo fallan
+            cleaned = re.sub(r'\[ACTION:[^\]]*\]', '', cleaned)
+        # Remover cualquier bloque incompleto al final (el LLM aun no cerro el ']').
+        # DOTALL para abarcar codigo multilinea con ']' internos.
+        cleaned = re.sub(r'\[ACTION:.*$', '', cleaned, flags=re.DOTALL)
+        # Variante sin corchetes que algunos modelos generan: "ACTION: screenshot"
         cleaned = re.sub(r'\bACTION\s*:\s*\w+', '', cleaned, flags=re.IGNORECASE)
         return cleaned.strip()
 
@@ -603,10 +799,22 @@ class SimulatedRealtimeVoice:
         """Construye el array de mensajes para el LLM."""
         messages = self._build_messages_base()
 
-        # El mensaje actual del usuario (ya debe estar en la memoria,
-        # pero lo agregamos explícitamente si no está)
         if not messages or messages[-1].content != user_text:
             messages.append(LLMMessage(role="user", content=user_text))
+
+        logger.debug(
+            f"SimulatedRT _build_messages: total={len(messages)}, "
+            f"system_len={len(messages[0].content) if messages else 0}, "
+            f"user_text={user_text!r}"
+        )
+        logger.trace(
+            f"SimulatedRT MESSAGES PAYLOAD [{len(messages)} msgs]:\n" +
+            "\n".join(
+                f"  [{i}] role={m.role} len={len(m.content)} "
+                f"preview={m.content[:120]!r}..."
+                for i, m in enumerate(messages)
+            )
+        )
 
         return messages
 

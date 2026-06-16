@@ -142,14 +142,16 @@ class Memory:
         except Exception as e:
             logger.error(f"Error al persistir modo de sesión: {e}")
 
-    def add_user_message(self, content: str) -> None:
-        """Añade un mensaje del usuario al historial."""
+    def add_user_message(self, content: str, images: list | None = None) -> None:
+        """Añade un mensaje del usuario al historial. `images` opcional (base64) para mensajes multimodales."""
         entry = {
             "role": "user",
             "content": content,
             "timestamp": datetime.now().isoformat(),
             "message_type": "text",
         }
+        if images:
+            entry["images"] = images
         self._messages.append(entry)
         self._all_messages.append(entry)
 
