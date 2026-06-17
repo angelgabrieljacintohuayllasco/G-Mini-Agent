@@ -20,7 +20,12 @@ modes:
 server:
   host: "127.0.0.1"
   port: 8765
-  cors_origins: ["*"]
+  # Lista explicita de origenes permitidos. NO usar ["*"] (issue #1): con allow_credentials
+  # abre el backend a cualquier sitio. Anade aqui los origenes de confianza si hace falta.
+  cors_origins: ["http://127.0.0.1:8765", "http://localhost:8765"]
+  # Secret compartido para POST /webhooks/incoming/{type}. Vacio = ingestion deshabilitada (issue #1).
+  # Configura un valor fuerte (y mandalo en la cabecera X-GMini-Webhook-Secret) para habilitar webhooks.
+  webhook_secret: ""
 
 model_router:
   mode: "manual"            # auto | manual

@@ -6,6 +6,7 @@ Endpoints para configuración, health, modelos y API keys.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import time
 from pathlib import Path
 from typing import Any
@@ -2812,7 +2813,24 @@ async def process_pending_events():
 
 # Webhook listener for external integrations (Zapier/n8n/Make)
 @router.post("/webhooks/incoming/{webhook_type}")
-async def incoming_webhook(webhook_type: str, body: dict):
+async def incoming_webhook(
+    webhook_type: str,
+    body: dict,
+    x_gmini_webhook_secret: str | None = Header(default=None, alias="X-GMini-Webhook-Secret"),
+):
+    # Security (issue #1): never trust possession of the URL path alone. Require a
+    # configured shared secret and reject ingestion entirely when none is set, so the
+    # event bus is not a public write surface.
+    expected_secret = str(config.get("server", "webhook_secret", default="") or "").strip()
+    if not expected_secret:
+        raise HTTPException(
+            status_code=403,
+            detail="Webhook ingestion disabled: set server.webhook_secret to enable.",
+        )
+    provided_secret = str(x_gmini_webhook_secret or "").strip()
+    if not provided_secret or not hmac.compare_digest(provided_secret, expected_secret):
+        raise HTTPException(status_code=401, detail="Invalid or missing webhook secret.")
+
     from backend.core.event_bus import get_event_bus
     event = await get_event_bus().emit(
         event_type=f"webhook.{webhook_type}",
