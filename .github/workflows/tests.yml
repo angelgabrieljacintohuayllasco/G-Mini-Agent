@@ -1,0 +1,27 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # ponytail: CI runs syntax + CORS guard only. Importing the app drags in
+      # torch + transformers + melo (import-time coupling), too heavy for CI.
+      # Full auth tests run locally:
+      #   python -m unittest tests.test_webhook_security
+      - name: Syntax check (compile all)
+        run: python -m compileall -q backend tests
+
+      - name: CORS must not be wildcard (issue #1)
+        run: |
+          pip install pyyaml
+          python -c "import yaml,sys; o=yaml.safe_load(open('config.default.yaml',encoding='utf-8'))['server']['cors_origins']; print('cors_origins =', o); sys.exit('FAIL: wildcard CORS in default config' if '*' in o else 0)"
