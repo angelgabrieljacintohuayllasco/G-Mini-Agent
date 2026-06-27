@@ -20,8 +20,10 @@ import asyncio
 import base64
 import hashlib
 import time
+import webbrowser
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
+from urllib.parse import quote_plus
 
 from loguru import logger
 
@@ -29,6 +31,14 @@ from backend.config import config
 from backend.core.cost_tracker import BudgetLimitExceeded, get_cost_tracker
 
 ProgressCallback = Callable[[dict[str, Any]], Awaitable[None]]
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    """Convierte args numéricos del modelo a int sin reventar con valores no numéricos."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 @dataclass
@@ -617,7 +627,7 @@ class ComputerUseAgent:
             return await self._apply_action(
                 "scroll", monitor_info, x=args.get("x"), y=args.get("y"),
                 scroll_dir=str(args.get("direction", "down")),
-                scroll_amount=int(args.get("magnitude", args.get("amount", 3)) or 3),
+                scroll_amount=_safe_int(args.get("magnitude", args.get("amount", 3)), 3),
                 coord_space="normalized",
             )
         if name == "drag_and_drop":
@@ -645,20 +655,24 @@ class ComputerUseAgent:
         return f"- {name}({args}) [no soportada]"
 
     async def _open_browser_action(self, name: str, args: dict) -> str:
-        """Best-effort: abre el navegador / navega / busca (funciones de browser de Gemini CU)."""
-        import subprocess
+        """Best-effort: abre el navegador / navega / busca (funciones de browser de Gemini CU).
+
+        Usa webbrowser.open (stdlib) en vez de subprocess+shell: la URL/query la controla el
+        modelo, así que pasarla a un shell permitía command injection (p.ej. url=`x" & calc & "`).
+        webbrowser.open no interpreta metacaracteres de shell.
+        """
         try:
             if name == "navigate":
                 url = str(args.get("url", "")).strip()
                 if url:
-                    subprocess.Popen(f'start "" "{url}"', shell=True)
+                    webbrowser.open(url)
                     return f"- navigate({url})"
             if name == "search":
                 q = str(args.get("query", "")).strip()
-                url = f"https://www.google.com/search?q={q.replace(' ', '+')}"
-                subprocess.Popen(f'start "" "{url}"', shell=True)
+                url = f"https://www.google.com/search?q={quote_plus(q)}"
+                webbrowser.open(url)
                 return f"- search({q})"
-            subprocess.Popen('start "" chrome', shell=True)
+            webbrowser.open("https://www.google.com")
             return "- open_web_browser()"
         except Exception as exc:
             logger.warning(f"open_browser_action falló: {exc}")
@@ -772,10 +786,10 @@ class ComputerUseAgent:
         if act == "scroll":
             return await self._apply_action("scroll", monitor_info, x=cx, y=cy,
                                             scroll_dir=str(inp.get("scroll_direction", "down")),
-                                            scroll_amount=int(inp.get("scroll_amount", 3)),
+                                            scroll_amount=_safe_int(inp.get("scroll_amount", 3), 3),
                                             coord_space="pixel", img_dims=img_dims)
         if act == "wait":
-            return await self._apply_action("wait", monitor_info, scroll_amount=int(inp.get("duration", 1)))
+            return await self._apply_action("wait", monitor_info, scroll_amount=_safe_int(inp.get("duration", 1), 1))
         if act in ("screenshot", "cursor_position"):
             return f"- {act}()"
         return f"- {act}({inp}) [no soportada]"
