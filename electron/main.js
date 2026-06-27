@@ -582,14 +582,13 @@ function updateOverlayWindowInteractivity() {
     const shouldIgnoreMouse = overlayInteractionLocked || !overlayRuntimeState?.interactive;
 
     try {
-        // forward solo con el overlay visible: con la ventana oculta el hook global
-        // de mouse que instala forward en Windows hace parpadear/saltar cualquier
-        // ventana del sistema al arrastrarla (electron#35030).
-        if (overlayWindow.isVisible()) {
-            overlayWindow.setIgnoreMouseEvents(shouldIgnoreMouse, { forward: true });
-        } else {
-            overlayWindow.setIgnoreMouseEvents(shouldIgnoreMouse);
-        }
+        // SIN { forward: true }: en Windows forward instala un hook global de mouse que
+        // rompe el arrastre de CUALQUIER ventana —incluido el avatar/skin— mientras el
+        // overlay está visible (electron#35030). El overlay (overlay.html) es solo un
+        // banner de texto pasivo: no tiene zonas interactivas que necesiten recibir
+        // mousemove/mouseleave, así que forward no aporta nada y solo causa el bug.
+        // Mismo criterio que la skin window (ver updateSkinWindowInteractivity).
+        overlayWindow.setIgnoreMouseEvents(shouldIgnoreMouse);
     } catch (err) {
         console.error(`[Overlay] No se pudo actualizar click-through: ${err.message}`);
     }
@@ -1432,7 +1431,8 @@ function createMainWindow() {
             nodeIntegration: false,
             backgroundThrottling: false,
         },
-        icon: path.join(__dirname, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
+        // No hay .ico en assets; Electron acepta PNG como icono de ventana en Windows.
+        icon: path.join(__dirname, 'assets', 'icon.png'),
         title: 'G-Mini Agent',
     });
 
@@ -1620,24 +1620,26 @@ function createSkinWindow() {
 
 function createTray() {
     const { nativeImage } = require('electron');
-    const iconPath = path.join(__dirname, 'assets', 'tray-icon.png');
+    // Fallback a icon.png si por algún motivo falta el tray-icon dedicado.
+    const fs = require('fs');
+    let iconPath = path.join(__dirname, 'assets', 'tray-icon.png');
+    if (!fs.existsSync(iconPath)) {
+        iconPath = path.join(__dirname, 'assets', 'icon.png');
+    }
     let icon;
 
     try {
-        const fs = require('fs');
-        if (fs.existsSync(iconPath)) {
-            icon = nativeImage.createFromPath(iconPath);
-        } else {
-            // Crear un icono 16x16 simple (cuadrado verde) como fallback
-            icon = nativeImage.createFromBuffer(
-                Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAMElEQVQ4T2Nk+M/wn4EIwMjIyMhAjAGMo' +
-                    'AYMXRdgGEDMixg1YBi8BiDYAkKjAQCx0QkR8R2CSAAAAABJRU5ErkJggg==', 'base64')
-            );
+        icon = nativeImage.createFromPath(iconPath);
+        // El arte fuente es 551x551. La bandeja de Windows muestra 16px (24 a 150%,
+        // 32 a 200%). Damos 32x32: el SO lo reduce limpio a cualquier slot/DPI
+        // (reducir es nítido; ampliar desde 16 se ve borroso). 'best' = mejor filtro.
+        if (!icon.isEmpty()) {
+            icon = icon.resize({ width: 32, height: 32, quality: 'best' });
         }
     } catch (e) {
         icon = nativeImage.createEmpty();
     }
-    
+
     tray = new Tray(icon);
 
     tray.setToolTip('G-Mini Agent');
@@ -1882,6 +1884,20 @@ ipcMain.handle('skin:pick-file', async (_, kind) => {
     });
     if (result.canceled || !result.filePaths.length) return null;
     return result.filePaths[0];
+});
+
+// Adjuntos del chat: archivos (multi) o una carpeta. Devuelve array de rutas.
+ipcMain.handle('pick-attachments', async (_, mode = 'files') => {
+    if (!mainWindow || mainWindow.isDestroyed()) return [];
+    const isFolder = mode === 'folder';
+    const result = await dialog.showOpenDialog(mainWindow, {
+        title: isFolder ? 'Selecciona una carpeta' : 'Selecciona archivos para adjuntar',
+        properties: isFolder
+            ? ['openDirectory']
+            : ['openFile', 'multiSelections'],
+    });
+    if (result.canceled || !result.filePaths.length) return [];
+    return result.filePaths;
 });
 
 ipcMain.handle('skin:create', (_, payload = {}) => {

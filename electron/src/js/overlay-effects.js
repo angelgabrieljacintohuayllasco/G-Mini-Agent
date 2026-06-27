@@ -159,7 +159,7 @@ class OverlayEffects {
      * Muestra el indicador de espera
      */
     showWait(seconds) {
-        this._showActionNotification(`⏳ Esperando ${seconds}s...`);
+        this._showActionNotification(`Esperando ${seconds}s...`);
     }
 }
 

@@ -1,3 +1,12 @@
+// Iconos SVG inline (reemplazan emojis para una UI consistente y profesional).
+// Namespaced en un objeto para no colisionar con consts de otros scripts.
+const CODE_ICONS = {
+    trash: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+    pin: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><line x1="12" y1="17" x2="12" y2="22"/><path d="M9 4V2h6v2l-1 6 2 2v3H8v-3l2-2z"/></svg>',
+    check: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+    cross: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+};
+
 class CodeManager {
     constructor() {
         this.apiBase = 'http://127.0.0.1:8765/api';
@@ -1369,7 +1378,7 @@ class CodeManager {
             <button class="code-list-item ${c.canvas_id === this.selectedCanvasId ? 'is-selected' : ''}" data-canvas-id="${this.escapeHtml(c.canvas_id)}">
                 <span class="code-list-icon">${this.escapeHtml(c.canvas_type || 'custom')}</span>
                 <span class="code-list-stack">
-                    <span class="code-list-text">${this.escapeHtml(c.title || c.canvas_id)}${c.pinned ? ' 📌' : ''}</span>
+                    <span class="code-list-text">${this.escapeHtml(c.title || c.canvas_id)}${c.pinned ? ' ' + CODE_ICONS.pin : ''}</span>
                     <span class="code-list-meta">${this.escapeHtml(this.formatDateTime(c.updated_at || c.created_at))}</span>
                 </span>
             </button>
@@ -1541,7 +1550,7 @@ class CodeManager {
                     <span class="code-list-text">${this.escapeHtml(u.name || u.user_id)}</span>
                     <span class="code-list-meta">ID: ${this.escapeHtml(u.user_id)} | ${this.escapeHtml(this.formatDateTime(u.created_at))}</span>
                 </span>
-                <button class="btn-secondary btn-panel-action" data-rbac-delete="${this.escapeHtml(u.user_id)}" title="Eliminar">🗑</button>
+                <button class="btn-secondary btn-panel-action" data-rbac-delete="${this.escapeHtml(u.user_id)}" title="Eliminar">${CODE_ICONS.trash}</button>
             </div>
         `).join('');
     }
@@ -1560,7 +1569,7 @@ class CodeManager {
                     <span class="code-list-text">${this.escapeHtml(p.description || p.rule_id || '-')}</span>
                     <span class="code-list-meta">scope: ${this.escapeHtml(p.scope || '-')} | target: ${this.escapeHtml(p.target || '-')}</span>
                 </span>
-                <button class="btn-secondary btn-panel-action" data-policy-delete="${this.escapeHtml(p.rule_id)}" title="Eliminar">🗑</button>
+                <button class="btn-secondary btn-panel-action" data-policy-delete="${this.escapeHtml(p.rule_id)}" title="Eliminar">${CODE_ICONS.trash}</button>
             </div>
         `).join('');
     }
@@ -1574,7 +1583,7 @@ class CodeManager {
         }
         this.ethicalRestrictionsListEl.innerHTML = items.map((r) => `
             <div class="code-list-item">
-                <span class="code-list-icon">${r.enabled ? '✅' : '❌'}</span>
+                <span class="code-list-icon">${r.enabled ? CODE_ICONS.check : CODE_ICONS.cross}</span>
                 <span class="code-list-stack">
                     <span class="code-list-text">${this.escapeHtml(r.description || r.rule_id || '-')}</span>
                     <span class="code-list-meta">ID: ${this.escapeHtml(r.rule_id || '-')} | severity: ${this.escapeHtml(r.severity || '-')}</span>
@@ -1881,7 +1890,7 @@ class CodeManager {
                         <span class="code-list-meta">deadline: ${this.escapeHtml(g.deadline || '-')} | KPIs: ${kpiCount} | tareas: ${taskCount}</span>
                         <div style="background:rgba(255,255,255,0.08);border-radius:3px;height:4px;margin-top:3px;overflow:hidden"><div style="width:${Math.min(progress, 100)}%;height:100%;background:linear-gradient(90deg,#6366f1,#38bdf8);border-radius:3px"></div></div>
                     </span>
-                    <button class="btn-secondary btn-panel-action" data-goal-delete="${this.escapeHtml(g.goal_id)}" title="Eliminar">🗑</button>
+                    <button class="btn-secondary btn-panel-action" data-goal-delete="${this.escapeHtml(g.goal_id)}" title="Eliminar">${CODE_ICONS.trash}</button>
                 </div>
             `;
         }).join('');

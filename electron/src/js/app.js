@@ -24,6 +24,87 @@
     // ── DOM elements ──────────────────────────────────
     const userInput = document.getElementById('user-input');
     const btnSend = document.getElementById('btn-send');
+    const btnAttach = document.getElementById('btn-attach');
+    const btnAttachFolder = document.getElementById('btn-attach-folder');
+    const attachmentChips = document.getElementById('attachment-chips');
+
+    // ── TTS del navegador (Web Speech API) ────────────
+    // Voces del SO/Chromium. Cero red, instantáneo. Config en localStorage
+    // (la escribe Settings): webspeech_voice, webspeech_lang, webspeech_rate.
+    const webSpeech = {
+        _supported: typeof window.speechSynthesis !== 'undefined',
+        _defaultLang: 'es-ES',
+        _pickVoice() {
+            if (!this._supported) return null;
+            const voices = window.speechSynthesis.getVoices() || [];
+            if (!voices.length) return null;
+            const wanted = (localStorage.getItem('webspeech_voice') || '').trim();
+            if (wanted) {
+                const m = voices.find((v) => v.name === wanted);
+                if (m) return m;
+            }
+            const langPref = (localStorage.getItem('webspeech_lang') || this._defaultLang)
+                .slice(0, 2).toLowerCase();
+            return voices.find((v) => (v.lang || '').toLowerCase().startsWith(langPref))
+                || voices.find((v) => (v.lang || '').toLowerCase().startsWith('es'))
+                || voices[0];
+        },
+        // ── Lipsync simulado ──────────────────────────
+        // Web Speech no da PCM, así que no hay amplitud real para mover la boca.
+        // Simulamos: mientras habla, oscilamos runtime.mouth (jitter + picos por
+        // palabra vía onboundary). Eso reactiva la boca 'aa' y los gestos de manos
+        // del avatar (vrmSkin usa mouth>0.05 para "talking").
+        _active: 0,
+        _mouthTimer: null,
+        _peak: 0,
+        _mouthTick() {
+            this._peak = Math.max(0.15, this._peak * 0.55);   // decae el pico
+            const m = Math.min(1, this._peak + Math.random() * 0.3);
+            try { pushOverlayCharacterRuntime({ status: agentRuntimeState, mouth: m }); } catch (e) { /* noop */ }
+        },
+        _mouthStart() {
+            this._active += 1;
+            if (this._mouthTimer) return;
+            this._peak = 0.6;
+            this._mouthTimer = setInterval(() => this._mouthTick(), 60);
+        },
+        _mouthStop() {
+            this._active = Math.max(0, this._active - 1);
+            if (this._active > 0) return;   // aún hay frases en cola
+            this._mouthReset();
+        },
+        _mouthReset() {
+            this._active = 0;
+            if (this._mouthTimer) { clearInterval(this._mouthTimer); this._mouthTimer = null; }
+            try { pushOverlayCharacterRuntime({ status: agentRuntimeState, mouth: 0 }); } catch (e) { /* noop */ }
+        },
+        speak(text) {
+            if (!this._supported) { console.warn('Web Speech no soportado'); return; }
+            try {
+                const u = new SpeechSynthesisUtterance(text);
+                const v = this._pickVoice();
+                if (v) { u.voice = v; u.lang = v.lang; }
+                else { u.lang = localStorage.getItem('webspeech_lang') || this._defaultLang; }
+                const rate = parseFloat(localStorage.getItem('webspeech_rate') || '1');
+                u.rate = Math.min(2, Math.max(0.5, Number.isFinite(rate) ? rate : 1));
+                u.onstart = () => this._mouthStart();
+                u.onend = () => this._mouthStop();
+                u.onerror = () => this._mouthStop();
+                u.onboundary = () => { this._peak = 1; };  // pico por palabra (si el motor lo emite)
+                window.speechSynthesis.speak(u);  // encola nativamente
+            } catch (e) { console.error('Web Speech error:', e); }
+        },
+        cancel() {
+            if (this._supported) { try { window.speechSynthesis.cancel(); } catch (e) { /* noop */ } }
+            this._mouthReset();
+        },
+        speaking() { return this._supported && window.speechSynthesis.speaking; },
+    };
+    if (webSpeech._supported) {
+        window.speechSynthesis.getVoices();  // dispara carga async de voces
+        window.speechSynthesis.addEventListener('voiceschanged', () => webSpeech._pickVoice());
+    }
+    window.__webSpeech = webSpeech;  // accesible para voiceRealtime (gate de micrófono)
     const btnAgentStart = document.getElementById('btn-agent-start');
     const btnAgentPause = document.getElementById('btn-agent-pause');
     const btnAgentStop = document.getElementById('btn-agent-stop');
@@ -327,6 +408,47 @@
         }
     });
 
+    // Pitido corto "ya te escucho" (dos tonos ascendentes). WebAudio puro, sin assets.
+    let _cueCtx = null;
+    function _playListeningCue() {
+        try {
+            _cueCtx = _cueCtx || new (window.AudioContext || window.webkitAudioContext)();
+            const ctx = _cueCtx;
+            if (ctx.state === 'suspended') ctx.resume();
+            const t = ctx.currentTime;
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(880, t);          // A5
+            osc.frequency.setValueAtTime(1175, t + 0.09);  // D6 — "di-dít"
+            gain.gain.setValueAtTime(0.0001, t);
+            gain.gain.exponentialRampToValueAtTime(0.18, t + 0.01);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+            osc.connect(gain).connect(ctx.destination);
+            osc.start(t);
+            osc.stop(t + 0.24);
+        } catch (e) {
+            // Audio bloqueado por el navegador: el cue es opcional, no romper.
+        }
+    }
+
+    ws.on('agent:audio_interrupt', () => {
+        // Barge-in: el usuario interrumpió. Cortar el audio encolado de la IA.
+        if (typeof voiceRealtime !== 'undefined' && voiceRealtime.active) {
+            voiceRealtime.clearPlayback();
+        }
+        webSpeech.cancel();
+    });
+
+    // La sesión RT tarda ~3s en conectar (handshake Google Live). Cuando el backend
+    // confirma que ya está escuchando, dar un pitido corto para que el usuario sepa
+    // que puede hablar (antes hablaba al vacío durante esos segundos).
+    ws.on('agent:realtime_ready', () => {
+        if (typeof voiceRealtime !== 'undefined' && voiceRealtime.active) {
+            _playListeningCue();
+        }
+    });
+
     ws.on('agent:audio', (data) => {
         if (!data) return;
         // Realtime streaming audio — reproducir directamente
@@ -351,6 +473,13 @@
             status: agentRuntimeState,
             audioHintMs: durationMs || 1800,
         });
+    });
+
+    // TTS del navegador (Web Speech): el backend manda el texto y aquí lo hablamos
+    // con speechSynthesis (voces del SO, cero latencia de red). Se encola nativamente.
+    ws.on('agent:speak', (data) => {
+        const text = String(data?.text || '').trim();
+        if (text) webSpeech.speak(text);
     });
 
     ws.on('agent:lipsync', (data) => {
@@ -499,6 +628,57 @@
 
     btnSend.addEventListener('click', sendMessage);
 
+    // ── Adjuntos (clip) ───────────────────────────────
+    let pendingAttachments = [];  // [{ kind, file_name, local_path }]
+
+    function renderAttachmentChips() {
+        if (!attachmentChips) return;
+        if (!pendingAttachments.length) {
+            attachmentChips.style.display = 'none';
+            attachmentChips.innerHTML = '';
+            return;
+        }
+        attachmentChips.style.display = 'flex';
+        attachmentChips.innerHTML = '';
+        pendingAttachments.forEach((att, i) => {
+            const chip = document.createElement('span');
+            chip.className = 'attachment-chip';
+            const label = document.createElement('span');
+            label.className = 'attachment-chip-name';
+            label.textContent = att.file_name;
+            label.title = att.local_path;
+            const rm = document.createElement('button');
+            rm.className = 'attachment-chip-remove';
+            rm.textContent = '×';
+            rm.title = 'Quitar';
+            rm.addEventListener('click', () => {
+                pendingAttachments.splice(i, 1);
+                renderAttachmentChips();
+            });
+            chip.appendChild(label);
+            chip.appendChild(rm);
+            attachmentChips.appendChild(chip);
+        });
+    }
+
+    async function pickAttachments(mode) {
+        if (!window.gmini || typeof window.gmini.pickAttachments !== 'function') {
+            chatManager.addSystemMessage('Adjuntar archivos no esta disponible en este entorno.');
+            return;
+        }
+        const paths = await window.gmini.pickAttachments(mode) || [];
+        for (const p of paths) {
+            if (pendingAttachments.some((a) => a.local_path === p)) continue;
+            const file_name = String(p).split(/[\\/]/).pop() || p;
+            pendingAttachments.push({ kind: mode === 'folder' ? 'folder' : 'file', file_name, local_path: p });
+        }
+        renderAttachmentChips();
+        userInput.focus();
+    }
+
+    btnAttach?.addEventListener('click', () => pickAttachments('files'));
+    btnAttachFolder?.addEventListener('click', () => pickAttachments('folder'));
+
     btnAgentStart?.addEventListener('click', () => {
         ws.sendCommand('start');
         if (agentRuntimeState === 'paused') {
@@ -535,16 +715,22 @@
 
     function sendMessage() {
         const text = userInput.value.trim();
-        if (!text || isGenerating) return;
+        if ((!text && !pendingAttachments.length) || isGenerating) return;
 
         if (!ws.connected) {
             chatManager.addSystemMessage('No hay conexion con el backend. Intenta de nuevo.');
             return;
         }
 
-        chatManager.addUserMessage(text);
-        ws.sendMessage(text);
+        const attachments = pendingAttachments.slice();
+        const displayText = attachments.length
+            ? `${text}${text ? '\n' : ''}📎 ${attachments.map((a) => a.file_name).join(', ')}`
+            : text;
+        chatManager.addUserMessage(displayText);
+        ws.sendMessage(text, attachments);
 
+        pendingAttachments = [];
+        renderAttachmentChips();
         updateComposerValue('');
         userInput.focus();
     }

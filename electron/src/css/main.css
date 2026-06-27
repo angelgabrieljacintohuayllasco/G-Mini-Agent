@@ -744,6 +744,46 @@ html, body {
     padding: 0 4px;
 }
 
+.attachment-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+.attachment-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 220px;
+    padding: 3px 6px 3px 9px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font-size: 12px;
+    color: var(--text-primary);
+}
+
+.attachment-chip-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.attachment-chip-remove {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    padding: 0 2px;
+}
+
+.attachment-chip-remove:hover {
+    color: var(--text-primary);
+}
+
 .char-count {
     font-size: 11px;
     color: var(--text-muted);

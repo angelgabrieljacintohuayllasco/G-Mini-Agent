@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld('gmini', {
     // Guardar media generada (imagen/video/audio) en carpeta a eleccion del usuario
     saveMediaAs: (url, filename) => ipcRenderer.invoke('save-media-as', url, filename),
 
+    // Adjuntar archivos/carpeta al chat (mode: 'files' | 'folder'). Devuelve array de rutas.
+    pickAttachments: (mode = 'files') => ipcRenderer.invoke('pick-attachments', mode),
+
     // Window controls
     minimize: () => ipcRenderer.invoke('minimize-window'),
     close: () => ipcRenderer.invoke('close-window'),
