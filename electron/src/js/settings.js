@@ -5,6 +5,12 @@
 
 const BACKEND_API = 'http://127.0.0.1:8765/api';
 
+// Iconos SVG inline (reemplazan dingbats/emojis para una UI consistente y profesional).
+const SETTINGS_ICONS = {
+    close: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+    edit: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>',
+};
+
 // ── Catálogo de modelos — se carga dinámicamente desde data/models.yaml vía backend ──
 // Estos objetos se rellenan en _loadModelsCatalog(); sirven de fallback vacío hasta entonces.
 let PROVIDER_LABELS = {};
@@ -49,7 +55,9 @@ class SettingsManager {
         this.appStartHiddenToTrayCheckbox = document.getElementById('cb-app-start-hidden-to-tray');
         this.appBehaviorMeta = document.getElementById('app-behavior-meta');
         this.appBehaviorSaveBtn = document.getElementById('btn-save-app-behavior');
-        this.autonomyLevelSelect = document.getElementById('select-autonomy-level');
+        this.autonomySelect = document.getElementById('select-autonomy');
+        this.autonomyScopeMeta = document.getElementById('autonomy-scope-meta');
+        this.autonomyLevelSelect = document.getElementById('select-autonomy-level');  // gate de permisos (asistido/supervisado/libre)
         this.autonomyMeta = document.getElementById('autonomy-meta');
         this.blockedSitesEnabledCheckbox = document.getElementById('cb-blocked-sites-enabled');
         this.blockedSitesInput = document.getElementById('input-blocked-sites');
@@ -134,6 +142,8 @@ class SettingsManager {
         this.voiceGoogleKeyToggleBtn = document.getElementById('btn-toggle-voice-google-key');
         this.voiceGoogleKeySaveBtn = document.getElementById('btn-save-voice-google-key');
         this.voiceGoogleKeyStatus = document.getElementById('key-status-voice-google');
+        this.voiceWebspeechConfig = document.getElementById('voice-webspeech-config');
+        this.voiceWebspeechVoiceSelect = document.getElementById('select-webspeech-voice');
         this.voiceElevenlabsConfig = document.getElementById('voice-elevenlabs-config');
         this.voiceElevenlabsKeyInput = document.getElementById('input-voice-elevenlabs-api-key');
         this.voiceElevenlabsKeyToggleBtn = document.getElementById('btn-toggle-voice-elevenlabs-key');
@@ -154,6 +164,7 @@ class SettingsManager {
         this.currentCloseToTray = true;
         this.currentStartHiddenToTray = false;
         this.appRuntimeState = null;
+        this.currentAutonomy = 'media';
         this.currentAutonomyLevel = 'supervisado';
         this.currentExecApprovalHostKey = 'default-host';
         this.execApprovalsProfiles = {};
@@ -241,6 +252,12 @@ class SettingsManager {
             this.appStartHiddenToTrayCheckbox,
         ].forEach((element) => {
             element?.addEventListener('change', () => this._renderAppBehaviorMeta());
+        });
+
+        this.autonomySelect?.addEventListener('change', async (e) => {
+            this.currentAutonomy = e.target.value;
+            await this._saveConfigValue('agent', 'autonomy', this.currentAutonomy);
+            this._renderAutonomyScopeMeta();
         });
 
         this.autonomyLevelSelect.addEventListener('change', async (e) => {
@@ -580,6 +597,8 @@ class SettingsManager {
                 { tts_speed: Number.isFinite(nextSpeed) ? nextSpeed : 1.0 },
                 'tts-speed:input',
             );
+            // Web Speech lee el rate de localStorage (no pasa por backend).
+            try { localStorage.setItem('webspeech_rate', String(Number.isFinite(nextSpeed) ? nextSpeed : 1.0)); } catch (_) { /* noop */ }
         });
         this.voiceElevenlabsVoiceIdInput?.addEventListener('input', (e) => {
             this._updateVoiceDraft({ elevenlabs_voice_id: String(e.target.value || '') }, 'elevenlabs-voice-id:input');
@@ -587,6 +606,14 @@ class SettingsManager {
         this.voiceGoogleVoiceSelect?.addEventListener('change', () => {
             this._updateVoiceDraft({ google_voice: this.voiceGoogleVoiceSelect.value || 'Kore' }, 'google-voice:change');
         });
+        // Voz Web Speech: se guarda en localStorage (la lee app.js al hablar). No va al backend.
+        this.voiceWebspeechVoiceSelect?.addEventListener('change', () => {
+            const val = this.voiceWebspeechVoiceSelect.value || '';
+            try { localStorage.setItem('webspeech_voice', val); } catch (_) { /* noop */ }
+        });
+        if (typeof window.speechSynthesis !== 'undefined') {
+            window.speechSynthesis.addEventListener('voiceschanged', () => this._populateWebspeechVoices());
+        }
         document.getElementById('cb-auto-tts')?.addEventListener('change', (e) => {
             this._updateVoiceDraft({ auto_tts: !!e.target.checked }, 'auto-tts:change');
             this._renderVoiceEngineState();
@@ -1076,6 +1103,25 @@ class SettingsManager {
             : `Seleccionado: ${selectedLabel}. Activo: ${activeLabel}.${message}${pendingSave}${warnings}`.trim();
     }
 
+    _populateWebspeechVoices() {
+        const sel = this.voiceWebspeechVoiceSelect;
+        if (!sel || typeof window.speechSynthesis === 'undefined') return;
+        const voices = window.speechSynthesis.getVoices() || [];
+        const saved = (() => { try { return localStorage.getItem('webspeech_voice') || ''; } catch (_) { return ''; } })();
+        sel.innerHTML = '';
+        sel.appendChild(new Option('Voz por defecto del sistema', ''));
+        // Español primero, resto después.
+        voices
+            .slice()
+            .sort((a, b) => {
+                const sa = (a.lang || '').toLowerCase().startsWith('es') ? 0 : 1;
+                const sb = (b.lang || '').toLowerCase().startsWith('es') ? 0 : 1;
+                return sa - sb || (a.name || '').localeCompare(b.name || '');
+            })
+            .forEach((v) => sel.appendChild(new Option(`${v.name} (${v.lang})`, v.name)));
+        sel.value = voices.some((v) => v.name === saved) ? saved : '';
+    }
+
     _renderVoiceEngineState() {
         const selectedEngine = this._getSelectedVoiceEngine();
         const engineList = Array.isArray(this.voiceMetadata?.engines) ? this.voiceMetadata.engines : [];
@@ -1091,6 +1137,11 @@ class SettingsManager {
         }
         if (this.voiceElevenlabsConfig) {
             this.voiceElevenlabsConfig.classList.toggle('hidden', selectedEngine !== 'elevenlabs');
+        }
+        if (this.voiceWebspeechConfig) {
+            const isBrowser = provider === 'browser';
+            this.voiceWebspeechConfig.classList.toggle('hidden', !isBrowser);
+            if (isBrowser) this._populateWebspeechVoices();
         }
 
         // El slider de velocidad solo aplica a motores que lo soportan
@@ -1332,6 +1383,10 @@ class SettingsManager {
             if (resp.ok) {
                 const data = await resp.json();
                 const agentConfig = data?.data?.agent || {};
+                this.currentAutonomy = agentConfig.autonomy || 'media';
+                if (this.autonomySelect) {
+                    this.autonomySelect.value = this.currentAutonomy;
+                }
                 this.currentAutonomyLevel = agentConfig.autonomy_level || 'supervisado';
                 if (this.autonomyLevelSelect) {
                     this.autonomyLevelSelect.value = this.currentAutonomyLevel;
@@ -1344,6 +1399,7 @@ class SettingsManager {
                         ? agentConfig.blocked_sites.join('\n')
                         : '';
                 }
+                this._renderAutonomyScopeMeta();
                 this._renderAutonomyMeta();
                 this._renderBlockedSitesMeta();
             }
@@ -1903,7 +1959,7 @@ class SettingsManager {
             const deleteBtn = document.createElement('button');
             deleteBtn.className = 'mcp-server-btn delete';
             deleteBtn.title = 'Eliminar';
-            deleteBtn.textContent = '✕';
+            deleteBtn.innerHTML = SETTINGS_ICONS.close;
             deleteBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this._removeMcpServer(server.id || server.name);
@@ -2684,6 +2740,16 @@ class SettingsManager {
         }
 
         this.appBehaviorMeta.textContent = `${statusMessage ? `${statusMessage} ` : ''}${parts.join(' ')}`.trim();
+    }
+
+    _renderAutonomyScopeMeta() {
+        if (!this.autonomyScopeMeta) return;
+        const descriptions = {
+            baja: 'Reactivo: ejecuta solo la tarea exacta que pides, sin pasos extra ni iniciativa.',
+            media: 'Equilibrado: completa la tarea solicitada incluyendo los sub-pasos necesarios.',
+            alta: 'Proactivo: encadena planes de varios pasos y propone acciones de seguimiento.',
+        };
+        this.autonomyScopeMeta.textContent = descriptions[this.currentAutonomy] || descriptions.media;
     }
 
     _renderAutonomyMeta() {
@@ -3573,7 +3639,7 @@ class SettingsManager {
             const editBtn = document.createElement('button');
             editBtn.className = 'crew-card-btn';
             editBtn.title = 'Editar';
-            editBtn.textContent = '✎';
+            editBtn.innerHTML = SETTINGS_ICONS.edit;
             editBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this._editCrew(crew);
@@ -3582,7 +3648,7 @@ class SettingsManager {
             const deleteBtn = document.createElement('button');
             deleteBtn.className = 'crew-card-btn delete';
             deleteBtn.title = 'Eliminar';
-            deleteBtn.textContent = '✕';
+            deleteBtn.innerHTML = SETTINGS_ICONS.close;
             deleteBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this._deleteCrew(crew.id);
@@ -3648,7 +3714,7 @@ class SettingsManager {
                 <option value="false" ${!defaults.can_delegate ? 'selected' : ''}>No delega</option>
                 <option value="true" ${defaults.can_delegate ? 'selected' : ''}>Puede delegar</option>
             </select>
-            <button class="crew-role-remove" title="Quitar">✕</button>
+            <button class="crew-role-remove" title="Quitar">${SETTINGS_ICONS.close}</button>
         `;
 
         entry.querySelector('.crew-role-remove').addEventListener('click', () => entry.remove());

@@ -431,3 +431,46 @@ def build_mode_system_prompt(base_prompt: str, mode_key: str | None) -> str:
             f"{mode.system_prompt}\n"
         )
     return prompt
+
+
+# ── Autonomía (iniciativa) y permisos (aprobación): dos ejes independientes ──
+# Se inyectan en el system prompt (texto y voz) para que los selectores de
+# configuración (agent.autonomy / agent.autonomy_level) gobiernen el comportamiento.
+AUTONOMY_PROMPTS = {
+    "baja": "Reactivo: ejecuta solo la tarea exacta solicitada, sin pasos extra ni iniciativa propia.",
+    "media": "Equilibrado: completa la tarea solicitada incluyendo los sub-pasos razonables necesarios para lograrla.",
+    "alta": "Proactivo: encadena planes de varios pasos, anticipa necesidades y propón o realiza acciones de seguimiento relacionadas.",
+}
+PERMISSION_PROMPTS = {
+    "asistido": "pide aprobación antes de CADA acción.",
+    "supervisado": "pide aprobación solo para acciones sensibles o de baja confianza.",
+    "libre": "ejecuta sin pedir aprobación, salvo bloqueos directos de política.",
+}
+
+# Disciplina de observación/acción — aplica en CUALQUIER autonomía o permiso.
+# Evita que el agente tome capturas o ejecute herramientas para conversar
+# (p. ej. responder "¿qué puedes hacer?" no debe disparar un screenshot).
+ACTION_DISCIPLINE_PROMPT = (
+    "Observar (screenshot, leer pantalla) y actuar (clicks, abrir apps, terminal, navegador) "
+    "son EXCLUSIVAMENTE para tareas operativas reales sobre el sistema que el usuario te pidió. "
+    "Para saludos, charla, preguntas o describir QUÉ PUEDES HACER, responde solo con palabras: "
+    "NUNCA tomes captura de pantalla ni ejecutes ninguna herramienta. Toma una captura únicamente "
+    "como paso previo inmediato a una interacción concreta con la pantalla que el usuario solicitó."
+)
+
+
+def build_autonomy_context() -> str:
+    """Bloque de system prompt: autonomía (iniciativa), permisos (aprobación) y disciplina de acción.
+
+    Compartido por la ruta de texto, la voz simulada y la voz nativa (Live API) para que los
+    selectores de Configuración → General se reflejen igual en todos los caminos.
+    """
+    autonomy = str(config.get("agent", "autonomy", default="media")).strip().lower()
+    permission = str(config.get("agent", "autonomy_level", default="supervisado")).strip().lower()
+    autonomy_desc = AUTONOMY_PROMPTS.get(autonomy, AUTONOMY_PROMPTS["media"])
+    permission_desc = PERMISSION_PROMPTS.get(permission, PERMISSION_PROMPTS["supervisado"])
+    return (
+        f"[AUTONOMÍA: {autonomy} — {autonomy_desc}]\n"
+        f"[PERMISOS: {permission} — {permission_desc}]\n"
+        f"[DISCIPLINA: {ACTION_DISCIPLINE_PROMPT}]"
+    )

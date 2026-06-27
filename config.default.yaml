@@ -559,7 +559,8 @@ character:
 
 agent:
   system_prompt_file: "data/prompts/system_prompt.md"  # Ruta relativa al root del proyecto
-  autonomy_level: "supervisado"                        # libre | supervisado | asistido
+  autonomy: "media"                                    # baja | media | alta — cuánta iniciativa/libertad tiene el agente para hacer actividades
+  autonomy_level: "supervisado"                        # asistido | supervisado | libre — nivel de PERMISOS: cuándo pide aprobación
   auto_dry_run_below_threshold: true                   # Simula antes de ejecutar si el critic queda bajo umbral
   critic_thresholds:
     reading: 0.55

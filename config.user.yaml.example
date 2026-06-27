@@ -4,7 +4,8 @@
 # 3. Las API keys se configuran DESDE LA UI o REST API (almacenadas en Credential Manager)
 
 agent:
-  autonomy_level: supervisado  # libre | supervisado | asistido
+  autonomy: media              # baja | media | alta — cuanta iniciativa/libertad tiene el agente
+  autonomy_level: supervisado  # asistido | supervisado | libre — nivel de permisos (cuando pide aprobacion)
 
 model_router:
   default_provider: openai  # openai | google | anthropic | xai | etc.
