@@ -1042,7 +1042,7 @@ async def update_config(req: ConfigUpdateRequest):
                 f"persisted_voice_tts_primary={persisted_voice_engine}"
             )
 
-        if _agent_core is not None and req.section == "agent" and req.key in ("system_prompt_file", "autonomy_level"):
+        if _agent_core is not None and req.section == "agent" and req.key in ("system_prompt_file", "autonomy_level", "autonomy"):
             _agent_core.reload_prompt_configuration()
 
         # Solo recargar el motor de voz cuando el cambio afecta al engine activo.
@@ -3586,9 +3586,9 @@ async def updater_version():
 
 
 @router.post("/updater/check")
-async def updater_check(body: dict = {}):
+async def updater_check(body: dict | None = None):
     from backend.core.auto_updater import get_auto_updater
-    result = get_auto_updater().check_for_updates(body.get("url"))
+    result = get_auto_updater().check_for_updates((body or {}).get("url"))
     return {"ok": True, **result}
 
 

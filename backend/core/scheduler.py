@@ -123,6 +123,9 @@ class SchedulerService:
         self._running = False
         self._loop_task: asyncio.Task | None = None
         self._active_jobs: set[str] = set()
+        # Refs vivas de tasks fire-and-forget: sin esto el GC puede recolectar la task
+        # antes de que termine (asyncio docs) y el job se corta silencioso.
+        self._bg_tasks: set[asyncio.Task] = set()
         self._last_recovery_summary: dict[str, Any] = {
             "checked_at": None,
             "interrupted_runs": 0,
@@ -130,6 +133,12 @@ class SchedulerService:
             "retry_scheduled_jobs": 0,
             "recovered_run_ids": [],
         }
+
+    def _on_bg_task_done(self, task: asyncio.Task) -> None:
+        """Suelta la ref y loguea si la task fire-and-forget falló (antes se perdía)."""
+        self._bg_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(f"Scheduler background task falló: {task.exception()!r}")
 
     async def initialize(self) -> None:
         if self._initialized:
@@ -631,7 +640,9 @@ class SchedulerService:
                     for job in due_jobs:
                         if job["job_id"] in self._active_jobs:
                             continue
-                        asyncio.create_task(self._execute_job(job, trigger_source="schedule"))
+                        _t = asyncio.create_task(self._execute_job(job, trigger_source="schedule"))
+                        self._bg_tasks.add(_t)
+                        _t.add_done_callback(self._on_bg_task_done)
                     await self.emit_heartbeat(
                         DEFAULT_HEARTBEAT_KEY,
                         {"internal": True, "timestamp": _serialize_dt(_utcnow())},
