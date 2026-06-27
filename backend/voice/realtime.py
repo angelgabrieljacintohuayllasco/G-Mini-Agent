@@ -18,6 +18,7 @@ from loguru import logger
 
 from backend.config import config
 from backend.core.avatar_context import build_avatar_context
+from backend.core.modes import build_autonomy_context
 
 try:
     import websockets
@@ -157,9 +158,12 @@ class RealTimeVoice:
                     "Captura la pantalla completa del PC (1440x900). "
                     "Devuelve la imagen como frame de video + texto OCR de la pantalla. "
                     "El cursor del mouse aparece como un punto rojo con cruz en la imagen. "
-                    "OBLIGATORIO: úsala SIEMPRE antes de click/type/scroll. "
-                    "Analiza la imagen recibida para identificar elementos y sus coordenadas EXACTAS en píxeles. "
-                    "NUNCA hagas click sin haber tomado screenshot primero."
+                    "USO EXCLUSIVO: solo como paso previo inmediato a una interacción real con el escritorio "
+                    "(click/type/scroll/delegate) que el usuario te pidió. "
+                    "NUNCA la uses para conversar, saludar, responder preguntas ni describir qué puedes hacer: "
+                    "esas respuestas son solo con palabras. "
+                    "Cuando vayas a interactuar: úsala SIEMPRE antes de click/type/scroll y analiza la imagen "
+                    "para identificar coordenadas EXACTAS en píxeles. NUNCA hagas click sin screenshot primero."
                 ),
             },
             {
@@ -559,6 +563,15 @@ class RealTimeVoice:
         self._input_transcription_buffer: str = ""  # Acumula fragmentos inputTranscription
         self._model_turn_had_text: bool = False  # Track si modelTurn tuvo text parts
         self._executing_tool: bool = False  # True durante ejecución de tool (silencia mic)
+        # Anti-duplicado de turnos (bug conocido de Live API native-audio + function call:
+        # el servidor re-genera la MISMA respuesta como 2º turno sin nuevo input del usuario.
+        # Refs: livekit/agents#2884, #3870; discuss.ai.google.dev #135700). Detectamos el
+        # turno fantasma porque arranca SIN input de usuario desde el último turnComplete
+        # (los docs dicen que enviar audio durante un turno interrumpe, no crea un turno nuevo)
+        # y suprimimos su audio/texto/done para que el usuario no lo oiga ni vea dos veces.
+        self._user_spoke_since_turn: bool = True  # ¿hubo input de usuario desde el último turno?
+        self._turn_in_progress: bool = False      # ¿estamos dentro de un turno del modelo?
+        self._phantom_turn: bool = False           # el turno actual es un duplicado a suprimir
         self._session_resumption_handle: str | None = None  # Handle para session resumption de Google RT
         self._conversation_history: list[dict] | None = None  # Historial para inyectar en Google RT
         self._last_bargein_log: float = 0.0  # Timestamp del último log de barge-in (debounce)
@@ -571,6 +584,8 @@ class RealTimeVoice:
         self._reconnecting: bool = False  # True durante auto-reconexión
         self._goaway_received: bool = False  # True cuando se recibe GoAway del servidor
         self._on_error_callback: Callable | None = None  # Errores fatales (quota, auth, modelo inválido)
+        self._on_interrupt_callback: Callable | None = None  # Barge-in: avisa al frontend que vacíe el buffer de audio
+        self._on_ready_callback: Callable | None = None  # Sesión lista para escuchar (setupComplete): el front da el cue audible
 
     async def start_session(
         self,
@@ -583,6 +598,8 @@ class RealTimeVoice:
         on_turn_complete: Callable | None = None,
         conversation_history: list[dict] | None = None,
         on_error: Callable | None = None,
+        on_interrupt: Callable | None = None,
+        on_ready: Callable | None = None,
     ) -> bool:
         """
         Inicia una sesión de voz en tiempo real.
@@ -599,6 +616,8 @@ class RealTimeVoice:
         self._on_tool_call_callback = on_tool_call
         self._on_turn_complete_callback = on_turn_complete
         self._on_error_callback = on_error
+        self._on_interrupt_callback = on_interrupt
+        self._on_ready_callback = on_ready
         self._provider = provider
         self._conversation_history = conversation_history
         if voice:
@@ -695,10 +714,19 @@ class RealTimeVoice:
             "- open_application para abrir apps de Windows; terminal_run para comandos PowerShell; generate_image/video/music; wait.\n"
             "- mcp_call_tool para ejecutar herramientas de servidores MCP configurados (ver sección MCP abajo).\n\n"
             "REGLAS GENERALES:\n"
-            "1. NO uses herramientas cuando el usuario solo conversa.\n"
+            "1. NO uses herramientas cuando el usuario solo conversa, saluda, pregunta o quiere que le "
+            "expliques QUÉ PUEDES HACER. En esos casos responde SOLO con palabras, sin tomar screenshot "
+            "ni ejecutar ninguna herramienta. Ejemplo: 'dime qué puedes hacer' → respondes hablando, NO "
+            "tomas captura de pantalla. El screenshot es exclusivo como paso previo a una interacción real "
+            "con el escritorio que el usuario te pidió.\n"
             "2. No anuncies cada paso; reporta el resultado al terminar.\n"
             "3. Nunca afirmes haber hecho clicks tú mismo: la interacción la realiza el sub-agente vía delegate_computer_use."
         )
+        # Autonomía + permisos + disciplina de acción (mismos selectores que la ruta de texto).
+        try:
+            base += "\n\n" + build_autonomy_context()
+        except Exception:
+            pass
         # Contexto del avatar (3D/2D/desactivado) segun config del usuario.
         # En audio nativo NO se usan tags de texto [happy] (el modelo los leeria en
         # voz alta); en su lugar la expresion facial se controla con la herramienta
@@ -1048,6 +1076,7 @@ class RealTimeVoice:
                 logger.warning("Google RT send_text: timeout esperando setupComplete, descartando texto")
                 return
         try:
+            self._user_spoke_since_turn = True  # input de texto: próximo turno es legítimo
             await self._ws.send(json.dumps({"realtimeInput": {"text": text}}))
             logger.info(f"Google RT: texto enviado ({len(text)} chars): {text[:80]!r}")
         except Exception as e:
@@ -1273,6 +1302,24 @@ class RealTimeVoice:
                         except Exception:
                             pass
 
+    def _mark_model_turn_start(self) -> None:
+        """Marca el inicio de un turno del modelo y decide si es un turno fantasma.
+
+        Un turno que arranca SIN input de usuario desde el último turnComplete es un
+        duplicado generado por el servidor (bug conocido de native-audio + function call).
+        Consume el flag de input para que cuente solo para este turno.
+        """
+        if self._turn_in_progress:
+            return
+        self._turn_in_progress = True
+        self._phantom_turn = not self._user_spoke_since_turn
+        self._user_spoke_since_turn = False  # consumido por este turno
+        if self._phantom_turn:
+            logger.warning(
+                "Google RT: turno fantasma detectado (sin input de usuario desde el último "
+                "turnComplete) — suprimiendo audio/texto duplicado"
+            )
+
     async def _handle_message(self, data: dict) -> None:
         """Procesa un mensaje del WebSocket de voz."""
         msg_type = data.get("type", "")
@@ -1306,6 +1353,12 @@ class RealTimeVoice:
             # Marcar como listo para recibir audio
             self._google_ready = True
             logger.debug("Google RT: listo para recibir audio")
+            # Avisar al frontend para que dé un cue audible (pitido "ya te escucho").
+            if self._on_ready_callback:
+                try:
+                    await self._on_ready_callback()
+                except Exception as _ready_err:
+                    logger.debug(f"on_ready callback falló: {_ready_err}")
             return
 
         # Google Gemini Live events (serverContent)
@@ -1316,6 +1369,18 @@ class RealTimeVoice:
             # Interrupción por VAD (barge-in del usuario)
             if content.get("interrupted") is True:
                 self._speaking = False
+                # El barge-in es input del usuario: cuenta como "habló" para el próximo turno.
+                self._user_spoke_since_turn = True
+                self._turn_in_progress = False
+                self._phantom_turn = False
+                # Vaciar el buffer de audio del frontend: el servidor canceló la generación,
+                # pero el cliente tiene chunks encolados y seguiría "hablando" si no se limpia.
+                # Ref Live API: "stop playing audio and clear queued playback" al interrumpir.
+                if self._on_interrupt_callback:
+                    try:
+                        await self._on_interrupt_callback()
+                    except Exception as exc:
+                        logger.debug(f"on_interrupt callback falló: {exc}")
                 # No cerrar la burbuja de streaming aquí — _flush_input_transcription
                 # la cerrará cuando llegue el próximo modelTurn, preservando el texto parcial
                 logger.debug("Google RT: generación interrumpida por VAD")
@@ -1323,6 +1388,7 @@ class RealTimeVoice:
 
             # Audio y texto del modelo
             if "modelTurn" in content:
+                self._mark_model_turn_start()
                 # Emitir transcripción acumulada del usuario antes de mostrar respuesta del modelo
                 await self._flush_input_transcription()
                 self._speaking = True
@@ -1330,12 +1396,13 @@ class RealTimeVoice:
                 for part in content["modelTurn"].get("parts", []):
                     if "inlineData" in part:
                         audio_b64 = part["inlineData"].get("data", "")
-                        if audio_b64 and self._on_audio_callback:
+                        # Turno fantasma: NO reproducir su audio (sería la respuesta repetida).
+                        if audio_b64 and self._on_audio_callback and not self._phantom_turn:
                             audio_bytes = base64.b64decode(audio_b64)
                             await self._on_audio_callback(audio_bytes)
                     elif "text" in part:
                         had_text = True
-                        if self._on_text_callback:
+                        if self._on_text_callback and not self._phantom_turn:
                             await self._on_text_callback(part["text"])
                 if had_text:
                     self._model_turn_had_text = True
@@ -1344,10 +1411,13 @@ class RealTimeVoice:
             # Usar outputTranscription como fuente de texto para el chat cuando
             # modelTurn solo tiene audio (inlineData) sin text parts.
             if "outputTranscription" in content:
+                self._mark_model_turn_start()
                 text = content["outputTranscription"].get("text", "")
                 if text:
                     if self._model_turn_had_text:
                         logger.debug(f"Google RT outputTranscription (ignorado, modelTurn ya tenía texto): {text!r}")
+                    elif self._phantom_turn:
+                        logger.debug(f"Google RT outputTranscription (ignorado, turno fantasma): {text!r}")
                     else:
                         logger.debug(f"Google RT outputTranscription (usando como texto del agente): {text!r}")
                         if self._on_text_callback:
@@ -1357,6 +1427,7 @@ class RealTimeVoice:
             if "inputTranscription" in content:
                 text = content["inputTranscription"].get("text", "")
                 if text:
+                    self._user_spoke_since_turn = True  # el usuario habló: próximo turno es legítimo
                     self._input_transcription_buffer += text
                     logger.debug(f"Google RT inputTranscription chunk: {text!r} (buffer={self._input_transcription_buffer!r})")
 
@@ -1366,7 +1437,13 @@ class RealTimeVoice:
                 self._model_turn_had_text = False
                 await self._flush_input_transcription()
                 self._last_flushed_input = ""  # Reset anti-duplicación para el próximo turno
-                if self._on_turn_complete_callback:
+                was_phantom = self._phantom_turn
+                # Cerrar el turno; el flag de input NO se resetea aquí (lo consume el inicio
+                # del próximo turno) para no marcar como fantasma una respuesta a un barge-in.
+                self._turn_in_progress = False
+                self._phantom_turn = False
+                # Turno fantasma: NO cerrar burbuja ni persistir (sería el mensaje duplicado).
+                if not was_phantom and self._on_turn_complete_callback:
                     await self._on_turn_complete_callback()
 
         # Google Gemini Live: tool call (function calling)
@@ -1639,11 +1716,15 @@ class RealTimeVoice:
         self._reconnecting = False
         self._goaway_received = False
         self._conversation_history = None
+        self._user_spoke_since_turn = True
+        self._turn_in_progress = False
+        self._phantom_turn = False
         self._on_audio_callback = None
         self._on_text_callback = None
         self._on_user_text_callback = None
         self._on_tool_call_callback = None
         self._on_turn_complete_callback = None
+        self._on_ready_callback = None
         # Limpiar handle: stop explícito = sesión nueva la próxima vez.
         # _auto_reconnect_google() NO pasa por stop_session(), así que no afecta reconexión automática.
         self._session_resumption_handle = None

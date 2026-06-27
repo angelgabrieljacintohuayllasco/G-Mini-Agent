@@ -87,6 +87,14 @@ class GminiWebSocket {
             this._emit('agent:audio', data);
         });
 
+        this.socket.on('agent:speak', (data) => {
+            this._emit('agent:speak', data);
+        });
+
+        this.socket.on('agent:audio_interrupt', (data) => {
+            this._emit('agent:audio_interrupt', data);
+        });
+
         this.socket.on('agent:lipsync', (data) => {
             this._emit('agent:lipsync', data);
         });

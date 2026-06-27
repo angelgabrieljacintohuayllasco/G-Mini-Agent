@@ -95,6 +95,12 @@ TTS_ENGINE_CATALOG: dict[str, dict[str, Any]] = {
         "online": True,
         "supports_numeric_speed": False,
     },
+    "webspeech": {
+        "label": "Navegador (Web Speech)",
+        "provider": "browser",
+        "online": False,   # usa voces del SO/navegador, sin red
+        "supports_numeric_speed": True,
+    },
     "none": {
         "label": "Desactivado",
         "provider": "none",
@@ -378,6 +384,10 @@ class VoiceEngine:
             ok, reason, message = await self._setup_melotts()
         elif preference == "elevenlabs":
             ok, reason, message = await self._setup_elevenlabs()
+        elif preference == "webspeech":
+            # Sin backend: el navegador (Electron/Chromium) sintetiza con speechSynthesis.
+            self._tts_engine = "webspeech"
+            ok, reason, message = True, "ready", "TTS del navegador (Web Speech) listo."
         elif preference in GOOGLE_TTS_ENGINES:
             ok, reason, message = await self._setup_google(preference)
         else:
@@ -596,6 +606,9 @@ class VoiceEngine:
         if cache_key in self._tts_cache:
             logger.debug(f"TTS cache hit: {text[:40]}...")
             return self._tts_cache[cache_key]
+
+        if self._tts_engine == "webspeech":
+            return None  # el navegador habla el texto; no hay audio de servidor
 
         result: bytes | None = None
         if self._tts_engine == "melotts":
@@ -863,6 +876,12 @@ class VoiceEngine:
     @property
     def tts_engine_name(self) -> str:
         return self._tts_engine
+
+    @property
+    def tts_is_browser(self) -> bool:
+        """True si el TTS lo hace el navegador (Web Speech), no el backend.
+        Los callers deben emitir el texto a hablar en vez de sintetizar audio."""
+        return self._tts_engine == "webspeech"
 
     @property
     def tts_output_format(self) -> str:

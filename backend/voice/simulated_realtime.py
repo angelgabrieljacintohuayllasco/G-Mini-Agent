@@ -334,60 +334,95 @@ class SimulatedRealtimeVoice:
         emotions_enabled = config.get("character", "emotions_enabled", default=False)
         emotion_filter = EmotionTagFilter() if emotions_enabled else None
 
-        async for text_chunk in self._model_router.generate(
-            messages=messages,
-            model=self._model_router.get_current_model(),
-            provider_name=self._model_router.get_current_provider_name(),
-            temperature=0.7,
-            max_tokens=max_tokens,
-            stream=True,
-        ):
-            if not self._active:
-                return raw_response  # Sesión detenida durante generación
+        # TTS por navegador (Web Speech): no se sintetiza audio aqui; se manda el texto
+        # por frase y el front lo habla. Sin pipeline de PCM ni worker de reproduccion.
+        browser_tts = bool(self._voice_engine and getattr(self._voice_engine, "tts_is_browser", False))
 
-            raw_response += text_chunk
+        # Pipeline TTS (motores de servidor): una cola + worker que reproduce mientras
+        # seguimos sintetizando. Cola acotada (maxsize=2) = ~1 frase por delante.
+        play_queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=2)
+        playback_task = None if browser_tts else asyncio.create_task(self._playback_worker(play_queue))
 
-            # Texto visible = respuesta acumulada SIN bloques [ACTION:...]
-            next_visible_response = self._strip_action_blocks(raw_response)
-            if not next_visible_response.startswith(visible_response):
-                logger.warning(
-                    "SimulatedRT: delta visible no monotónica; se reenviará texto limpio completo "
-                    f"(prev_len={len(visible_response)}, next_len={len(next_visible_response)})"
-                )
-                visible_response = ""
-                tts_pending = ""
+        async def _enqueue(sentence: str) -> None:
+            if browser_tts:
+                await self._emit_speak(sentence)
+                return
+            pcm = await self._synthesize_pcm(sentence)
+            if pcm:
+                await play_queue.put(pcm)
+
+        try:
+            async for text_chunk in self._model_router.generate(
+                messages=messages,
+                model=self._model_router.get_current_model(),
+                provider_name=self._model_router.get_current_provider_name(),
+                temperature=0.7,
+                max_tokens=max_tokens,
+                stream=True,
+            ):
+                if not self._active:
+                    return raw_response  # Sesión detenida durante generación
+
+                raw_response += text_chunk
+
+                # Texto visible = respuesta acumulada SIN bloques [ACTION:...]
+                next_visible_response = self._strip_action_blocks(raw_response)
+                if not next_visible_response.startswith(visible_response):
+                    logger.warning(
+                        "SimulatedRT: delta visible no monotónica; se reenviará texto limpio completo "
+                        f"(prev_len={len(visible_response)}, next_len={len(next_visible_response)})"
+                    )
+                    visible_response = ""
+                    tts_pending = ""
+                    if emotion_filter:
+                        emotion_filter = EmotionTagFilter()
+                visible_delta = next_visible_response[len(visible_response):]
+                visible_response = next_visible_response
+
                 if emotion_filter:
-                    emotion_filter = EmotionTagFilter()
-            visible_delta = next_visible_response[len(visible_response):]
-            visible_response = next_visible_response
+                    visible_delta, emotion = emotion_filter.feed(visible_delta)
+                    if emotion and self._sio and self._sid:
+                        await emit_emotion(self._sid, emotion)
+
+                if visible_delta and self._on_text:
+                    await self._on_text(visible_delta)
+
+                # TTS SOLO sobre texto visible. ANTES se extraian oraciones del buffer RAW;
+                # el codigo dentro de [ACTION:create_file(content="...")] (lleno de . ; \n)
+                # se partia en fragmentos sueltos que ya no contenian el marcador [ACTION:,
+                # asi que el strip por-fragmento no los reconocia y el TTS leia el codigo.
+                tts_pending += visible_delta
+                sentences, tts_pending = self._extract_complete_sentences(tts_pending)
+                for sentence in sentences:
+                    await _enqueue(sentence)
 
             if emotion_filter:
-                visible_delta, emotion = emotion_filter.feed(visible_delta)
-                if emotion and self._sio and self._sid:
-                    await emit_emotion(self._sid, emotion)
+                rest = emotion_filter.flush()
+                if rest:
+                    if self._on_text:
+                        await self._on_text(rest)
+                    tts_pending += rest
 
-            if visible_delta and self._on_text:
-                await self._on_text(visible_delta)
-
-            # TTS SOLO sobre texto visible. ANTES se extraian oraciones del buffer RAW;
-            # el codigo dentro de [ACTION:create_file(content="...")] (lleno de . ; \n)
-            # se partia en fragmentos sueltos que ya no contenian el marcador [ACTION:,
-            # asi que el strip por-fragmento no los reconocia y el TTS leia el codigo.
-            tts_pending += visible_delta
-            sentences, tts_pending = self._extract_complete_sentences(tts_pending)
-            for sentence in sentences:
-                await self._synthesize_and_emit(sentence)
-
-        if emotion_filter:
-            rest = emotion_filter.flush()
-            if rest:
-                if self._on_text:
-                    await self._on_text(rest)
-                tts_pending += rest
-
-        # Sintetizar el texto visible restante
-        if tts_pending.strip():
-            await self._synthesize_and_emit(tts_pending.strip())
+            # Sintetizar el texto visible restante
+            if tts_pending.strip():
+                await _enqueue(tts_pending.strip())
+        finally:
+            # Cerrar el pipeline TTS (solo motores de servidor). En modo navegador no
+            # hay worker. Si la sesion sigue activa, sentinela + esperar lo encolado;
+            # si se detuvo, cancelar.
+            if playback_task is not None and not playback_task.done():
+                if self._active:
+                    try:
+                        await play_queue.put(None)
+                        await playback_task
+                    except Exception as exc:
+                        logger.debug(f"SimulatedRT: cierre de pipeline TTS: {exc}")
+                else:
+                    playback_task.cancel()
+                    try:
+                        await playback_task
+                    except BaseException:
+                        pass
 
         # Log completo de la respuesta raw del LLM
         logger.trace(
@@ -714,45 +749,68 @@ class SimulatedRealtimeVoice:
         # Se ejecutaron acciones → el bucle agentico continua (confirmacion/siguiente paso).
         return True
 
-    async def _synthesize_and_emit(self, text: str) -> None:
-        """Sintetiza una oración con TTS y emite los chunks de audio al frontend."""
-        if not text.strip() or not self._on_audio:
-            return
-
-        # Filtrar bloques de acción [ACTION:...] — no se leen por voz
+    async def _emit_speak(self, text: str) -> None:
+        """TTS por navegador: manda el texto al front para que lo hable speechSynthesis."""
         clean = self._strip_action_blocks(text)
+        if not clean.strip() or not self._sio or not self._sid:
+            return
+        try:
+            await self._sio.emit("agent:speak", {"text": clean}, to=self._sid)
+        except Exception as exc:
+            logger.debug(f"SimulatedRT: no se pudo emitir agent:speak: {exc}")
+
+    async def _synthesize_pcm(self, text: str) -> bytes | None:
+        """Parte LENTA: round-trip al TTS y conversion a PCM16 24kHz. Sin reproducir."""
+        if not text.strip():
+            return None
+        clean = self._strip_action_blocks(text)  # [ACTION:...] no se lee por voz
         if not clean.strip():
-            return
-
+            return None
         if not self._voice_engine or not self._voice_engine.tts_available:
-            return
-
+            return None
         try:
             audio_wav = await self._voice_engine.synthesize(clean)
             if not audio_wav:
-                return
-
-            # Convertir WAV a PCM16 24kHz (formato que espera el frontend)
-            pcm16_24k = self._wav_to_pcm16_24k(audio_wav)
-            if not pcm16_24k:
-                return
-
-            # Enviar en chunks de ~100ms para streaming suave
-            chunk_bytes = self._TTS_CHUNK_SAMPLES * 2  # 2 bytes per sample (PCM16)
-            offset = 0
-            while offset < len(pcm16_24k) and self._active:
-                end = min(offset + chunk_bytes, len(pcm16_24k))
-                chunk = pcm16_24k[offset:end]
-                await self._on_audio(chunk)
-                offset = end
-                # Pausa proporcional al chunk para sincronizar envío con reproducción.
-                # Mantiene _processing=True mientras el agente "habla", evitando
-                # que el STT escuche ecos del TTS (barge-in simple).
-                # Usar ~220ms para chunks de 250ms: deja 30ms de margen para procesamiento.
-                await asyncio.sleep(0.22)
-
+                return None
+            return self._wav_to_pcm16_24k(audio_wav)
         except Exception as exc:
             logger.error(f"SimulatedRT TTS error: {exc}")
+            return None
+
+    async def _stream_pcm(self, pcm16_24k: bytes) -> None:
+        """Parte de REPRODUCCION: envia el PCM al frontend en chunks, en tiempo real."""
+        if not pcm16_24k or not self._on_audio:
+            return
+        chunk_bytes = self._TTS_CHUNK_SAMPLES * 2  # 2 bytes/sample (PCM16)
+        offset = 0
+        while offset < len(pcm16_24k) and self._active:
+            end = min(offset + chunk_bytes, len(pcm16_24k))
+            await self._on_audio(pcm16_24k[offset:end])
+            offset = end
+            # Pausa ~ duracion del chunk: sincroniza envio con reproduccion y mantiene
+            # _processing=True (barge-in: el STT no escucha ecos del propio TTS).
+            await asyncio.sleep(0.22)
+
+    async def _playback_worker(self, queue: "asyncio.Queue[bytes | None]") -> None:
+        """Consume PCM ya sintetizado y lo reproduce EN ORDEN. Corre en paralelo a la
+        sintesis: mientras suena la frase N, el bucle principal ya sintetiza la N+1.
+        Esto elimina los silencios de 3-5s entre frases (antes synth y play eran serie).
+        Sentinela None = fin de turno."""
+        while True:
+            pcm = await queue.get()
+            try:
+                if pcm is None:
+                    return
+                await self._stream_pcm(pcm)
+            finally:
+                queue.task_done()
+
+    async def _synthesize_and_emit(self, text: str) -> None:
+        """Sintetiza UNA oracion y la reproduce (camino serie, sin pipeline).
+        Se mantiene por compatibilidad; el turno usa el pipeline en _generate_and_speak."""
+        pcm = await self._synthesize_pcm(text)
+        if pcm:
+            await self._stream_pcm(pcm)
 
     # ── Helpers ───────────────────────────────────────────
 

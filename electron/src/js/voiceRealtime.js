@@ -22,6 +22,10 @@ class VoiceRealtime {
         /** @type {Array<AudioBuffer>} */
         this._playQueue = [];
         this._playing = false;
+        /** @type {AudioBufferSourceNode|null} */
+        this._currentSource = null;
+        /** @type {Uint8Array|null} byte sobrante de PCM16 cuando un chunk llega impar */
+        this._pcmCarry = null;
         this._active = false;
         this._provider = 'openai';
         this._mode = 'native';  // 'native' | 'simulated'
@@ -69,6 +73,9 @@ class VoiceRealtime {
             this._processor = this._captureCtx.createScriptProcessor(this._bufferSize, 1, 1);
             this._processor.onaudioprocess = (ev) => {
                 if (!this._active) return;
+                // Barge-in con TTS de navegador: no mandar mic mientras la IA habla por
+                // speechSynthesis (la bocina entra al mic y el STT transcribiría el eco).
+                if (window.__webSpeech && window.__webSpeech.speaking()) return;
                 const float32 = ev.inputBuffer.getChannelData(0);
                 const pcm16 = this._float32ToPcm16(float32);
                 const b64 = this._arrayBufferToBase64(pcm16.buffer);
@@ -126,14 +133,33 @@ class VoiceRealtime {
 
         try {
             const raw = atob(audioB64);
-            const bytes = new Uint8Array(raw.length);
+            let bytes = new Uint8Array(raw.length);
             for (let i = 0; i < raw.length; i++) {
                 bytes[i] = raw.charCodeAt(i);
             }
 
             let float32;
             if (format === 'pcm16') {
-                float32 = this._pcm16ToFloat32(new Int16Array(bytes.buffer));
+                // PCM16 = 2 bytes por muestra. Si un chunk llega con un número IMPAR de
+                // bytes, una muestra de 16 bits queda partida entre este chunk y el
+                // siguiente. Decodificar cada chunk por separado con `new Int16Array(buffer)`
+                // desalinea todo el audio posterior (la palabra final suena corrupta, p.ej.
+                // "hoy" → "El"). Arrastramos el byte sobrante al próximo chunk para mantener
+                // la alineación de 16 bits a lo largo del stream.
+                if (this._pcmCarry && this._pcmCarry.length) {
+                    const merged = new Uint8Array(this._pcmCarry.length + bytes.length);
+                    merged.set(this._pcmCarry, 0);
+                    merged.set(bytes, this._pcmCarry.length);
+                    bytes = merged;
+                    this._pcmCarry = null;
+                }
+                if (bytes.length % 2 !== 0) {
+                    this._pcmCarry = bytes.slice(bytes.length - 1);
+                    bytes = bytes.subarray(0, bytes.length - 1);
+                }
+                if (bytes.length === 0) return 0;
+                const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.length >> 1);
+                float32 = this._pcm16ToFloat32(int16);
             } else {
                 // fallback: assume float32 directly
                 float32 = new Float32Array(bytes.buffer);
@@ -156,6 +182,23 @@ class VoiceRealtime {
         }
     }
 
+    /**
+     * Barge-in: el usuario habló sobre la IA y el servidor canceló la generación.
+     * Detiene el audio que suena y descarta lo encolado para que la voz se corte ya.
+     */
+    clearPlayback() {
+        this._playQueue = [];
+        this._pcmCarry = null;  // el stream se cortó: descartar byte parcial
+        if (this._currentSource) {
+            try {
+                this._currentSource.onended = null;  // evitar que reanude el drain
+                this._currentSource.stop();
+            } catch (_) { /* ya terminó */ }
+            this._currentSource = null;
+        }
+        this._playing = false;
+    }
+
     // ── Private ───────────────────────────────────
 
     _drainPlayQueue() {
@@ -164,6 +207,7 @@ class VoiceRealtime {
 
         const buffer = this._playQueue.shift();
         const source = this._playbackCtx.createBufferSource();
+        this._currentSource = source;
         source.buffer = buffer;
         if (this._playbackAnalyser) {
             source.connect(this._playbackAnalyser);
@@ -173,6 +217,7 @@ class VoiceRealtime {
         }
         source.onended = () => {
             this._playing = false;
+            this._currentSource = null;
             this._drainPlayQueue();
         };
         source.start();
@@ -200,6 +245,8 @@ class VoiceRealtime {
         this._analyserBuffer = null;
         this._playQueue = [];
         this._playing = false;
+        this._currentSource = null;
+        this._pcmCarry = null;
     }
 
     /**

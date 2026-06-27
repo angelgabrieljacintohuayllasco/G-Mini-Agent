@@ -144,10 +144,19 @@ async def handle_user_message(sid: str, data: dict) -> None:
         )
         return
 
-    # Procesar en el agente (streaming)
-    # Si el modelo seleccionado es Live API (api_method: 'live'), redirigir via WebSocket Live API.
+    # Procesar en el agente (streaming).
+    # Si hay una sesión de voz NATIVA (Live API) activa, el texto escrito entra a esa
+    # sesión para que el modelo responda con voz en tiempo real (el usuario escribe un
+    # guion mientras habla por voz). Antes esto se decidía por el modelo de texto default,
+    # así que con un default no-live (p.ej. gemini-3.1-pro) el texto nunca llegaba a la
+    # sesión de voz activa y el modelo "no lo veía".
     # Según docs: https://ai.google.dev/gemini-api/docs/live-guide#sending-text-message
-    # La Live API acepta texto como entrada y devuelve audio + transcripción.
+    if _agent_core.is_native_realtime_active:
+        await _agent_core.process_message_live(sid, text)
+        return
+
+    # Si no hay sesión activa pero el modelo seleccionado ES Live API (api_method: 'live'),
+    # process_message_live auto-inicia la sesión.
     _is_live = False
     try:
         from backend.config import config as _lcfg
