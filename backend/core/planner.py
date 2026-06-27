@@ -1537,26 +1537,40 @@ class ActionPlanner:
         Checks extension connection first to avoid useless initialization attempts."""
         if not self._browser or not self._browser.is_available():
             return False
-        # If already connected via extension, reuse
+        # Si ya hay una sesión activa, reutilizar.
         if self._browser._mode is not None:
-            # Verify extension is still actually connected
-            ext = getattr(self._browser, '_ext', None)
-            if ext and hasattr(ext, 'is_connected') and not ext.is_connected:
-                logger.info("[Planner] Extension disconnected, clearing stale browser session")
-                self._browser._mode = None
-                return False
-            return True
-        # Check if extension is connected before trying to init
+            # Solo el modo human/extension depende de la extensión de Chrome. Si se
+            # desconectó, limpiar y caer al re-init de abajo (NO return False directo,
+            # para poder degradar a browser-use). El modo automation (browser-use) NO
+            # usa la extensión: persiste tal cual.
+            if self._browser._mode in ("human", "extension_fallback"):
+                ext = getattr(self._browser, '_ext', None)
+                if ext and hasattr(ext, 'is_connected') and not ext.is_connected:
+                    logger.info("[Planner] Extension disconnected, clearing stale browser session")
+                    self._browser._mode = None
+                else:
+                    return True
+            else:
+                return True
+        # Extensión conectada → perfil human (extensión). Si no, fallback a browser-use.
         ext = getattr(self._browser, '_ext', None)
-        if ext and hasattr(ext, 'is_connected') and not ext.is_connected:
-            logger.debug("[Planner] Extension not connected, skipping browser session init")
-            return False
+        ext_connected = bool(ext and getattr(ext, 'is_connected', False))
+        if ext_connected:
+            try:
+                logger.info("[Planner] Auto-init: inicializando sesión de browser (human profile)...")
+                await self._browser.ensure_human_profile()
+                if self._browser._mode is not None:
+                    return True
+            except Exception as e:
+                logger.warning(f"[Planner] Auto-init human profile falló: {e}")
+        # Fallback sin extensión: browser-use (automation profile). Las acciones browser_*
+        # (screenshot, click, navigate...) enrutan a browser-use cuando _mode != 'human'.
         try:
-            logger.info("[Planner] Auto-init: inicializando sesión de browser (human profile)...")
-            await self._browser.ensure_human_profile()
+            logger.info("[Planner] Extensión no conectada — usando browser-use (automation profile)...")
+            await self._browser.ensure_automation_profile()
             return self._browser._mode is not None
         except Exception as e:
-            logger.warning(f"[Planner] Auto-init browser falló: {e}")
+            logger.warning(f"[Planner] Auto-init browser-use falló: {e}")
             return False
 
     async def _get_browseruse(self):

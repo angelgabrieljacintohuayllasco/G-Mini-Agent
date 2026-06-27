@@ -83,3 +83,6 @@ slack-sdk>=3.27.0
 
 # ═══ Phase 11: Knowledge Graph ═══
 networkx>=3.2
+
+# ═══ Adjuntos del chat: leer Excel (xlsx → CSV texto) ═══
+openpyxl>=3.1

@@ -15,6 +15,7 @@ class LLMMessage(BaseModel):
     role: str          # system | user | assistant
     content: str
     images: list[str] = []  # base64 images (para multimodal)
+    files: list[dict] = []  # adjuntos no-imagen: [{"data": base64, "mime_type": str, "file_name": str}]
 
 
 class LLMResponse(BaseModel):

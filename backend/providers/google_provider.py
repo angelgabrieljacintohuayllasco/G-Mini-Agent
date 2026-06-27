@@ -92,12 +92,20 @@ class GoogleProvider(LLMProvider):
 
             role = "user" if msg.role == "user" else "model"
 
-            if msg.images:
+            if msg.images or msg.files:
                 import base64
                 parts = [types.Part.from_text(text=msg.content)]
                 for img_b64 in msg.images:
                     img_bytes = base64.b64decode(img_b64)
                     parts.append(types.Part.from_bytes(data=img_bytes, mime_type="image/png"))
+                # Adjuntos no-imagen (video/audio/pdf/doc): bytes inline con su mime real.
+                # Part.from_bytes soporta video/mp4, audio/*, application/pdf en Vertex y AI Studio.
+                for f in msg.files:
+                    data_b64 = f.get("data") if isinstance(f, dict) else None
+                    mime = f.get("mime_type") if isinstance(f, dict) else None
+                    if not data_b64 or not mime:
+                        continue
+                    parts.append(types.Part.from_bytes(data=base64.b64decode(data_b64), mime_type=mime))
                 contents.append(types.Content(role=role, parts=parts))
             else:
                 contents.append(types.Content(

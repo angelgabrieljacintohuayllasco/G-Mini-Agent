@@ -20,7 +20,7 @@ from backend.automation.editor_bridge import get_editor_bridge
 from backend.config import config, ROOT_DIR
 from backend.core.memory import Memory
 from backend.core.ide_manager import IDEManager
-from backend.core.modes import DEFAULT_MODE_KEY, build_mode_system_prompt, get_mode, get_mode_behavior_prompt, list_modes
+from backend.core.modes import DEFAULT_MODE_KEY, build_autonomy_context, build_mode_system_prompt, get_mode, get_mode_behavior_prompt, list_modes
 from backend.core.policy import PolicyEngine, is_approval_text, is_rejection_text
 from backend.core.prompt_manager import get_prompt_text, render_prompt_text
 from backend.core.resilience import RetryPolicy
@@ -132,6 +132,153 @@ def _extract_data_url_base64(value: str) -> str:
         _, _, tail = raw.partition(",")
         return tail.strip()
     return raw
+
+
+# Limite inline de la Gemini API: el request total no puede pasar ~20MB. base64
+# infla ~33%, asi que cortamos en 15MB de bytes crudos.
+# ponytail: inline bytes (sin Files API). Files API solo existe en AI Studio,
+# no en Vertex (backend actual). Para archivos >15MB subir a GCS + Part.from_uri.
+_INLINE_FILE_MAX_BYTES = 15 * 1024 * 1024
+
+# Extensiones -> mime que Gemini entiende de forma nativa (video/audio/pdf/imagen).
+_GEMINI_MEDIA_MIME = {
+    ".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm",
+    ".avi": "video/x-msvideo", ".mpeg": "video/mpeg", ".mpg": "video/mpeg",
+    ".flv": "video/x-flv", ".wmv": "video/x-ms-wmv", ".3gp": "video/3gpp",
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+    ".m4a": "audio/mp4", ".aac": "audio/aac", ".flac": "audio/flac",
+    ".pdf": "application/pdf",
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".webp": "image/webp", ".gif": "image/gif", ".heic": "image/heic",
+}
+
+# Texto/codigo: Gemini los lee mejor como texto plano que como bytes base64.
+_TEXT_FILE_EXT = {
+    ".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".yaml", ".yml",
+    ".xml", ".html", ".htm", ".css", ".js", ".ts", ".jsx", ".tsx", ".py",
+    ".java", ".c", ".h", ".cpp", ".hpp", ".cc", ".cs", ".go", ".rs", ".rb",
+    ".php", ".sh", ".bat", ".ps1", ".sql", ".ini", ".toml", ".cfg", ".conf",
+    ".log", ".env", ".r", ".kt", ".swift", ".dart", ".vue", ".svelte",
+    ".lua", ".pl", ".scala", ".gradle", ".dockerfile", ".tex",
+}
+_XLSX_EXT = {".xlsx", ".xlsm", ".xls"}
+
+_TEXT_FILE_MAX_BYTES = 2 * 1024 * 1024     # no leer archivos de texto > 2MB crudos
+_TEXT_SNIPPET_MAX_CHARS = 60_000           # tope de texto inyectado por archivo
+_DIR_MAX_FILES = 40                         # tope de archivos al importar una carpeta
+_DIR_SKIP = {"node_modules", ".git", "venv", ".venv", "__pycache__", "dist", "build", ".next"}
+
+# Conjunto de extensiones que el agente sabe procesar (media + texto + excel).
+_SUPPORTED_ATTACH_EXT = set(_GEMINI_MEDIA_MIME) | _TEXT_FILE_EXT | _XLSX_EXT
+
+
+def _read_inline_file(path: str) -> dict | None:
+    """Lee un archivo local soportado por Gemini y lo devuelve como
+    {"data": base64, "mime_type": str, "file_name": str}. None si no existe,
+    no es media soportada, o supera el limite inline."""
+    import base64
+
+    try:
+        p = Path(path)
+        if not p.is_file():
+            return None
+        mime = _GEMINI_MEDIA_MIME.get(p.suffix.lower())
+        if not mime:
+            return None
+        size = p.stat().st_size
+        if size <= 0 or size > _INLINE_FILE_MAX_BYTES:
+            logger.warning(
+                f"[attachments] Archivo omitido para envio inline (tamano {size} bytes, "
+                f"limite {_INLINE_FILE_MAX_BYTES}): {p.name}"
+            )
+            return None
+        data = base64.b64encode(p.read_bytes()).decode("ascii")
+        return {"data": data, "mime_type": mime, "file_name": p.name}
+    except Exception as exc:
+        logger.warning(f"[attachments] No se pudo leer archivo inline {path}: {exc}")
+        return None
+
+
+# Detecta rutas locales absolutas (Windows o POSIX) dentro del texto del usuario,
+# para poder mandar el archivo real al modelo en vez de solo su ruta como texto.
+_PATH_IN_TEXT_RE = re.compile(
+    r"""(?P<q>["'])?(?P<path>(?:[A-Za-z]:[\\/]|/)[^"'\r\n]*?\.[A-Za-z0-9]{1,5})(?(q)(?P=q)|(?=\s|$))""",
+    re.VERBOSE,
+)
+
+
+def _extract_media_paths_from_text(text: str) -> list[str]:
+    """Extrae rutas a archivos soportados existentes mencionadas en el texto."""
+    found: list[str] = []
+    for m in _PATH_IN_TEXT_RE.finditer(text or ""):
+        candidate = m.group("path").strip().strip('"').strip("'")
+        ext = Path(candidate).suffix.lower()
+        if ext in _SUPPORTED_ATTACH_EXT and candidate not in found and Path(candidate).is_file():
+            found.append(candidate)
+    return found
+
+
+def _read_text_file(path: str) -> dict | None:
+    """Lee un archivo de texto/codigo como {"file_name", "text"} (con tope)."""
+    try:
+        p = Path(path)
+        if not p.is_file() or p.stat().st_size > _TEXT_FILE_MAX_BYTES:
+            return None
+        text = p.read_text(encoding="utf-8", errors="replace")
+        if len(text) > _TEXT_SNIPPET_MAX_CHARS:
+            text = text[:_TEXT_SNIPPET_MAX_CHARS] + "\n…[truncado]"
+        return {"file_name": p.name, "text": text}
+    except Exception as exc:
+        logger.warning(f"[attachments] No se pudo leer texto {path}: {exc}")
+        return None
+
+
+def _read_xlsx_as_text(path: str) -> dict | None:
+    """Convierte un Excel a CSV-texto por hoja (Gemini no lee xlsx binario)."""
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        logger.warning("[attachments] openpyxl no instalado; xlsx no convertido. pip install openpyxl")
+        return None
+    try:
+        import csv as _csv
+        import io
+
+        p = Path(path)
+        wb = load_workbook(p, read_only=True, data_only=True)
+        chunks = []
+        for ws in wb.worksheets:
+            buf = io.StringIO()
+            writer = _csv.writer(buf)
+            for row in ws.iter_rows(values_only=True):
+                writer.writerow(["" if c is None else c for c in row])
+            chunks.append(f"# Hoja: {ws.title}\n{buf.getvalue().rstrip()}")
+        wb.close()
+        text = "\n\n".join(chunks)
+        if len(text) > _TEXT_SNIPPET_MAX_CHARS:
+            text = text[:_TEXT_SNIPPET_MAX_CHARS] + "\n…[truncado]"
+        return {"file_name": p.name, "text": text}
+    except Exception as exc:
+        logger.warning(f"[attachments] No se pudo convertir xlsx {path}: {exc}")
+        return None
+
+
+def _expand_dir(path: str) -> list[str]:
+    """Lista archivos soportados dentro de una carpeta (un walk, con topes)."""
+    out: list[str] = []
+    try:
+        base = Path(path)
+        for f in sorted(base.rglob("*")):
+            if len(out) >= _DIR_MAX_FILES:
+                logger.warning(f"[attachments] Carpeta {base.name}: tope {_DIR_MAX_FILES} archivos alcanzado")
+                break
+            if not f.is_file() or any(part in _DIR_SKIP for part in f.parts):
+                continue
+            if f.suffix.lower() in _SUPPORTED_ATTACH_EXT:
+                out.append(str(f))
+    except Exception as exc:
+        logger.warning(f"[attachments] No se pudo expandir carpeta {path}: {exc}")
+    return out
 
 
 _OCR_TRUNCATE_MAX = 1500
@@ -412,6 +559,8 @@ class AgentCore:
         self._pause_event: asyncio.Event = asyncio.Event()
         self._pause_event.set()  # Starts unpaused
         self._current_task: asyncio.Task | None = None
+        # Refs vivas de tasks fire-and-forget (evita GC mid-run; asyncio docs).
+        self._bg_tasks: set[asyncio.Task] = set()
         self._active_sid: str = ""
         self._last_status: AgentStatus = AgentStatus.IDLE
         self._status_before_pause: AgentStatus = AgentStatus.IDLE
@@ -701,15 +850,42 @@ class AgentCore:
     def _build_attachment_context(
         self,
         attachments: list[dict[str, Any]] | None,
-    ) -> tuple[str, list[str]]:
+    ) -> tuple[str, list[str], list[dict]]:
         items = self._normalize_attachments(attachments)
         if not items:
-            return "", []
+            return "", [], []
 
         context_lines = [
             "[SISTEMA: El usuario incluyo adjuntos. Usa este material como contexto antes de responder o actuar.]",
         ]
         inline_images: list[str] = []
+        inline_files: list[dict] = []
+        content_blocks: list[str] = []  # texto/codigo/excel volcado al contexto
+
+        def _ingest_file(fpath: str) -> str:
+            """Procesa un archivo segun su tipo. Devuelve etiqueta de estado."""
+            ext = Path(fpath).suffix.lower()
+            if ext in _GEMINI_MEDIA_MIME:
+                inline = _read_inline_file(fpath)
+                if inline:
+                    inline_files.append(inline)
+                    return "enviado_al_modelo(media)"
+                return "omitido(media_invalida_o_grande)"
+            if ext in _XLSX_EXT:
+                doc = _read_xlsx_as_text(fpath)
+                if doc:
+                    content_blocks.append(
+                        f"\n--- {doc['file_name']} (Excel→CSV) ---\n{doc['text']}\n--- fin {doc['file_name']} ---"
+                    )
+                    return "contenido_en_contexto(excel)"
+                return "omitido(excel_invalido)"
+            doc = _read_text_file(fpath)
+            if doc:
+                content_blocks.append(
+                    f"\n--- {doc['file_name']} ---\n{doc['text']}\n--- fin {doc['file_name']} ---"
+                )
+                return "contenido_en_contexto(texto)"
+            return "omitido(no_legible)"
 
         for index, item in enumerate(items, start=1):
             kind = str(item.get("kind") or item.get("type") or "file").strip().lower() or "file"
@@ -739,9 +915,19 @@ class AgentCore:
             if image_base64:
                 details.append("imagen_incluida_en_contexto=true")
                 inline_images.append(image_base64)
+            elif local_path:
+                # Carpeta -> expandir; archivo -> procesar por tipo (media/texto/excel).
+                if Path(local_path).is_dir():
+                    children = _expand_dir(local_path)
+                    details.append(f"carpeta={len(children)}_archivos")
+                    for fp in children:
+                        details.append(f"  · {Path(fp).name}: {_ingest_file(fp)}")
+                else:
+                    details.append(_ingest_file(local_path))
             context_lines.append("- " + " | ".join(details))
 
-        return "\n".join(context_lines), inline_images
+        context_lines.extend(content_blocks)
+        return "\n".join(context_lines), inline_images, inline_files
 
     async def _handle_subagent_request(self, sid: str, text: str) -> bool:
         if not self._router:
@@ -2047,8 +2233,8 @@ class AgentCore:
     def _apply_system_prompt(self) -> None:
         prompt = build_mode_system_prompt(self._base_system_prompt, self._current_mode)
 
-        autonomy = config.get("agent", "autonomy_level", default="supervisado")
-        prompt = prompt + f"\n\n[AUTONOMÍA ACTUAL: {autonomy}]"
+        autonomy = config.get("agent", "autonomy", default="media")
+        prompt = prompt + "\n\n" + build_autonomy_context()
 
         prompt = prompt + "\n\n" + build_avatar_context()
 
@@ -2168,13 +2354,21 @@ class AgentCore:
             "modes": list_modes(),
         }
 
+    def _on_bg_task_done(self, task: asyncio.Task) -> None:
+        """Suelta la ref y loguea si la task fire-and-forget falló (antes se perdía)."""
+        self._bg_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(f"Agent background task falló: {task.exception()!r}")
+
     def set_mode(self, mode_key: str) -> dict[str, Any]:
         mode = get_mode(mode_key)
         self._current_mode = mode.key
         config.set("app", "mode", value=mode.key)
         self._memory.set_session_mode(mode.key)
         try:
-            asyncio.create_task(self._memory.persist_session_mode())
+            _t = asyncio.create_task(self._memory.persist_session_mode())
+            self._bg_tasks.add(_t)
+            _t.add_done_callback(self._on_bg_task_done)
         except RuntimeError:
             pass
         self._apply_system_prompt()
@@ -2271,8 +2465,8 @@ class AgentCore:
                         self._ide,
                         self._editor_bridge,
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(f"No se pudo recrear el planner con componentes nuevos: {exc}")
 
         # Phase 2b: Computer Use Sub-Agent
         if self._vision and self._automation and bool(config.get("computer_use", "enabled", default=True)):
@@ -2404,15 +2598,29 @@ class AgentCore:
             else:
                 enhanced_text = text
 
-            attachments_context, attachment_images = self._build_attachment_context(attachments)
+            # Rutas a archivos media que el usuario escribio directamente en el chat
+            # (sin adjuntarlos por la UI): mandar los bytes reales al modelo, no la ruta.
+            effective_attachments = list(attachments or [])
+            for media_path in _extract_media_paths_from_text(text):
+                effective_attachments.append(
+                    {"kind": "file", "file_name": Path(media_path).name, "local_path": media_path}
+                )
+
+            attachments_context, attachment_images, attachment_files = self._build_attachment_context(
+                effective_attachments
+            )
             memory_text = enhanced_text
             persisted_text = text
             if attachments_context:
                 memory_text = f"{memory_text}\n\n{attachments_context}"
                 persisted_text = f"{persisted_text}\n\n{attachments_context}"
 
-            if attachment_images:
-                self._memory.add_message_with_image("user", memory_text, attachment_images)
+            if attachment_images or attachment_files:
+                self._memory.add_user_message(
+                    memory_text,
+                    images=attachment_images or None,
+                    files=attachment_files or None,
+                )
             else:
                 self._memory.add_user_message(memory_text)
             await self._memory.persist_message("user", persisted_text)
@@ -2516,13 +2724,13 @@ class AgentCore:
                 llm_messages = self._memory.get_llm_messages()
                 model = self._router.get_current_model()
                 provider_name = self._router.get_current_provider_name()
-                msg_dicts = [{"role": m.role, "content": m.content, "images": m.images or []} for m in llm_messages]
+                msg_dicts = [{"role": m.role, "content": m.content, "images": m.images or [], "files": m.files or []} for m in llm_messages]
                 truncated = truncate_messages(msg_dicts, model)
                 if len(truncated) < len(msg_dicts):
                     dropped = len(msg_dicts) - len(truncated)
                     logger.info(f"Context truncado: {dropped} mensajes descartados antes de LLM call")
                 final_messages = [
-                    LLMMessage(role=m["role"], content=m["content"], images=m.get("images") or [])
+                    LLMMessage(role=m["role"], content=m["content"], images=m.get("images") or [], files=m.get("files") or [])
                     for m in truncated
                 ]
                 logger.info(
@@ -2992,6 +3200,15 @@ class AgentCore:
             import re
             clean_text = re.sub(r'\[ACTION:.*?\]', '', text).strip()
             clean_text, _ = extract_emotion_tags(clean_text)
+            if not clean_text:
+                return
+
+            # TTS del navegador: no se sintetiza audio en el backend; se manda el
+            # texto y el front lo habla con speechSynthesis (cero latencia de red).
+            if getattr(self._voice, "tts_is_browser", False):
+                await sio.emit("agent:speak", {"text": clean_text[:1000]}, to=sid)
+                return
+
             if clean_text:
                 audio = await self._voice.synthesize(clean_text[:500])
                 if audio:
@@ -3305,8 +3522,7 @@ class AgentCore:
             # Pasar el system prompt real del agente (con modo aplicado) + MCP context + autonomía + prompt de voz
             agent_prompt = build_mode_system_prompt(self._base_system_prompt, self._current_mode)
 
-            autonomy = config.get("agent", "autonomy_level", default="supervisado")
-            agent_prompt = agent_prompt + f"\n\n[AUTONOMÍA ACTUAL: {autonomy}]"
+            agent_prompt = agent_prompt + "\n\n" + build_autonomy_context()
 
             mcp_context = self._get_mcp_tools_context()
             if mcp_context:
@@ -3354,8 +3570,6 @@ class AgentCore:
         rt_agent_text_buffer: list[str] = []
         # Dedup: track last tool call to skip identical consecutive calls
         _last_rt_tool: dict = {"name": None, "args_key": None, "ts": 0.0}
-        # Stuck-loop detection: track repeated click coordinates
-        _click_repeat_tracker: dict = {"coords": None, "count": 0}
 
         async def on_error(error_msg: str):
             """Errores fatales de la sesión RT (quota, auth, modelo inválido)."""
@@ -3387,6 +3601,16 @@ class AgentCore:
             import base64
             b64 = base64.b64encode(audio_bytes).decode("utf-8")
             await sio.emit("agent:audio", {"audio": b64, "format": "pcm16", "stream": True}, to=sid)
+
+        async def on_interrupt():
+            """Barge-in: el usuario habló sobre la IA. Pedir al frontend que vacíe el
+            buffer de audio encolado para que la voz se detenga de inmediato."""
+            await sio.emit("agent:audio_interrupt", {}, to=sid)
+
+        async def on_ready():
+            """Sesión RT lista para escuchar (tras el handshake de ~3s). El frontend
+            reproduce un cue audible para indicar que ya está escuchando."""
+            await sio.emit("agent:realtime_ready", {}, to=sid)
 
         async def on_text(text: str):
             rt_agent_text_buffer.append(text)
@@ -3463,35 +3687,6 @@ class AgentCore:
                         "Usa delegate_computer_use(task=\"...\", monitor=N) para que el sub-agente realice la interacción."
                     )}})
                     continue
-
-                # Stuck-loop detection: if clicking same coords 3+ times, override with error
-                if fn_name in ("click", "double_click", "right_click"):
-                    _coords = (fn_args.get("x"), fn_args.get("y"))
-                    if _coords == _click_repeat_tracker["coords"]:
-                        _click_repeat_tracker["count"] += 1
-                    else:
-                        _click_repeat_tracker["coords"] = _coords
-                        _click_repeat_tracker["count"] = 1
-
-                    if _click_repeat_tracker["count"] >= 3:
-                        logger.warning(f"RT stuck-loop: click at {_coords} repeated {_click_repeat_tracker['count']} times")
-                        function_responses.append({
-                            "name": fn_name, "id": fn_id,
-                            "response": {
-                                "error": (
-                                    f"STUCK: Has hecho click en ({_coords[0]}, {_coords[1]}) "
-                                    f"{_click_repeat_tracker['count']} veces sin resultado. "
-                                    "El click NO está funcionando en esta coordenada. "
-                                    "DETENTE. Toma un screenshot nuevo, analiza la imagen, "
-                                    "y usa coordenadas DIFERENTES basadas en lo que VES en la pantalla actual. "
-                                    "Si el elemento que buscas no es clickeable, prueba otra estrategia."
-                                ),
-                            },
-                        })
-                        continue
-                elif fn_name != "screenshot":
-                    _click_repeat_tracker["coords"] = None
-                    _click_repeat_tracker["count"] = 0
 
                 # Generar ID único para esta acción (para vincular card con resultado)
                 import uuid as _uuid
@@ -3666,6 +3861,8 @@ class AgentCore:
             on_turn_complete=on_turn_complete,
             conversation_history=self._memory.messages if self._memory.messages else None,
             on_error=on_error,
+            on_interrupt=on_interrupt,
+            on_ready=on_ready,
         )
 
     async def stop_realtime_voice(self) -> None:
@@ -3681,6 +3878,12 @@ class AgentCore:
         if self._realtime_voice:
             await self._realtime_voice.stop_session()
 
+    @property
+    def is_native_realtime_active(self) -> bool:
+        """True si hay una sesión de voz nativa (Live API) activa."""
+        rv = getattr(self, "_realtime_voice", None)
+        return bool(rv and rv.is_active)
+
     async def process_message_live(self, sid: str, text: str) -> None:
         """
         Procesa un mensaje de texto usando la Live API.
@@ -3691,6 +3894,14 @@ class AgentCore:
         """
         if not self._realtime_voice:
             return
+
+        # Persistir el texto del usuario en el historial (en voz, on_user_text persiste la
+        # transcripción de audio; el texto escrito durante la sesión no pasa por ahí).
+        try:
+            self._memory.add_user_message(text)
+            await self._memory.persist_message("user", text)
+        except Exception as exc:
+            logger.warning(f"Live API: no se pudo persistir mensaje de texto del usuario: {exc}")
 
         # Auto-iniciar sesión Live si no está activa
         if not self._realtime_voice.is_active:
