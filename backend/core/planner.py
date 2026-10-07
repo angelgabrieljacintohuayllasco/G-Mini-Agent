@@ -3689,6 +3689,33 @@ class ActionPlanner:
                     result["data"] = data if isinstance(data, dict) else {"result": data}
                     result["message"] = f"{connector_id}.{action_name} listo"
 
+                case "remote_list" | "remote_delegate" | "remote_task_status":
+                    from backend.core import remote_servers
+                    from backend.core.remote_servers import RemoteServerError
+
+                    server_ref = str(action.params.get("server", "")).strip()
+                    try:
+                        if action.type == "remote_list":
+                            data = {"servers": remote_servers.list_servers()}
+                            message = f"{len(data['servers'])} G-Mini emparejados"
+                        elif action.type == "remote_delegate":
+                            wait = str(action.params.get("wait", "false")).strip().lower() in ("1", "true", "si", "sí", "yes")
+                            data = await remote_servers.delegate(
+                                server_ref, str(action.params.get("task", action.params.get("prompt", ""))),
+                                title=str(action.params.get("title", "")), wait=wait,
+                                timeout_s=float(action.params.get("timeout", 300) or 300),
+                            )
+                            message = f"Tarea en {data.get('server')}: {data.get('status')}"
+                        else:
+                            data = await remote_servers.task_status(server_ref, str(action.params.get("task_id", "")))
+                            message = f"Tarea en {data.get('server')}: {data.get('status')}"
+                    except RemoteServerError as exc:
+                        result["message"] = str(exc)
+                        return result
+                    result["success"] = data.get("status") != "failed" if action.type != "remote_list" else True
+                    result["data"] = data
+                    result["message"] = message
+
                 case "skill_list":
                     from backend.core import agent_skills
 

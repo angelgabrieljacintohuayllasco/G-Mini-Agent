@@ -14,6 +14,7 @@ import base64
 import json
 import os
 import re
+import socket
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -315,7 +316,8 @@ async def claim_pairing(request: Request):
         if str(exc) == "rate_limited":
             raise ApiError(429, "rate_limited", "Demasiados intentos; espera un minuto.") from None
         raise ApiError(401, "invalid_code", "Código inválido o vencido.") from None
-    return {"token": token, "device_id": device.id, "server_name": _agent_identity()["name"],
+    # server_name es el equipo (como lo documenta el contrato); agent_name, cómo se llama el agente.
+    return {"token": token, "device_id": device.id, "server_name": socket.gethostname() or "G-Mini",
             "agent_name": _agent_identity()["name"], "scopes": device.scopes}
 
 

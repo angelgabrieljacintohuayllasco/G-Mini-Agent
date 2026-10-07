@@ -2359,6 +2359,16 @@ class AgentCore:
         if connectors_index:
             prompt = prompt + "\n\n" + connectors_index
 
+        try:
+            from backend.core import remote_servers
+
+            remote_index = remote_servers.build_prompt_index()
+        except Exception as exc:
+            logger.debug(f"Índice de G-Mini remotos no disponible: {exc}")
+            remote_index = ""
+        if remote_index:
+            prompt = prompt + "\n\n" + remote_index
+
         self._memory.set_system_prompt(prompt)
         logger.debug(
             f"System prompt aplicado: total_len={len(prompt)}, "

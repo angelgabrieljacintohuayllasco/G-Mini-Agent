@@ -103,6 +103,10 @@ exponerlo.
   sesiones, voz (TTS, STT y turno completo), tareas en segundo plano,
   aprobaciones remotas y un WebSocket para clientes y dispositivos (caras
   OLED, LEDs, relés y sensores).
+- Tu G-Mini de escritorio puede emparejarse con el del servidor (código de 6
+  dígitos, `POST /api/remote-servers/pair`) y delegarle tareas largas o que
+  deben seguir cuando apagas la PC: se lo pides en el chat y usa
+  `remote_delegate`.
 
 ## Comandos del chat
 

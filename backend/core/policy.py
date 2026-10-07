@@ -329,11 +329,17 @@ class PolicyEngine:
             "skill_read",
             "skill_resource",
             "connector_list",
+            "remote_list",
+            "remote_task_status",
         }:
             return self._review(action, "observe", "reading", "low", 0.95, "accion de lectura o cierre")
 
         if action_type == "connector_call":
             return self._review_connector_call(action)
+
+        if action_type == "remote_delegate":
+            return self._review(action, "development", "system", "medium", 0.78,
+                                "delega una tarea a otro G-Mini emparejado (corre con los permisos de ese equipo)")
 
         if action_type == "memory_forget":
             return self._review(action, "observe", "files", "medium", 0.80, "borra un recuerdo del usuario a pedido suyo")

@@ -30,6 +30,8 @@ _PER_ACTION_CAPS = {
     "skill_resource": 16_000,
     "skill_run": 10_000,
     "connector_call": 10_000,
+    "remote_delegate": 10_000,
+    "remote_task_status": 10_000,
 }
 # Lo que el modelo debe SEGUIR (instrucciones de una skill que cargó a propósito).
 _INSTRUCTION_ACTIONS = {"skill_read"}

@@ -14,7 +14,7 @@ from typing import Any
 import yaml
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from loguru import logger
 
 from backend.config import ROOT_DIR as _DATA_ROOT, config
@@ -4117,6 +4117,83 @@ async def set_skill_env(skill_id: str, request: Request):
         else:
             config.delete_api_key(env_vault_name(var))
     return {"ok": True, "updated": sorted(body)}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Otros G-Mini emparejados (VPS, Raspberry Pi, otra PC)
+# ═══════════════════════════════════════════════════════════════════════
+
+def _remote_error(exc: Exception) -> JSONResponse:
+    return JSONResponse(status_code=502, content={"ok": False, "error": str(exc)})
+
+
+@router.get("/remote-servers")
+async def list_remote_servers():
+    from backend.core import remote_servers
+
+    return {"ok": True, "servers": remote_servers.list_servers()}
+
+
+@router.post("/remote-servers/pair")
+async def pair_remote_server(request: Request):
+    """{url, code, name?}: canjea el código de 6 dígitos que muestra el otro G-Mini."""
+    from backend.core import remote_servers
+
+    body = await request.json()
+    try:
+        server = await remote_servers.pair(body.get("url", ""), body.get("code", ""), body.get("name", ""))
+    except remote_servers.RemoteServerError as exc:
+        return _remote_error(exc)
+    _refresh_agent_prompt()
+    return {"ok": True, "server": server}
+
+
+@router.delete("/remote-servers/{server_id}")
+async def remove_remote_server(server_id: str):
+    from backend.core import remote_servers
+
+    try:
+        server = remote_servers.remove(server_id)
+    except remote_servers.RemoteServerError as exc:
+        return JSONResponse(status_code=404, content={"ok": False, "error": str(exc)})
+    _refresh_agent_prompt()
+    return {"ok": True, "server": server}
+
+
+@router.get("/remote-servers/{server_id}/status")
+async def remote_server_status(server_id: str):
+    from backend.core import remote_servers
+
+    try:
+        return {"ok": True, **(await remote_servers.status(server_id))}
+    except remote_servers.RemoteServerError as exc:
+        return _remote_error(exc)
+
+
+@router.post("/remote-servers/{server_id}/tasks")
+async def remote_server_task(server_id: str, request: Request):
+    """{prompt, title?, wait?}: encola una tarea en ese G-Mini."""
+    from backend.core import remote_servers
+
+    body = await request.json()
+    try:
+        task = await remote_servers.delegate(
+            server_id, body.get("prompt", ""), title=body.get("title", ""), wait=bool(body.get("wait")),
+        )
+    except remote_servers.RemoteServerError as exc:
+        return _remote_error(exc)
+    return {"ok": True, "task": task}
+
+
+def _refresh_agent_prompt() -> None:
+    """El índice de G-Mini emparejados va en el prompt del sistema."""
+    try:
+        from backend.api.websocket_handler import _agent_core
+
+        if _agent_core is not None:
+            _agent_core._apply_system_prompt()
+    except Exception as exc:
+        logger.debug(f"No se pudo refrescar el prompt tras cambiar G-Mini remotos: {exc}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
