@@ -8,16 +8,14 @@
 
     // El tema lo aplica js/theme-boot.js en <head>, antes del primer pintado.
 
-    // ── SVG icon constants (replacing emojis) ────────
-    // Mic: push-to-talk voice input
-    const SVG_MIC = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>';
-    // Waveform: realtime voice conversation (native Live API)
-    const SVG_WAVEFORM = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="8" x2="4" y2="16"/><line x1="8" y1="4" x2="8" y2="20"/><line x1="12" y1="6" x2="12" y2="18"/><line x1="16" y1="4" x2="16" y2="20"/><line x1="20" y1="8" x2="20" y2="16"/></svg>';
-    // Simulated voice: mic with waves (STT → LLM → TTS pipeline)
-    const SVG_MIC_SIMULATED = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><path d="M18 4c2 2 2 6 0 8" opacity="0.5"/><path d="M20 2c3 3 3 10 0 13" opacity="0.3"/></svg>';
-    const SVG_STOP = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
-    const SVG_RECORD = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8" fill="#ef4444"/></svg>';
-    const SVG_MONITOR = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>';
+    // ── Iconos del compositor (sprite Lucide) ────────
+    const ICON = (name) => window.gminiDom.icon(name);
+    const SVG_MIC = ICON('mic');                  // dictado push-to-talk
+    const SVG_WAVEFORM = ICON('audio-lines');     // voz en tiempo real (Live API nativa)
+    const SVG_MIC_SIMULATED = ICON('mic-vocal');  // voz simulada: STT -> modelo -> TTS
+    const SVG_STOP = ICON('square');
+    const SVG_RECORD = ICON('circle-stop');
+    const SVG_MONITOR = ICON('monitor');
 
     function _setButtonIcon(btn, svgHtml) {
         if (btn) btn.innerHTML = svgHtml;

@@ -94,7 +94,7 @@ class ChatManager {
             img.style.display = 'none';
             const errDiv = document.createElement('div');
             errDiv.className = 'screenshot-error-msg';
-            errDiv.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg> Captura no disponible';
+            errDiv.innerHTML = `${window.gminiDom.icon('camera-off')} Captura no disponible`;
             el.appendChild(errDiv);
         });
         el.appendChild(img);
@@ -226,17 +226,16 @@ class ChatManager {
     }
 
     _mediaIcon(name) {
-        const wrap = (inner) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
-        switch (name) {
-            case 'download': return wrap('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>');
-            case 'zoom': return wrap('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>');
-            case 'zoom-in': return wrap('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>');
-            case 'zoom-out': return wrap('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/>');
-            case 'fullscreen': return wrap('<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>');
-            case 'reset': return wrap('<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>');
-            case 'close': return wrap('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>');
-            default: return wrap('');
-        }
+        const map = {
+            download: 'download',
+            zoom: 'zoom-in',
+            'zoom-in': 'zoom-in',
+            'zoom-out': 'zoom-out',
+            fullscreen: 'maximize-2',
+            reset: 'rotate-ccw',
+            close: 'x',
+        };
+        return window.gminiDom.icon(map[name] || 'circle');
     }
 
     /**
@@ -649,8 +648,8 @@ class ChatManager {
 
         const statusEl = cardEl.querySelector('.action-status');
         if (statusEl) {
-            const checkSvg = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-            const xSvg = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+            const checkSvg = window.gminiDom.icon('check');
+            const xSvg = window.gminiDom.icon('x');
             // Duracion exacta (del backend) — se guarda visible en la tarjeta.
             let durText = '';
             const ms = Number(durationMs);
@@ -745,42 +744,45 @@ class ChatManager {
     }
 
     _getActionIcon(type, params) {
-        const s = (d) => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
         // mcp_call_tool: usar el icono de la tool subyacente cuando se reconoce.
         if (type === 'mcp_call_tool') {
             const resolved = this._resolveMcpIconType(params);
             if (resolved) type = resolved;
         }
         const icons = {
-            screenshot: s('<path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/>'),
-            click: s('<path d="M4 4l7.07 17 2.51-7.39L21 11.07z"/>'),
-            double_click: s('<path d="M4 4l7.07 17 2.51-7.39L21 11.07z"/>'),
-            right_click: s('<path d="M4 4l7.07 17 2.51-7.39L21 11.07z"/>'),
-            type: s('<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/>'),
-            press: s('<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/>'),
-            hotkey: s('<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/>'),
-            open_application: s('<polygon points="5 3 19 12 5 21 5 3"/>'),
-            browser_navigate: s('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>'),
-            browser_click: s('<path d="M4 4l7.07 17 2.51-7.39L21 11.07z"/>'),
-            browser_type: s('<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 16h10"/>'),
-            browser_extract: s('<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>'),
-            browser_snapshot: s('<path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/>'),
-            browser_use_automation_profile: s('<circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10"/>'),
-            terminal_run: s('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'),
-            scroll: s('<path d="M12 5v14M5 12l7-7 7 7"/>'),
-            screen_read_text: s('<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>'),
-            move: s('<path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/>'),
-            drag: s('<path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/>'),
-            wait: s('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>'),
-            file_write_text: s('<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>'),
-            file_read_text: s('<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>'),
-            file_exists: s('<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'),
-            task_complete: s('<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'),
-            generate_image: s('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>'),
-            generate_video: s('<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>'),
-            generate_music: s('<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>'),
+            screenshot: 'camera',
+            browser_screenshot: 'camera',
+            adb_screenshot: 'camera',
+            click: 'mouse-pointer-click',
+            double_click: 'mouse-pointer-click',
+            right_click: 'mouse-pointer-click',
+            browser_click: 'mouse-pointer-click',
+            type: 'keyboard',
+            press: 'keyboard',
+            hotkey: 'keyboard',
+            browser_type: 'keyboard',
+            open_application: 'app-window',
+            browser_navigate: 'globe',
+            browser_use_automation_profile: 'globe',
+            browser_extract: 'file-text',
+            browser_snapshot: 'clipboard-list',
+            browser_scroll: 'arrow-up-down',
+            terminal_run: 'terminal',
+            scroll: 'arrow-up-down',
+            screen_read_text: 'scan-text',
+            move: 'move',
+            drag: 'hand',
+            wait: 'clock',
+            file_write_text: 'file-pen',
+            file_read_text: 'file-text',
+            file_exists: 'file-check',
+            task_complete: 'circle-check',
+            generate_image: 'image',
+            generate_video: 'video',
+            generate_music: 'music',
+            delegate_computer_use: 'monitor',
         };
-        return icons[type] || s('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>');
+        return window.gminiDom.icon(icons[type] || 'settings-2');
     }
 
     /**

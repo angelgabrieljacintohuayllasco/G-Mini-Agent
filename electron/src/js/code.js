@@ -1,10 +1,10 @@
 // Iconos SVG inline (reemplazan emojis para una UI consistente y profesional).
 // Namespaced en un objeto para no colisionar con consts de otros scripts.
 const CODE_ICONS = {
-    trash: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
-    pin: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><line x1="12" y1="17" x2="12" y2="22"/><path d="M9 4V2h6v2l-1 6 2 2v3H8v-3l2-2z"/></svg>',
-    check: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
-    cross: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+    trash: '<svg class="icon icon-sm" aria-hidden="true"><use href="assets/icons.svg#i-trash-2"></use></svg>',
+    pin: '<svg class="icon icon-sm" aria-hidden="true"><use href="assets/icons.svg#i-pin"></use></svg>',
+    check: '<svg class="icon code-status-icon is-ok" aria-hidden="true"><use href="assets/icons.svg#i-circle-check"></use></svg>',
+    cross: '<svg class="icon code-status-icon is-error" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg>',
 };
 
 class CodeManager {
@@ -1890,7 +1890,7 @@ class CodeManager {
                     <span class="code-list-stack">
                         <span class="code-list-text">${this.escapeHtml(g.title || g.goal_id || '-')} — ${progress}%</span>
                         <span class="code-list-meta">deadline: ${this.escapeHtml(g.deadline || '-')} | KPIs: ${kpiCount} | tareas: ${taskCount}</span>
-                        <div style="background:rgba(255,255,255,0.08);border-radius:3px;height:4px;margin-top:3px;overflow:hidden"><div style="width:${Math.min(progress, 100)}%;height:100%;background:linear-gradient(90deg,#6366f1,#38bdf8);border-radius:3px"></div></div>
+                        <div class="code-progress"><div class="code-progress-fill" style="width:${Math.max(0, Math.min(progress, 100))}%"></div></div>
                     </span>
                     <button class="btn-secondary btn-panel-action" data-goal-delete="${this.escapeHtml(g.goal_id)}" title="Eliminar">${CODE_ICONS.trash}</button>
                 </div>

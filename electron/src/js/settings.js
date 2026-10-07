@@ -7,8 +7,15 @@ const BACKEND_API = 'http://127.0.0.1:8765/api';
 
 // Iconos SVG inline (reemplazan dingbats/emojis para una UI consistente y profesional).
 const SETTINGS_ICONS = {
-    close: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
-    edit: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>',
+    close: '<svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-x"></use></svg>',
+    edit: '<svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-pencil"></use></svg>',
+    expand: '<svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-chevron-right"></use></svg>',
+    refresh: '<svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-refresh-cw"></use></svg>',
+    check: '<svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-check"></use></svg>',
+    error: '<svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg>',
+    offline: '<svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-wifi-off"></use></svg>',
+    eye: '<svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-eye"></use></svg>',
+    eyeOff: '<svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-eye-off"></use></svg>',
 };
 
 // ── Catálogo de modelos — se carga dinámicamente desde data/models.yaml vía backend ──
@@ -931,7 +938,7 @@ class SettingsManager {
                 <div class="api-key-input-group">
                     <input type="password" class="api-key-input" data-provider="${provider}" 
                            placeholder="sk-... o clave API" autocomplete="off">
-                    <button class="btn-toggle-key" data-provider="${provider}" title="Mostrar/ocultar"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+                    <button class="btn-toggle-key" data-provider="${provider}" title="Mostrar u ocultar la clave" aria-label="Mostrar u ocultar la clave">${SETTINGS_ICONS.eye}</button>
                 </div>
                 <span class="api-key-status" id="key-status-${provider}">—</span>
                 <button class="btn-save-key" data-provider="${provider}">Guardar</button>
@@ -947,8 +954,8 @@ class SettingsManager {
                 if (input) {
                     input.type = input.type === 'password' ? 'text' : 'password';
                     e.currentTarget.innerHTML = input.type === 'password'
-                        ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'
-                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+                        ? SETTINGS_ICONS.eye
+                        : SETTINGS_ICONS.eyeOff;
                 }
             });
         });
@@ -964,7 +971,7 @@ class SettingsManager {
                 const ok = await this._saveApiKey(provider, key);
                 if (ok) {
                     input.value = '';
-                    input.placeholder = 'Guardada ✓';
+                    input.placeholder = 'Clave guardada';
                     setTimeout(() => { input.placeholder = 'sk-... o clave API'; }, 2000);
                 }
             });
@@ -984,7 +991,7 @@ class SettingsManager {
             if (resp.ok && data.success) {
                 const statusEl = document.getElementById(`key-status-${provider}`);
                 if (statusEl) {
-                    statusEl.textContent = '✓ guardada';
+                    statusEl.innerHTML = `${SETTINGS_ICONS.check} guardada`;
                     statusEl.className = 'api-key-status set';
                 }
                 console.log(`API key guardada: ${provider}`);
@@ -993,7 +1000,7 @@ class SettingsManager {
                 console.error(`Error del servidor guardando key ${provider}:`, data);
                 const statusEl = document.getElementById(`key-status-${provider}`);
                 if (statusEl) {
-                    statusEl.textContent = '✗ error';
+                    statusEl.innerHTML = `${SETTINGS_ICONS.error} error`;
                     statusEl.className = 'api-key-status error';
                 }
                 return false;
@@ -1002,7 +1009,7 @@ class SettingsManager {
             console.error(`Error de red guardando key ${provider}:`, err);
             const statusEl = document.getElementById(`key-status-${provider}`);
             if (statusEl) {
-                statusEl.textContent = '✗ sin conexión';
+                statusEl.innerHTML = `${SETTINGS_ICONS.offline} sin conexión`;
                 statusEl.className = 'api-key-status error';
             }
             return false;
@@ -1425,10 +1432,10 @@ class SettingsManager {
                 const statusEl = document.getElementById(`key-status-${provider}`);
                 if (!statusEl) continue;
                 if (info && info.configured) {
-                    statusEl.textContent = `✓ ${info.masked || 'configurada'}`;
+                    statusEl.innerHTML = `${SETTINGS_ICONS.check} ${this._escapeHtml(info.masked || 'configurada')}`;
                     statusEl.className = 'api-key-status set';
                 } else {
-                    statusEl.textContent = '✗ sin clave';
+                    statusEl.textContent = 'Sin clave';
                     statusEl.className = 'api-key-status unset';
                 }
             }
@@ -2154,7 +2161,7 @@ class SettingsManager {
 
             const expand = document.createElement('span');
             expand.className = 'mcp-server-expand';
-            expand.textContent = '▶';
+            expand.innerHTML = SETTINGS_ICONS.expand;
 
             const nameEl = document.createElement('span');
             nameEl.className = 'mcp-server-name';
@@ -2166,7 +2173,8 @@ class SettingsManager {
             const refreshBtn = document.createElement('button');
             refreshBtn.className = 'mcp-server-btn';
             refreshBtn.title = 'Refrescar';
-            refreshBtn.textContent = '⟳';
+            refreshBtn.innerHTML = SETTINGS_ICONS.refresh;
+            refreshBtn.setAttribute('aria-label', 'Refrescar servidor');
             refreshBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this._refreshMcpServer(server.id || server.name);
@@ -2193,6 +2201,7 @@ class SettingsManager {
             const deleteBtn = document.createElement('button');
             deleteBtn.className = 'mcp-server-btn delete';
             deleteBtn.title = 'Eliminar';
+            deleteBtn.setAttribute('aria-label', 'Eliminar');
             deleteBtn.innerHTML = SETTINGS_ICONS.close;
             deleteBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -2331,7 +2340,7 @@ class SettingsManager {
             this.currentGatewayTelegramCredential = data;
             if (this.gatewayTelegramTokenInput) {
                 this.gatewayTelegramTokenInput.value = '';
-                this.gatewayTelegramTokenInput.placeholder = 'Guardado en vault ✓';
+                this.gatewayTelegramTokenInput.placeholder = 'Guardado en el vault';
             }
             try {
                 const statusResp = await fetch(`${BACKEND_API}/gateway/status`);
@@ -2470,7 +2479,7 @@ class SettingsManager {
             this.currentGatewayDiscordCredential = data;
             if (this.gatewayDiscordTokenInput) {
                 this.gatewayDiscordTokenInput.value = '';
-                this.gatewayDiscordTokenInput.placeholder = 'Guardado en vault ✓';
+                this.gatewayDiscordTokenInput.placeholder = 'Guardado en el vault';
             }
             try {
                 const [statusResp, runtimeResp] = await Promise.all([
@@ -3875,7 +3884,7 @@ class SettingsManager {
         const btn = document.getElementById('btn-save-computer-use');
         if (btn) {
             const orig = btn.textContent;
-            btn.textContent = 'Guardado ✓';
+            btn.textContent = 'Guardado';
             setTimeout(() => { btn.textContent = orig; }, 2000);
         }
     }
@@ -3917,7 +3926,7 @@ class SettingsManager {
 
             const expand = document.createElement('span');
             expand.className = 'crew-card-expand';
-            expand.textContent = '▶';
+            expand.innerHTML = SETTINGS_ICONS.expand;
 
             const name = document.createElement('span');
             name.className = 'crew-card-name';
@@ -3933,6 +3942,7 @@ class SettingsManager {
             const editBtn = document.createElement('button');
             editBtn.className = 'crew-card-btn';
             editBtn.title = 'Editar';
+            editBtn.setAttribute('aria-label', 'Editar');
             editBtn.innerHTML = SETTINGS_ICONS.edit;
             editBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -3942,6 +3952,7 @@ class SettingsManager {
             const deleteBtn = document.createElement('button');
             deleteBtn.className = 'crew-card-btn delete';
             deleteBtn.title = 'Eliminar';
+            deleteBtn.setAttribute('aria-label', 'Eliminar');
             deleteBtn.innerHTML = SETTINGS_ICONS.close;
             deleteBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -3974,7 +3985,7 @@ class SettingsManager {
                 const tbody = document.createElement('tbody');
                 for (const agent of crew.agents) {
                     const tr = document.createElement('tr');
-                    tr.innerHTML = `<td>${this._escapeHtml(agent.role || '?')}</td><td>${this._escapeHtml(agent.model ? `${agent.provider || ''}:${agent.model}` : '(default)')}</td><td>${agent.can_delegate ? '✓' : '—'}</td><td>${agent.max_iterations || 10}</td>`;
+                    tr.innerHTML = `<td>${this._escapeHtml(agent.role || '?')}</td><td>${this._escapeHtml(agent.model ? `${agent.provider || ''}:${agent.model}` : '(default)')}</td><td>${agent.can_delegate ? 'Sí' : 'No'}</td><td>${agent.max_iterations || 10}</td>`;
                     tbody.appendChild(tr);
                 }
                 table.appendChild(tbody);
@@ -4008,7 +4019,7 @@ class SettingsManager {
                 <option value="false" ${!defaults.can_delegate ? 'selected' : ''}>No delega</option>
                 <option value="true" ${defaults.can_delegate ? 'selected' : ''}>Puede delegar</option>
             </select>
-            <button class="crew-role-remove" title="Quitar">${SETTINGS_ICONS.close}</button>
+            <button class="crew-role-remove" type="button" title="Quitar rol" aria-label="Quitar rol">${SETTINGS_ICONS.close}</button>
         `;
 
         entry.querySelector('.crew-role-remove').addEventListener('click', () => entry.remove());

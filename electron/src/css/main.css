@@ -1422,6 +1422,22 @@ body.executing-task .status-bar::after,
     font-variant-numeric: tabular-nums;
 }
 
+.action-status .icon {
+    width: 12px;
+    height: 12px;
+    stroke-width: 2.5;
+}
+
+.screenshot-text .icon,
+.screenshot-error-msg .icon {
+    width: 16px;
+    height: 16px;
+}
+
+.screenshot-text .icon {
+    margin-right: var(--space-2);
+}
+
 .action-running {
     background: var(--accent-soft);
     color: var(--accent-text);
@@ -2449,7 +2465,8 @@ select option {
 }
 
 .setting-subhead {
-    margin-top: var(--space-2);
+    display: block;
+    margin: var(--space-2) 0 var(--space-1);
     font-size: var(--fs-xs);
     font-weight: var(--fw-medium);
     color: var(--text-secondary);
@@ -2457,6 +2474,15 @@ select option {
 
 .setting-subhead:first-child {
     margin-top: 0;
+}
+
+.appearance-field > .setting-subhead {
+    margin: 0;
+}
+
+/* Controles dentro de los envoltorios sin clase del HTML: a todo el ancho. */
+.setting-group div:not([class]) > :is(.setting-select, .setting-input) {
+    width: 100%;
 }
 
 /* Claves API y atajos */
@@ -2474,10 +2500,27 @@ select option {
 }
 
 .api-key-row > label {
-    min-width: 72px;
+    flex: 0 0 128px;
+    overflow: hidden;
     font-size: var(--fs-xs);
     font-weight: var(--fw-medium);
     color: var(--text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Guardar queda discreto hasta que hay algo escrito en su fila. */
+.api-key-row .btn-save-key,
+.api-key-row .btn-secondary {
+    border-color: var(--border-strong);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+}
+
+.api-key-row:has(.api-key-input:not(:placeholder-shown)) :is(.btn-save-key, .btn-secondary) {
+    border-color: transparent;
+    background: var(--accent);
+    color: var(--text-on-accent);
 }
 
 .api-key-input-group {

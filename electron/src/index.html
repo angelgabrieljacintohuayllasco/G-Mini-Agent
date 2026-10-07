@@ -165,7 +165,7 @@
                         </div>
                         <div class="code-panel-header-actions">
                             <button id="btn-refresh-code" class="btn-secondary btn-panel-action" title="Recargar workspace">Recargar</button>
-                            <button id="btn-close-code" class="titlebar-btn" title="Cerrar panel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                            <button id="btn-close-code" class="titlebar-btn" type="button" title="Cerrar panel (Esc)" aria-label="Cerrar panel"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-x"></use></svg></button>
                         </div>
                     </div>
 
@@ -367,9 +367,9 @@
                                 <div class="code-section-header canvas-viewer-header">
                                     <span id="canvas-current-title">Selecciona un canvas</span>
                                     <div class="canvas-viewer-actions" style="display:flex;gap:4px;">
-                                        <button id="btn-pin-canvas" class="btn-secondary btn-panel-action" title="Fijar canvas"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M9 4V2h6v2l-1 6 2 2v3H8v-3l2-2z"/></svg></button>
-                                        <button id="btn-canvas-versions" class="btn-secondary btn-panel-action" title="Versiones"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></button>
-                                        <button id="btn-delete-canvas" class="btn-secondary btn-panel-action" title="Eliminar"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button>
+                                        <button id="btn-pin-canvas" class="btn-secondary btn-panel-action" type="button" title="Fijar canvas" aria-label="Fijar canvas"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-pin"></use></svg></button>
+                                        <button id="btn-canvas-versions" class="btn-secondary btn-panel-action" type="button" title="Versiones" aria-label="Versiones"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-layers"></use></svg></button>
+                                        <button id="btn-delete-canvas" class="btn-secondary btn-panel-action" type="button" title="Eliminar canvas" aria-label="Eliminar canvas"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-trash-2"></use></svg></button>
                                     </div>
                                 </div>
                                 <div id="canvas-render-area" class="canvas-render-area">
