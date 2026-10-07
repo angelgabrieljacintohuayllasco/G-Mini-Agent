@@ -3763,8 +3763,8 @@ class AgentCore:
                 friendly = (
                     "⚠️ Cuota de Google Gemini Live agotada. "
                     "Revisa tu plan y facturación en https://aistudio.google.com. "
-                    "También puedes usar el modelo gemini-2.5-flash-native-audio-preview-12-2025 "
-                    "si tienes acceso, o cambiar a modo de voz simulado."
+                    "También puedes usar Vertex AI (voice.vertex_live_model) "
+                    "o cambiar a modo de voz simulado."
                 )
             elif "permission" in raw or "unauthorized" in raw or "api key" in raw:
                 friendly = (
@@ -3774,7 +3774,7 @@ class AgentCore:
             elif "not found" in raw or "does not exist" in raw or "invalid_argument" in raw:
                 friendly = (
                     "⚠️ El modelo de voz en tiempo real no está disponible. "
-                    "Intenta con gemini-2.5-flash-native-audio-preview-12-2025 en Configuración."
+                    "Intenta con gemini-3.8-live en Configuración o usa el modo de voz simulado."
                 )
             else:
                 friendly = f"⚠️ Error en la sesión de voz en tiempo real: {error_msg}"

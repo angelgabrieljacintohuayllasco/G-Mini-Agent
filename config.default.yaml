@@ -461,13 +461,21 @@ voice:
   # Maximo de turnos del bucle agentico por enunciado: tras ejecutar acciones,
   # el modelo hace otro turno para confirmar/continuar. Acota bucles infinitos.
   max_agentic_turns: 5
-  tts_primary: "melotts"    # melotts | elevenlabs | gemini-3.1-flash-tts-preview | gemini-2.5-flash-preview-tts | gemini-2.5-pro-preview-tts | none
-  tts_fallback: "melotts"
+  # edge (gratis, neural) | openai-tts | gemini-3.8-flash-tts | gemini-3.8-flash-lite-tts | elevenlabs | melotts (local) | webspeech | none
+  tts_primary: "edge"
+  tts_fallback: "webspeech"
   tts_speed: 1.0
-  google_voice: "Kore"      # Voz de Google Gemini TTS: Kore | Puck | Charon | Aoede | Zephyr | Fenrir | Leda | Orus | ...
+  edge_voice: "es-PE-CamilaNeural"   # Voces de Edge: es-PE-AlexNeural, es-MX-DaliaNeural, es-ES-ElviraNeural...
+  openai_voice: "coral"
+  openai_tts_model: "gpt-4o-mini-tts"
+  openai_tts_instructions: ""        # estilo opcional: "habla cálido y pausado"
+  google_voice: "Kore"      # Voz de Gemini TTS: Kore | Puck | Charon | Aoede | Zephyr | Fenrir | Leda | Orus | ...
+  vertex_location: "global" # los TTS 3.8 solo existen en global
+  vertex_live_model: "gemini-live-2.5-flash-native-audio"   # o gemini-3.8-live
+  vertex_live_location: "us-central1"                       # la Live API no existe en global
   stt_engine: "faster-whisper"
-  stt_model: "large-v3"
-  stt_language: "es"
+  stt_model: "base"         # tiny | base | small | medium | large-v3 (más grande = más preciso y más pesado)
+  stt_language: "es"        # "auto" para detectar el idioma
   elevenlabs_voice_id: ""
   elevenlabs:
     api_key_vault: "elevenlabs_api"

@@ -4181,3 +4181,43 @@ async def call_connector(connector_id: str, request: Request):
     except ConnectorError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"ok": True, "data": data}
+
+
+# ── Voces: catálogo por motor y vista previa ───────────────────────────
+
+@router.get("/voice/voices")
+async def list_voices(engine: str = Query(default="edge"), locale: str = Query(default="es")):
+    from backend.voice import tts_engines
+    from backend.voice.engine import normalize_tts_engine
+
+    engine_id, _ = normalize_tts_engine(engine)
+    provider = get_tts_engine_descriptor(engine_id).get("provider")
+    if provider == "edge":
+        try:
+            voices = await tts_engines.list_edge_voices(locale or None)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"No se pudo obtener las voces de Edge: {exc}")
+    else:
+        voices = tts_engines.voice_catalog(provider)
+    return {"ok": True, "engine": engine_id, "voices": voices}
+
+
+@router.post("/voice/preview")
+async def preview_voice(request: Request):
+    import base64
+
+    from backend.api.websocket_handler import _agent_core
+    from backend.core.identity import agent_name
+    from backend.voice.engine import VoiceEngine
+
+    body = await _optional_json(request)
+    engine_id = str(body.get("engine") or config.get("voice", "tts_primary", default=DEFAULT_TTS_ENGINE))
+    text = " ".join(str(body.get("text") or "").split())[:300] or f"Hola, soy {agent_name()}. Así sonaría mi voz."
+    voice_engine = getattr(_agent_core, "voice", None) or VoiceEngine()
+    try:
+        audio = await asyncio.wait_for(voice_engine.preview(engine_id, body.get("voice"), text), 60)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc) or "No se pudo generar la muestra")
+    if not audio:
+        raise HTTPException(status_code=502, detail="El motor no devolvió audio")
+    return {"ok": True, "format": "wav", "audio_base64": base64.b64encode(audio).decode("ascii")}

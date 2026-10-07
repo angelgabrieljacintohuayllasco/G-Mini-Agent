@@ -18,53 +18,51 @@ from loguru import logger
 from backend.config import config
 
 # -- TTS Engines --------------------------------------------------------------
+# Los SDK pesados se importan recién al elegir ese motor: importar MeloTTS
+# carga torch y costaba 10-50 s de arranque aunque el usuario no lo usara.
 
-HAS_MELOTTS = False
-HAS_ELEVENLABS = False
+import importlib.util
 
-try:
-    from melo.api import TTS as MeloTTSModel
+from backend.voice import tts_engines
 
-    HAS_MELOTTS = True
-except ImportError:
-    pass
+HAS_MELOTTS = importlib.util.find_spec("melo") is not None
+HAS_ELEVENLABS = importlib.util.find_spec("elevenlabs") is not None
 
-try:
-    from elevenlabs import AsyncElevenLabs
-
-    HAS_ELEVENLABS = True
-except ImportError:
-    pass
-
-DEFAULT_TTS_ENGINE = "melotts"
-DEFAULT_GOOGLE_TTS_ENGINE = "gemini-2.5-flash-preview-tts"
+DEFAULT_TTS_ENGINE = "edge" if tts_engines.HAS_EDGE_TTS else "webspeech"
+DEFAULT_GOOGLE_TTS_ENGINE = "gemini-3.8-flash-tts"
 DEFAULT_ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
 DEFAULT_GOOGLE_VOICE = "Kore"
+DEFAULT_EDGE_VOICE = "es-PE-CamilaNeural"
+HEAVY_TTS_ENGINES = {"melotts"}
 
-# Voces disponibles en Google Gemini TTS (https://ai.google.dev/gemini-api/docs/speech-generation)
-GOOGLE_VOICE_CATALOG: list[dict] = [
-    {"id": "Kore",             "description": "Firme"},
-    {"id": "Puck",             "description": "Animado"},
-    {"id": "Charon",          "description": "Informativo"},
-    {"id": "Aoede",           "description": "Fluido"},
-    {"id": "Zephyr",          "description": "Brillante"},
-    {"id": "Fenrir",          "description": "Enérgico"},
-    {"id": "Leda",            "description": "Juvenil"},
-    {"id": "Orus",            "description": "Firme"},
-    {"id": "Callirrhoe",      "description": "Tranquilo"},
-    {"id": "Autonoe",         "description": "Brillante"},
-    {"id": "Enceladus",       "description": "Suave"},
-    {"id": "Iapetus",         "description": "Claro"},
-    {"id": "Umbriel",         "description": "Tranquilo"},
-    {"id": "Achernar",        "description": "Suave"},
-    {"id": "Alnilam",         "description": "Firme"},
-    {"id": "Schedar",         "description": "Equilibrado"},
-    {"id": "Sulafat",         "description": "Cálido"},
-    {"id": "Sadaltager",      "description": "Conocedor"},
-    {"id": "Achird",          "description": "Amigable"},
-]
+# Voces de Gemini TTS (30, guía oficial de estilos).
+GOOGLE_VOICE_CATALOG: list[dict] = tts_engines.GEMINI_VOICES
 
 TTS_ENGINE_CATALOG: dict[str, dict[str, Any]] = {
+    "edge": {
+        "label": "Voces neuronales de Microsoft Edge (gratis)",
+        "provider": "edge",
+        "online": True,
+        "supports_numeric_speed": True,
+    },
+    "openai-tts": {
+        "label": "OpenAI gpt-4o-mini-tts (online)",
+        "provider": "openai",
+        "online": True,
+        "supports_numeric_speed": True,
+    },
+    "gemini-3.8-flash-tts": {
+        "label": "Gemini 3.8 Flash TTS (online)",
+        "provider": "google",
+        "online": True,
+        "supports_numeric_speed": False,
+    },
+    "gemini-3.8-flash-lite-tts": {
+        "label": "Gemini 3.8 Flash Lite TTS (online, económico)",
+        "provider": "google",
+        "online": True,
+        "supports_numeric_speed": False,
+    },
     "melotts": {
         "label": "MeloTTS (offline)",
         "provider": "local",
@@ -76,24 +74,6 @@ TTS_ENGINE_CATALOG: dict[str, dict[str, Any]] = {
         "provider": "elevenlabs",
         "online": True,
         "supports_numeric_speed": True,
-    },
-    "gemini-3.1-flash-tts-preview": {
-        "label": "Gemini 3.1 Flash TTS (online)",
-        "provider": "google",
-        "online": True,
-        "supports_numeric_speed": False,
-    },
-    "gemini-2.5-flash-preview-tts": {
-        "label": "Gemini 2.5 Flash TTS (online)",
-        "provider": "google",
-        "online": True,
-        "supports_numeric_speed": False,
-    },
-    "gemini-2.5-pro-preview-tts": {
-        "label": "Gemini 2.5 Pro TTS (online)",
-        "provider": "google",
-        "online": True,
-        "supports_numeric_speed": False,
     },
     "webspeech": {
         "label": "Navegador (Web Speech)",
@@ -110,11 +90,17 @@ TTS_ENGINE_CATALOG: dict[str, dict[str, Any]] = {
 }
 
 TTS_ENGINE_LEGACY_MAP = {
-    "gemini-2.5-pro-tts": "gemini-2.5-pro-preview-tts",
-    "gemini-2.5-flash-tts": "gemini-2.5-flash-preview-tts",
-    "gemini-2.5-flash-lite-preview-tts": DEFAULT_GOOGLE_TTS_ENGINE,
+    # Retirados por Google el 2026-11-17: se migran solos al modelo vigente.
+    "gemini-2.5-pro-tts": DEFAULT_GOOGLE_TTS_ENGINE,
+    "gemini-2.5-pro-preview-tts": DEFAULT_GOOGLE_TTS_ENGINE,
+    "gemini-2.5-flash-tts": DEFAULT_GOOGLE_TTS_ENGINE,
+    "gemini-2.5-flash-preview-tts": DEFAULT_GOOGLE_TTS_ENGINE,
+    "gemini-3.1-flash-tts-preview": DEFAULT_GOOGLE_TTS_ENGINE,
+    "gemini-2.5-flash-lite-preview-tts": "gemini-3.8-flash-lite-tts",
     "chirp_3": DEFAULT_GOOGLE_TTS_ENGINE,
     "chirp_2": DEFAULT_GOOGLE_TTS_ENGINE,
+    "openai": "openai-tts",
+    "edge-tts": "edge",
 }
 
 GOOGLE_TTS_ENGINES = {
@@ -249,6 +235,8 @@ class VoiceEngine:
         self._google_client: Any = None
         self._initialized = False
         self._tts_cache: dict[str, bytes] = {}
+        self._tts_loading: asyncio.Task | None = None
+        self._stt_loading: asyncio.Task | None = None
         self._set_tts_status(
             requested_engine="none",
             active_engine="none",
@@ -258,12 +246,13 @@ class VoiceEngine:
         )
 
     async def initialize(self) -> None:
-        """Inicializa los motores de voz configurados."""
+        """Inicializa los motores de voz. Los modelos locales (MeloTTS, Whisper)
+        cargan en segundo plano para no retrasar el arranque del backend."""
         stt_enabled = bool(config.get("voice", "stt_enabled", default=True))
-        await self.reload(reload_stt=stt_enabled)
-        logger.info(f"VoiceEngine inicializado (TTS: {self._tts_engine})")
+        await self.reload(reload_stt=stt_enabled, background=True)
+        logger.info(f"VoiceEngine inicializado (TTS: {self._requested_tts_engine})")
 
-    async def reload(self, *, reload_stt: bool = False) -> None:
+    async def reload(self, *, reload_stt: bool = False, background: bool = False) -> None:
         """Recarga la configuracion de voz sin recrear AgentCore."""
         raw_requested_engine = config.get("voice", "tts_primary", default=DEFAULT_TTS_ENGINE)
         migration_warnings = migrate_voice_config()
@@ -284,12 +273,23 @@ class VoiceEngine:
         )
 
         self._reset_tts_runtime()
-        await self._init_tts(requested_engine, warnings=warnings)
+        if background and requested_engine in HEAVY_TTS_ENGINES:
+            self._requested_tts_engine = requested_engine
+            self._set_tts_status(
+                requested_engine=requested_engine, active_engine="none", available=False,
+                reason="loading", message="Cargando el modelo de voz local...", warnings=warnings,
+            )
+            self._tts_loading = asyncio.create_task(self._init_tts(requested_engine, warnings=warnings))
+        else:
+            await self._init_tts(requested_engine, warnings=warnings)
 
         if reload_stt:
             self._stt_model = None
             if bool(config.get("voice", "stt_enabled", default=True)):
-                await self._init_stt()
+                if background:
+                    self._stt_loading = asyncio.create_task(self._init_stt())
+                else:
+                    await self._init_stt()
 
         self._initialized = True
         logger.info(
@@ -303,6 +303,9 @@ class VoiceEngine:
         )
 
     def _reset_tts_runtime(self) -> None:
+        if self._tts_loading is not None and not self._tts_loading.done():
+            self._tts_loading.cancel()
+        self._tts_loading = None
         self._tts_engine = "none"
         self._requested_tts_engine = "none"
         self._melo_model = None
@@ -380,7 +383,11 @@ class VoiceEngine:
             )
             return
 
-        if preference == "melotts":
+        if preference == "edge":
+            ok, reason, message = self._setup_edge()
+        elif preference == "openai-tts":
+            ok, reason, message = self._setup_openai_tts()
+        elif preference == "melotts":
             ok, reason, message = await self._setup_melotts()
         elif preference == "elevenlabs":
             ok, reason, message = await self._setup_elevenlabs()
@@ -430,6 +437,18 @@ class VoiceEngine:
             f"requested_engine={preference}, reason={reason}, message={message}"
         )
 
+    def _setup_edge(self) -> tuple[bool, str, str]:
+        if not tts_engines.HAS_EDGE_TTS:
+            return False, "missing_dependency", "Falta el paquete edge-tts (pip install edge-tts)."
+        self._tts_engine = "edge"
+        return True, "ready", "Voces de Edge listas."
+
+    def _setup_openai_tts(self) -> tuple[bool, str, str]:
+        if not config.get_api_key("openai_api"):
+            return False, "missing_key", "Falta la API key de OpenAI para usar este motor."
+        self._tts_engine = "openai-tts"
+        return True, "ready", "OpenAI TTS listo."
+
     async def _setup_melotts(self) -> tuple[bool, str, str]:
         if not HAS_MELOTTS:
             return False, "missing_dependency", "MeloTTS no esta instalado."
@@ -437,11 +456,13 @@ class VoiceEngine:
         try:
             lang = config.get("voice", "melotts_language", default="ES")
             device = config.get("voice", "melotts_device", default="auto")
-            loop = asyncio.get_running_loop()
-            self._melo_model = await loop.run_in_executor(
-                None,
-                lambda: MeloTTSModel(language=lang, device=device),
-            )
+
+            def _load():
+                from melo.api import TTS as MeloTTSModel
+
+                return MeloTTSModel(language=lang, device=device)
+
+            self._melo_model = await asyncio.to_thread(_load)
             self._melo_speaker_ids = dict(self._melo_model.hps.data.spk2id.items())
             self._melo_language = lang
             self._tts_engine = "melotts"
@@ -466,6 +487,8 @@ class VoiceEngine:
             )
 
         try:
+            from elevenlabs import AsyncElevenLabs
+
             self._eleven_client = AsyncElevenLabs(api_key=api_key)
             self._tts_engine = "elevenlabs"
             logger.info("TTS: ElevenLabs inicializado")
@@ -475,10 +498,10 @@ class VoiceEngine:
             return False, "init_error", f"ElevenLabs no pudo inicializarse: {exc}"
 
     async def _setup_google(self, model: str) -> tuple[bool, str, str]:
-        # Determinar backend: Vertex AI o AI Studio (hereda config del provider Google)
+        # Vertex AI si el chat usa Vertex o el provider Google está en modo Vertex.
         google_backend = config.get("providers", "google", "backend", default="ai_studio")
-
-        if google_backend == "vertex_ai":
+        chat_provider = str(config.get("model_router", "default_provider", default="") or "")
+        if google_backend == "vertex_ai" or chat_provider == "vertex" or not config.get_api_key("google_api"):
             return await self._setup_google_vertex(model)
 
         # AI Studio: usa API key
@@ -513,52 +536,34 @@ class VoiceEngine:
             return False, "init_error", f"Google TTS no pudo inicializarse: {exc}"
 
     async def _setup_google_vertex(self, model: str) -> tuple[bool, str, str]:
-        """Configura Google TTS via Vertex AI (misma config que el provider LLM)."""
-        import os
-
-        project_id = config.get("providers", "google", "project_id", default="")
-        raw_location = config.get("providers", "google", "location", default="us-central1")
-        # "global" no funciona para Vertex AI generative models — fallback a us-central1
-        location = raw_location if raw_location != "global" else "us-central1"
-        credentials_file = config.get("providers", "google", "credentials_file", default="")
-
-        logger.info(
-            "VoiceEngine._setup_google_vertex start: "
-            f"requested_model={model}, project_id={project_id}, location={location}"
-        )
-
-        if not project_id:
-            logger.warning(
-                "VoiceEngine._setup_google_vertex missing project_id: "
-                f"requested_model={model}"
-            )
-            return False, "missing_project", (
-                "Vertex AI requiere project_id. Configúralo en Ajustes > Google > Project ID."
-            )
-
+        """Google TTS vía Vertex AI con la misma cuenta que el proveedor vertex.
+        Los modelos TTS 3.8 solo están en la ubicación global (en us-central1 dan 404)."""
         try:
             from google import genai
+            from google.genai import types
 
-            if credentials_file:
-                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_file
+            from backend.providers import gcp_auth
 
-            self._google_client = genai.Client(
-                vertexai=True,
-                project=project_id,
-                location=location,
-            )
+            section = config.get("providers", "vertex", default={}) or {}
+            settings = await asyncio.to_thread(gcp_auth.resolve_vertex_settings, section)
+            if not settings.project:
+                return False, "missing_project", (
+                    "Vertex AI necesita un proyecto: inicia sesión con gcloud o configura una cuenta de servicio."
+                )
+            location = str(config.get("voice", "vertex_location", default="") or "global")
+            kwargs: dict[str, Any] = {
+                "vertexai": True, "project": settings.project, "location": location,
+                "http_options": types.HttpOptions(timeout=60_000),
+            }
+            credentials = gcp_auth.load_credentials(settings.credentials_file)
+            if credentials is not None:
+                kwargs["credentials"] = credentials
+            self._google_client = genai.Client(**kwargs)
             self._tts_engine = model
-            logger.info(
-                "VoiceEngine._setup_google_vertex success: "
-                f"requested_model={model}, active_engine={self._tts_engine}, "
-                f"project={project_id}, location={location}"
-            )
+            logger.info(f"Google TTS vía Vertex: {model} (project={settings.project}, location={location})")
             return True, "ready", f"Google TTS listo ({model}, Vertex AI)."
         except Exception as exc:
-            logger.warning(
-                "VoiceEngine._setup_google_vertex failed: "
-                f"requested_model={model}, project={project_id}, error={exc}"
-            )
+            logger.warning(f"Google TTS (Vertex) no pudo inicializarse: {exc}")
             return False, "init_error", f"Google TTS (Vertex AI) no pudo inicializarse: {exc}"
 
     async def _init_stt(self) -> None:
@@ -569,7 +574,7 @@ class VoiceEngine:
             return
 
         try:
-            model_size = config.get("voice", "whisper_model", default="base")
+            model_size = config.get("voice", "whisper_model", default=None) or config.get("voice", "stt_model", default="base")
             device = config.get("voice", "whisper_device", default="cpu")
             compute_type = config.get("voice", "whisper_compute", default="int8")
 
@@ -594,13 +599,18 @@ class VoiceEngine:
         """
         import hashlib
 
+        if self._tts_loading is not None and not self._tts_loading.done():
+            await self._tts_loading
+
         supports_numeric_speed = self._tts_runtime_status.get("supports_numeric_speed", False)
         effective_speed = float(speed if speed is not None else config.get("voice", "tts_speed", default=1.0))
         if not supports_numeric_speed:
             effective_speed = 1.0
 
+        # La clave incluye la voz efectiva: antes cambiar de voz seguía repitiendo la anterior.
+        resolved_voice = self._resolve_voice(voice_id)
         cache_key = hashlib.md5(
-            f"{text}|{self._tts_engine}|{voice_id}|{effective_speed}".encode()
+            f"{text}|{self._tts_engine}|{resolved_voice}|{effective_speed}".encode()
         ).hexdigest()
 
         if cache_key in self._tts_cache:
@@ -611,12 +621,16 @@ class VoiceEngine:
             return None  # el navegador habla el texto; no hay audio de servidor
 
         result: bytes | None = None
-        if self._tts_engine == "melotts":
+        if self._tts_engine == "edge":
+            result = await self._tts_edge(text, resolved_voice, effective_speed)
+        elif self._tts_engine == "openai-tts":
+            result = await self._tts_openai(text, resolved_voice, effective_speed)
+        elif self._tts_engine == "melotts":
             result = await self._tts_melo(text, effective_speed)
         elif self._tts_engine == "elevenlabs":
-            result = await self._tts_elevenlabs(text, voice_id)
+            result = await self._tts_elevenlabs(text, resolved_voice, effective_speed)
         elif self._tts_engine in GOOGLE_TTS_ENGINES:
-            result = await self._tts_google(text, voice_id)
+            result = await self._tts_google(text, resolved_voice)
         else:
             logger.warning("No hay motor TTS disponible")
             return None
@@ -628,6 +642,41 @@ class VoiceEngine:
             self._tts_cache[cache_key] = result
 
         return result
+
+    def _resolve_voice(self, voice_id: str | None) -> str:
+        if voice_id:
+            return str(voice_id)
+        engine = self._tts_engine
+        if engine == "edge":
+            return str(config.get("voice", "edge_voice", default="") or DEFAULT_EDGE_VOICE)
+        if engine == "openai-tts":
+            return str(config.get("voice", "openai_voice", default="") or tts_engines.DEFAULT_OPENAI_VOICE)
+        if engine == "elevenlabs":
+            return str(config.get("voice", "elevenlabs_voice_id", default="") or DEFAULT_ELEVENLABS_VOICE_ID)
+        if engine in GOOGLE_TTS_ENGINES:
+            return str(config.get("voice", "google_voice", default="") or DEFAULT_GOOGLE_VOICE)
+        return ""
+
+    async def _tts_edge(self, text: str, voice: str, speed: float) -> bytes | None:
+        try:
+            return await tts_engines.synthesize_edge(text, voice, speed=speed)
+        except Exception as exc:
+            logger.error(f"Edge TTS error: {exc}")
+            return None
+
+    async def _tts_openai(self, text: str, voice: str, speed: float) -> bytes | None:
+        try:
+            return await tts_engines.synthesize_openai(
+                text,
+                api_key=config.get_api_key("openai_api") or "",
+                voice=voice,
+                model=str(config.get("voice", "openai_tts_model", default="") or tts_engines.DEFAULT_OPENAI_TTS_MODEL),
+                instructions=str(config.get("voice", "openai_tts_instructions", default="") or ""),
+                speed=speed,
+            )
+        except Exception as exc:
+            logger.error(f"OpenAI TTS error: {exc}")
+            return None
 
     async def _tts_melo(self, text: str, speed: float = 1.0) -> bytes | None:
         """TTS con MeloTTS (offline)."""
@@ -658,26 +707,24 @@ class VoiceEngine:
             logger.error(f"MeloTTS error: {exc}")
             return None
 
-    async def _tts_elevenlabs(self, text: str, voice_id: str | None = None) -> bytes | None:
-        """TTS con ElevenLabs (online)."""
+    def _elevenlabs_stream(self, text: str, voice_id: str, speed: float = 1.0):
+        """convert() devuelve un iterador asíncrono: hacerle await (como antes)
+        lanzaba TypeError y ElevenLabs nunca producía audio."""
+        kwargs: dict[str, Any] = {
+            "voice_id": voice_id,
+            "text": text,
+            "model_id": str(config.get("voice", "elevenlabs", "model", default="") or "eleven_multilingual_v2"),
+            "output_format": "pcm_24000",
+        }
+        if abs(float(speed) - 1.0) > 0.01:
+            kwargs["voice_settings"] = {"speed": max(0.7, min(1.2, float(speed)))}
+        return self._eleven_client.text_to_speech.convert(**kwargs)
+
+    async def _tts_elevenlabs(self, text: str, voice_id: str, speed: float = 1.0) -> bytes | None:
+        """TTS con ElevenLabs (online). PCM 24 kHz envuelto en WAV."""
         try:
-            resolved_voice_id = (
-                voice_id
-                or config.get("voice", "elevenlabs_voice_id", default="")
-                or DEFAULT_ELEVENLABS_VOICE_ID
-            )
-
-            audio = await self._eleven_client.text_to_speech.convert(
-                voice_id=resolved_voice_id,
-                text=text,
-                model_id="eleven_multilingual_v2",
-                output_format="wav_24000",
-            )
-
-            chunks = []
-            async for chunk in audio:
-                chunks.append(chunk)
-            return b"".join(chunks)
+            chunks = [chunk async for chunk in self._elevenlabs_stream(text, voice_id, speed)]
+            return _wrap_pcm16_as_wav(b"".join(chunks), sample_rate=24000) if chunks else None
         except Exception as exc:
             logger.error(f"ElevenLabs error: {exc}")
             return None
@@ -735,18 +782,8 @@ class VoiceEngine:
         """TTS streaming - genera chunks de audio progresivamente."""
         if self._tts_engine == "elevenlabs" and self._eleven_client:
             try:
-                voice_id = (
-                    config.get("voice", "elevenlabs_voice_id", default="")
-                    or DEFAULT_ELEVENLABS_VOICE_ID
-                )
-                audio = await self._eleven_client.text_to_speech.convert(
-                    voice_id=voice_id,
-                    text=text,
-                    model_id="eleven_multilingual_v2",
-                    output_format="wav_24000",
-                )
-                async for chunk in audio:
-                    yield chunk
+                async for chunk in self._elevenlabs_stream(text, self._resolve_voice(None)):
+                    yield chunk  # PCM16 24 kHz
             except Exception as exc:
                 logger.error(f"ElevenLabs streaming error: {exc}")
         else:
@@ -759,6 +796,8 @@ class VoiceEngine:
         Transcribe audio a texto.
         Acepta audio WAV/MP3/OGG bytes.
         """
+        if self._stt_loading is not None and not self._stt_loading.done():
+            await self._stt_loading  # el primer uso espera la carga en segundo plano
         if not self._stt_model:
             logger.warning("STT no disponible")
             return ""
@@ -768,9 +807,10 @@ class VoiceEngine:
 
             def _transcribe() -> str:
                 buf = io.BytesIO(audio_bytes)
+                language = str(config.get("voice", "stt_language", default="es") or "es").strip().lower()
                 segments, _info = self._stt_model.transcribe(
                     buf,
-                    language="es",
+                    language=None if language == "auto" else language,
                     beam_size=5,
                     vad_filter=True,
                 )
@@ -864,6 +904,27 @@ class VoiceEngine:
             )
 
         return visemes
+
+    async def preview(self, engine_id: str, voice: str | None, text: str) -> bytes | None:
+        """Muestra de una voz sin cambiar la configuración (selector con "Escuchar")."""
+        engine_id, _ = normalize_tts_engine(engine_id)
+        if engine_id == self._tts_engine:
+            return await self.synthesize(text, voice_id=voice or None)
+        if engine_id == "edge":
+            return await tts_engines.synthesize_edge(text, voice or DEFAULT_EDGE_VOICE)
+        if engine_id == "openai-tts":
+            return await tts_engines.synthesize_openai(
+                text, api_key=config.get_api_key("openai_api") or "", voice=voice or None
+            )
+        if engine_id in GOOGLE_TTS_ENGINES or engine_id == "elevenlabs":
+            temp = VoiceEngine()
+            ok, _reason, message = await (
+                temp._setup_elevenlabs() if engine_id == "elevenlabs" else temp._setup_google(engine_id)
+            )
+            if not ok:
+                raise RuntimeError(message)
+            return await temp.synthesize(text, voice_id=voice or None)
+        raise RuntimeError("Este motor no tiene vista previa desde el backend.")
 
     @property
     def tts_available(self) -> bool:

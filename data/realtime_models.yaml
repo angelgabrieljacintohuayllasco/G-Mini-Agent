@@ -1,8 +1,9 @@
+# Los Live preview de AI Studio (gemini-3.1-flash-live-preview y
+# gemini-2.5-flash-native-audio-preview-12-2025) se retiran el 2026-11-17.
 google:
-  default: gemini-3.1-flash-live-preview
+  default: gemini-3.8-live
   models:
-  - gemini-2.5-flash-native-audio-preview-12-2025
-  - gemini-3.1-flash-live-preview
+  - gemini-3.8-live
 openai:
   default: gpt-realtime-1.5
   models:

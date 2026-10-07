@@ -41,7 +41,7 @@ class RealTimeVoice:
     Voz en tiempo real via WebSocket.
     Soporta:
     - OpenAI Realtime API (gpt-realtime-1.5, gpt-realtime-mini)
-    - Google Gemini Live API (gemini-3.1-flash-live-preview)
+    - Google Gemini Live API (gemini-3.8-live; en Vertex, voice.vertex_live_model)
     - xAI Voice Agent API (wss://api.x.ai/v1/realtime)
     """
 
@@ -72,13 +72,9 @@ class RealTimeVoice:
                     "default": "gpt-realtime-1.5",
                 },
                 "google": {
-                    # IDs oficiales según documentación Google AI (abril 2026)
-                    # Los modelos Google se validan además vía live_api en models.yaml
-                    "models": [
-                        "gemini-2.5-flash-native-audio-preview-12-2025",
-                        "gemini-3.1-flash-live-preview",
-                    ],
-                    "default": "gemini-3.1-flash-live-preview",
+                    # Los preview de AI Studio se retiran el 2026-11-17.
+                    "models": ["gemini-3.8-live"],
+                    "default": "gemini-3.8-live",
                 },
                 "xai": {
                     "models": ["voice-agent"],
@@ -97,15 +93,34 @@ class RealTimeVoice:
         return cls._cached_providers
 
     @staticmethod
+    def uses_vertex() -> bool:
+        """Live de Google vía Vertex: el chat usa el provider vertex o Google en modo Vertex."""
+        return (
+            config.get("providers", "google", "backend", default="ai_studio") == "vertex_ai"
+            or str(config.get("model_router", "default_provider", default="") or "") == "vertex"
+        )
+
+    @staticmethod
+    def vertex_project() -> str:
+        from backend.providers import gcp_auth
+
+        try:
+            settings = gcp_auth.resolve_vertex_settings(config.get("providers", "vertex", default={}) or {})
+        except Exception:
+            return ""
+        return settings.project or str(config.get("providers", "google", "project_id", default="") or "")
+
+    @staticmethod
     def resolve_rt_provider(text_provider: str) -> str | None:
         """Dado el provider de texto actual, retorna el provider RT correspondiente o None."""
+        if text_provider == "vertex":
+            return "google" if RealTimeVoice.vertex_project() else None
         if text_provider in RealTimeVoice.get_realtime_providers():
             # Vertex AI backend doesn't need an API key — uses ADC
             if text_provider == "google":
                 backend = config.get("providers", "google", "backend", default="ai_studio")
                 if backend == "vertex_ai":
-                    project_id = config.get("providers", "google", "project_id", default="")
-                    if project_id:
+                    if RealTimeVoice.vertex_project():
                         return text_provider
                 else:
                     if config.get_api_key("google_api"):
@@ -125,9 +140,8 @@ class RealTimeVoice:
         key_map = {"openai": "openai_api", "xai": "xai_api"}
         for prov, info in RealTimeVoice.get_realtime_providers().items():
             if prov == "google":
-                backend = config.get("providers", "google", "backend", default="ai_studio")
-                if backend == "vertex_ai":
-                    if config.get("providers", "google", "project_id", default=""):
+                if RealTimeVoice.uses_vertex():
+                    if RealTimeVoice.vertex_project():
                         available[prov] = info["default"]
                 elif config.get_api_key("google_api"):
                     available[prov] = info["default"]
@@ -796,9 +810,7 @@ class RealTimeVoice:
         - AI Studio: usa API key en la URL (generativelanguage.googleapis.com)
         - Vertex AI: usa Bearer token OAuth (aiplatform.googleapis.com)
         """
-        backend = config.get("providers", "google", "backend", default="ai_studio")
-
-        if backend == "vertex_ai":
+        if self.uses_vertex():
             return await self._connect_google_vertex()
 
         # ── AI Studio (API key) ──
@@ -869,8 +881,8 @@ class RealTimeVoice:
         logger.info(f"Google Gemini Live conectado (modelo: {model})")
         return True
 
-    # Vertex AI Live API uses different model IDs than AI Studio.
-    # Only gemini-live-2.5-flash-native-audio is available on Vertex AI as of June 2026.
+    # Vertex AI Live API (verificado 2026-10-07): gemini-live-2.5-flash-native-audio
+    # (GA, el probado con las tools) y gemini-3.8-live; ambos solo en regiones, no en global.
     VERTEX_LIVE_MODEL = "gemini-live-2.5-flash-native-audio"
 
     async def _connect_google_vertex(self) -> bool:
@@ -879,12 +891,17 @@ class RealTimeVoice:
         Usa el SDK que maneja autenticación automáticamente (ADC o credentials_file).
         El modelo en Vertex AI Live API es gemini-live-2.5-flash-native-audio (no los preview de AI Studio).
         """
-        project_id = config.get("providers", "google", "project_id", default="")
-        location = config.get("providers", "google", "location", default="global")
-        credentials_file = config.get("providers", "google", "credentials_file", default="")
+        from backend.providers import gcp_auth
+
+        settings = await asyncio.to_thread(
+            gcp_auth.resolve_vertex_settings, config.get("providers", "vertex", default={}) or {}
+        )
+        project_id = settings.project or config.get("providers", "google", "project_id", default="")
+        location = str(config.get("voice", "vertex_live_location", default="") or settings.location or "us-central1")
+        credentials_file = settings.credentials_file or config.get("providers", "google", "credentials_file", default="")
 
         if not project_id:
-            logger.error("Vertex AI Live API requiere project_id configurado")
+            logger.error("Vertex AI Live API requiere un proyecto (gcloud o cuenta de servicio)")
             return False
 
         # Live API NO funciona en "global" — necesita región específica
@@ -909,7 +926,7 @@ class RealTimeVoice:
             logger.error(f"No se pudo obtener token OAuth para Vertex AI Live API: {exc}")
             return False
 
-        model = self.VERTEX_LIVE_MODEL
+        model = str(config.get("voice", "vertex_live_model", default="") or self.VERTEX_LIVE_MODEL)
         model_path = f"projects/{project_id}/locations/{live_location}/publishers/google/models/{model}"
 
         url = (

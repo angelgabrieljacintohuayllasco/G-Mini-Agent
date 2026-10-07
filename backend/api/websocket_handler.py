@@ -358,11 +358,10 @@ async def handle_realtime_start(sid: str, data: dict) -> None:
         from backend.config import config as app_config
 
         current_model = app_config.get("model_router", "default_model", default="") or ""
-        google_backend = app_config.get("providers", "google", "backend", default="ai_studio")
 
         def _model_is_rt(prov: str) -> bool:
             """Verifica si el modelo actual es un modelo RT nativo del provider."""
-            if prov == "google" and google_backend == "vertex_ai":
+            if prov == "google" and RealTimeVoice.uses_vertex():
                 try:
                     from pathlib import Path as _Prt
                     import yaml as _yrt
@@ -372,14 +371,14 @@ async def handle_realtime_start(sid: str, data: dict) -> None:
                     _gm = _cat.get("llm", {}).get("google", {})
                     _md = _gm.get(current_model, {}) if isinstance(_gm, dict) else {}
                     has_live = bool(_md.get("features", {}).get("live_api", False))
-                    return has_live and bool(app_config.get("providers", "google", "project_id", default=""))
+                    return has_live and bool(RealTimeVoice.vertex_project())
                 except Exception:
                     return False
             rt_info = RealTimeVoice.get_realtime_providers().get(prov, {})
             return current_model in rt_info.get("models", [])
 
         # Intentar resolver provider RT nativo
-        if provider in ("openai", "google", "xai"):
+        if provider in ("openai", "google", "xai", "vertex"):
             resolved = RealTimeVoice.resolve_rt_provider(provider)
             if resolved and _model_is_rt(resolved):
                 rt_provider = resolved
