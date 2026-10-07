@@ -611,6 +611,9 @@ class RealTimeVoice:
         self._on_error_callback: Callable | None = None  # Errores fatales (quota, auth, modelo inválido)
         self._on_interrupt_callback: Callable | None = None  # Barge-in: avisa al frontend que vacíe el buffer de audio
         self._on_ready_callback: Callable | None = None  # Sesión lista para escuchar (setupComplete): el front da el cue audible
+        self._on_stopped_callback: Callable | None = None  # La sesión terminó sin que el usuario la detuviera
+        self._stop_notified: bool = False
+        self._start_lock = asyncio.Lock()  # Dos inicios seguidos (doble clic) no abren dos sesiones
 
     async def start_session(
         self,
@@ -625,16 +628,33 @@ class RealTimeVoice:
         on_error: Callable | None = None,
         on_interrupt: Callable | None = None,
         on_ready: Callable | None = None,
+        on_stopped: Callable | None = None,
     ) -> bool:
         """
         Inicia una sesión de voz en tiempo real.
         provider: "openai", "google", "xai"
         conversation_history: lista de {role, content} para inyectar contexto previo (Google RT).
+        on_stopped(reason): la sesión terminó sola (error, red, reconexión agotada).
         """
         if not HAS_WEBSOCKETS:
             logger.error("websockets no instalado")
             return False
 
+        async with self._start_lock:
+            if self._active or self._ws is not None or (self._task and not self._task.done()):
+                logger.info("RT: ya había una sesión abierta; se cierra antes de iniciar otra")
+                await self.stop_session()
+            return await self._start_session_locked(
+                provider, on_audio, on_text, on_user_text, on_tool_call, voice, on_turn_complete,
+                conversation_history, on_error, on_interrupt, on_ready, on_stopped,
+            )
+
+    async def _start_session_locked(
+        self, provider, on_audio, on_text, on_user_text, on_tool_call, voice, on_turn_complete,
+        conversation_history, on_error, on_interrupt, on_ready, on_stopped,
+    ) -> bool:
+        self._on_stopped_callback = on_stopped
+        self._stop_notified = False
         self._on_audio_callback = on_audio
         self._on_text_callback = on_text
         self._on_user_text_callback = on_user_text
@@ -815,93 +835,42 @@ class RealTimeVoice:
         return base_tools + [{"google_search": {}}]
 
     async def _connect_google(self) -> bool:
-        """Conecta a Google Gemini Live API (WebSocket directo).
-
-        Soporta dos backends:
-        - AI Studio: usa API key en la URL (generativelanguage.googleapis.com)
-        - Vertex AI: usa Bearer token OAuth (aiplatform.googleapis.com)
-        """
-        if self.uses_vertex():
-            return await self._connect_google_vertex()
-
-        # ── AI Studio (API key) ──
-        api_key = config.get_api_key("google_api")
-        if not api_key:
-            logger.error("API key de Google no disponible para RT")
+        """Conecta a Gemini Live: AI Studio (API key) o Vertex AI (OAuth), según la config."""
+        model_name = await self._open_google_socket()
+        if not model_name:
             return False
-
-        url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={api_key}"
-
-        self._ws = await websockets.connect(url)
         self._active = True
-
-        model = self.get_realtime_providers()["google"]["default"]
-        setup_msg: dict[str, Any] = {
-            "setup": {
-                "model": f"models/{model}",
-                "generationConfig": {
-                    "responseModalities": ["AUDIO"],
-                    "speechConfig": {
-                        "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self._voice}},
-                    },
-                },
-                "systemInstruction": {
-                    "parts": [{"text": self._get_google_system_prompt()}],
-                },
-                "outputAudioTranscription": {},
-                "inputAudioTranscription": {},
-                "tools": self._get_rt_tools(),
-            },
-        }
-
-        # ── Context Window Compression: extiende sesiones audio+video de 2min a ilimitado ──
-        # Ref: https://ai.google.dev/gemini-api/docs/live-api/session-management#context-window-compression
-        setup_msg["setup"]["contextWindowCompression"] = {
-            "slidingWindow": {},
-        }
-
-        # ── Session Resumption: SIEMPRE habilitado para recibir handles y poder reconectar ──
-        # Ref: https://ai.google.dev/gemini-api/docs/live-api/session-management#session-resumption
-        # Los tokens son válidos 2 horas tras la última sesión.
-        if self._session_resumption_handle:
-            setup_msg["setup"]["sessionResumption"] = {
-                "handle": self._session_resumption_handle,
-            }
-            logger.info(f"Google RT: reanudando sesión con handle {self._session_resumption_handle[:20]}...")
-        else:
-            # Habilitar sessionResumption sin handle para sesiones nuevas (así recibimos handles)
-            setup_msg["setup"]["sessionResumption"] = {}
-            # historyConfig: SOLO para sesiones nuevas (sin handle de reanudación).
-            # Al reanudar, Google restaura el contexto automáticamente — NO inyectar historial de nuevo
-            # o Google devuelve 1007 "invalid argument" al recibir clientContent duplicado.
-            # Ref: https://ai.google.dev/gemini-api/docs/live-api/session-management#session-resumption
-            if self._conversation_history:
-                setup_msg["setup"]["historyConfig"] = {
-                    "initialHistoryInClientContent": True,
-                }
-
-        await self._ws.send(json.dumps(setup_msg))
-
+        await self._ws.send(json.dumps(self._google_setup_message(model_name)))
         # Historial pendiente SOLO si es sesión nueva (al reanudar, el contexto ya está en el servidor)
         self._history_pending = bool(self._conversation_history and not self._session_resumption_handle)
-        # _google_ready siempre empieza en False — se activa ÚNICAMENTE al recibir setupComplete
-        # (no setear True aquí aunque no haya historial, para evitar que screen stream envíe antes de setupComplete)
+        # _google_ready se activa ÚNICAMENTE al recibir setupComplete (gate para audio y pantalla)
         self._google_ready = False
-
         self._task = asyncio.create_task(self._listen_loop())
-        logger.info(f"Google Gemini Live conectado (modelo: {model})")
+        logger.info(f"Gemini Live conectado ({'Vertex AI' if self.uses_vertex() else 'AI Studio'}: {model_name})")
         return True
 
     # Vertex AI Live API (verificado 2026-10-07): gemini-live-2.5-flash-native-audio
     # (GA, el probado con las tools) y gemini-3.8-live; ambos solo en regiones, no en global.
     VERTEX_LIVE_MODEL = "gemini-live-2.5-flash-native-audio"
 
-    async def _connect_google_vertex(self) -> bool:
-        """Conecta a Google Gemini Live API via Vertex AI (google-genai SDK).
+    async def _open_google_socket(self) -> str | None:
+        """Abre el WebSocket de Gemini Live y devuelve el modelo para el setup (None sin credenciales).
 
-        Usa el SDK que maneja autenticación automáticamente (ADC o credentials_file).
-        El modelo en Vertex AI Live API es gemini-live-2.5-flash-native-audio (no los preview de AI Studio).
+        Lo usan el inicio y la auto-reconexión: así una sesión de Vertex reconecta
+        a Vertex (antes reconectaba a AI Studio con otra cuenta y otro modelo).
         """
+        if not self.uses_vertex():
+            api_key = config.get_api_key("google_api")
+            if not api_key:
+                logger.error("API key de Google no disponible para Gemini Live")
+                return None
+            url = (
+                "wss://generativelanguage.googleapis.com/ws/"
+                f"google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={api_key}"
+            )
+            self._ws = await _ws_connect(url)
+            return f"models/{self.get_realtime_providers()['google']['default']}"
+
         from backend.providers import gcp_auth
 
         settings = await asyncio.to_thread(
@@ -910,79 +879,63 @@ class RealTimeVoice:
         project_id = settings.project or config.get("providers", "google", "project_id", default="")
         location = str(config.get("voice", "vertex_live_location", default="") or settings.location or "us-central1")
         credentials_file = settings.credentials_file or config.get("providers", "google", "credentials_file", default="")
-
         if not project_id:
             logger.error("Vertex AI Live API requiere un proyecto (gcloud o cuenta de servicio)")
-            return False
-
-        # Live API NO funciona en "global" — necesita región específica
+            return None
+        # Live API NO funciona en "global": necesita región.
         live_location = location if location != "global" else "us-central1"
 
-        # Obtener access token via ADC
-        try:
+        def _token() -> str:
+            import os
+
             import google.auth
             import google.auth.transport.requests
-            import os
 
             if credentials_file:
                 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_file
+            credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            credentials.refresh(google.auth.transport.requests.Request())
+            return credentials.token
 
-            credentials, _ = google.auth.default(
-                scopes=["https://www.googleapis.com/auth/cloud-platform"]
-            )
-            auth_req = google.auth.transport.requests.Request()
-            credentials.refresh(auth_req)
-            access_token = credentials.token
+        try:
+            access_token = await asyncio.to_thread(_token)  # el refresh OAuth es bloqueante
         except Exception as exc:
             logger.error(f"No se pudo obtener token OAuth para Vertex AI Live API: {exc}")
-            return False
+            return None
 
         model = str(config.get("voice", "vertex_live_model", default="") or self.VERTEX_LIVE_MODEL)
-        model_path = f"projects/{project_id}/locations/{live_location}/publishers/google/models/{model}"
-
         url = (
             f"wss://{live_location}-aiplatform.googleapis.com/ws/"
-            f"google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent"
+            "google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent"
         )
+        self._ws = await _ws_connect(url, {"Authorization": f"Bearer {access_token}"})
+        return f"projects/{project_id}/locations/{live_location}/publishers/google/models/{model}"
 
-        headers = {"Authorization": f"Bearer {access_token}"}
-        self._ws = await _ws_connect(url, headers)
-        self._active = True
-
-        setup_msg: dict[str, Any] = {
-            "setup": {
-                "model": model_path,
-                "generationConfig": {
-                    "responseModalities": ["AUDIO"],
-                    "speechConfig": {
-                        "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self._voice}},
-                    },
-                },
-                "systemInstruction": {
-                    "parts": [{"text": self._get_google_system_prompt()}],
-                },
-                "outputAudioTranscription": {},
-                "inputAudioTranscription": {},
-                "tools": self._get_rt_tools(),
+    def _google_setup_message(self, model_name: str) -> dict[str, Any]:
+        setup: dict[str, Any] = {
+            "model": model_name,
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self._voice}}},
             },
+            "systemInstruction": {"parts": [{"text": self._get_google_system_prompt()}]},
+            "outputAudioTranscription": {},
+            "inputAudioTranscription": {},
+            "tools": self._get_rt_tools(),
+            # Compresión de contexto: sin ella audio+video corta a los 2 minutos.
+            "contextWindowCompression": {"slidingWindow": {}},
         }
-
-        setup_msg["setup"]["contextWindowCompression"] = {"slidingWindow": {}}
+        # Session resumption siempre activo (así llegan handles para reconectar; valen 2 h).
         if self._session_resumption_handle:
-            setup_msg["setup"]["sessionResumption"] = {"handle": self._session_resumption_handle}
+            setup["sessionResumption"] = {"handle": self._session_resumption_handle}
+            logger.info(f"Gemini Live: reanudando con handle {self._session_resumption_handle[:20]}...")
         else:
-            setup_msg["setup"]["sessionResumption"] = {}
+            setup["sessionResumption"] = {}
+            # historyConfig solo en sesiones nuevas: al reanudar el servidor ya tiene el
+            # contexto y un clientContent repetido da 1007 "invalid argument".
             if self._conversation_history:
-                setup_msg["setup"]["historyConfig"] = {"initialHistoryInClientContent": True}
-
-        await self._ws.send(json.dumps(setup_msg))
-
-        self._history_pending = bool(self._conversation_history and not self._session_resumption_handle)
-        self._google_ready = False
-
-        self._task = asyncio.create_task(self._listen_loop())
-        logger.info(f"Google Gemini Live (Vertex AI) conectado (modelo: {model}, location: {live_location}, model_path: {model_path})")
-        return True
+                setup["historyConfig"] = {"initialHistoryInClientContent": True}
+        return {"setup": setup}
 
     async def _inject_conversation_history(self) -> None:
         """Envía historial previo a Google RT via clientContent para que tenga contexto."""
@@ -1201,9 +1154,11 @@ class RealTimeVoice:
                         await self._on_turn_complete_callback()
                     except Exception:
                         pass
+                if was_active:
+                    await self._notify_stopped("closed")
 
     async def _auto_reconnect_google(self) -> None:
-        """Auto-reconecta a Google RT tras desconexión, preservando callbacks y screen stream.
+        """Auto-reconecta a Gemini Live tras una desconexión, preservando callbacks y screen stream.
         Ref: https://ai.google.dev/gemini-api/docs/live-api/session-management#session-resumption
         Los tokens de reanudación son válidos durante 2 horas.
         """
@@ -1237,74 +1192,25 @@ class RealTimeVoice:
                             pass
                     self._screen_stream_task = None
 
-                # Backoff: si GoAway recibido, delay mínimo (desconexión esperada).
-                # Sin GoAway: exponencial 0.5s, 1s, 2s.
-                if was_goaway and attempt == 1:
-                    wait = 0.1  # GoAway → desconexión esperada, reconectar rápido
-                else:
-                    wait = 0.5 * (2 ** (attempt - 1))
-                logger.info(f"Google RT: auto-reconectando (intento {attempt}/{max_retries}, esperando {wait}s)...")
+                # GoAway = desconexión esperada: reconectar rápido. Si no, 0.5 s, 1 s, 2 s.
+                wait = 0.1 if (was_goaway and attempt == 1) else 0.5 * (2 ** (attempt - 1))
+                logger.info(f"Gemini Live: auto-reconectando (intento {attempt}/{max_retries}, esperando {wait}s)...")
                 await asyncio.sleep(wait)
 
-                api_key = config.get_api_key("google_api")
-                if not api_key:
-                    logger.error("Google RT: API key no disponible para reconexión")
+                model_name = await self._open_google_socket()
+                if not model_name:
+                    logger.error("Gemini Live: sin credenciales para reconectar")
                     break
-
-                url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={api_key}"
-                self._ws = await websockets.connect(url)
                 self._active = True
-
-                model = self.get_realtime_providers()["google"]["default"]
-                setup_msg: dict[str, Any] = {
-                    "setup": {
-                        "model": f"models/{model}",
-                        "generationConfig": {
-                            "responseModalities": ["AUDIO"],
-                            "speechConfig": {
-                                "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self._voice}},
-                            },
-                        },
-                        "systemInstruction": {
-                            "parts": [{"text": self._get_google_system_prompt()}],
-                        },
-                        "outputAudioTranscription": {},
-                        "inputAudioTranscription": {},
-                        "tools": self.GOOGLE_RT_TOOLS + [{"google_search": {}}],
-                        "contextWindowCompression": {
-                            "slidingWindow": {},
-                        },
-                    },
-                }
-
-                # sessionResumption: con handle si está disponible, vacío si no (sesión fresca)
-                if self._session_resumption_handle:
-                    setup_msg["setup"]["sessionResumption"] = {
-                        "handle": self._session_resumption_handle,
-                    }
-                    self._history_pending = False  # Al reanudar, el servidor tiene el contexto
-                    logger.info(f"Google RT: reconectando con handle {self._session_resumption_handle[:20]}...")
-                else:
-                    setup_msg["setup"]["sessionResumption"] = {}
-                    # Sesión fresca: inyectar historial del chat para que el modelo
-                    # sepa qué estábamos hablando (el servidor ya no tiene contexto)
-                    if self._conversation_history:
-                        setup_msg["setup"]["historyConfig"] = {
-                            "initialHistoryInClientContent": True,
-                        }
-                        self._history_pending = True
-                        logger.info("Google RT: reconectando como sesión nueva — se inyectará historial del chat")
-                    else:
-                        self._history_pending = False
-                        logger.info("Google RT: reconectando como sesión nueva (sin historial)")
-
-                await self._ws.send(json.dumps(setup_msg))
+                # Al reanudar el servidor tiene el contexto; en sesión nueva se reinyecta el chat.
+                self._history_pending = bool(self._conversation_history and not self._session_resumption_handle)
+                await self._ws.send(json.dumps(self._google_setup_message(model_name)))
                 self._google_ready = False
                 self._reconnecting = False
 
                 # Lanzar nuevo listen loop
                 self._task = asyncio.create_task(self._listen_loop())
-                logger.info(f"Google RT: reconexión exitosa (intento {attempt})")
+                logger.info(f"Gemini Live: reconexión exitosa (intento {attempt})")
 
                 # Esperar a que setupComplete active _google_ready antes de reanudar streams/texto
                 for _ in range(100):
@@ -1313,32 +1219,41 @@ class RealTimeVoice:
                         break
 
                 if self._google_ready:
-                    # Reiniciar screen streaming si estaba activo
                     if was_screen_streaming:
                         await self.start_screen_stream()
-                        logger.info("Google RT: screen streaming reiniciado tras reconexión")
-                    
+                        logger.info("Gemini Live: screen streaming reiniciado tras reconexión")
                     # Si el modelo estaba hablando cuando se cortó, pedir que continúe
                     if was_speaking:
-                        logger.info("Google RT: solicitando continuar respuesta cortada tras reconexión")
+                        logger.info("Gemini Live: solicitando continuar respuesta cortada tras reconexión")
                         await self.send_text("(La conexión se reinició. Por favor, continúa exactamente donde te quedaste en tu última respuesta)")
                 return
 
             except Exception as e:
-                logger.error(f"Google RT: error en auto-reconexión intento {attempt}: {e}")
+                logger.error(f"Gemini Live: error en auto-reconexión intento {attempt}: {e}")
                 # Si falló con handle, limpiar para intentar sesión fresca en el siguiente intento
                 if self._session_resumption_handle:
-                    logger.warning("Google RT: limpiando handle de reanudación para reintentar como sesión nueva")
+                    logger.warning("Gemini Live: limpiando handle de reanudación para reintentar como sesión nueva")
                     self._session_resumption_handle = None
-                if attempt == max_retries:
-                    logger.error("Google RT: auto-reconexión agotada, sesión terminada")
-                    self._reconnecting = False
-                    self._active = False
-                    if self._on_turn_complete_callback:
-                        try:
-                            await self._on_turn_complete_callback()
-                        except Exception:
-                            pass
+
+        logger.error("Gemini Live: no se pudo reconectar, sesión terminada")
+        self._reconnecting = False
+        self._active = False
+        if self._on_turn_complete_callback:
+            try:
+                await self._on_turn_complete_callback()
+            except Exception:
+                pass
+        await self._notify_stopped("reconnect_failed")
+
+    async def _notify_stopped(self, reason: str) -> None:
+        """Avisa una sola vez que la sesión terminó sin que el usuario la detuviera."""
+        if self._stop_notified or not self._on_stopped_callback:
+            return
+        self._stop_notified = True
+        try:
+            await self._on_stopped_callback(reason)
+        except Exception as exc:
+            logger.debug(f"RT on_stopped falló: {exc}")
 
     def _mark_model_turn_start(self) -> None:
         """Marca el inicio de un turno del modelo y decide si es un turno fantasma.
@@ -1739,7 +1654,10 @@ class RealTimeVoice:
                 pass
 
         if self._ws:
-            await self._ws.close()
+            try:
+                await self._ws.close()
+            except Exception as exc:
+                logger.debug(f"RT: cierre del socket con error: {exc}")
             self._ws = None
 
         # Reset state para evitar contaminación en la próxima sesión
@@ -1763,6 +1681,7 @@ class RealTimeVoice:
         self._on_tool_call_callback = None
         self._on_turn_complete_callback = None
         self._on_ready_callback = None
+        self._on_stopped_callback = None
         # Limpiar handle: stop explícito = sesión nueva la próxima vez.
         # _auto_reconnect_google() NO pasa por stop_session(), así que no afecta reconexión automática.
         self._session_resumption_handle = None

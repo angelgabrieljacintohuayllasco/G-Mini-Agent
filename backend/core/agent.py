@@ -3867,7 +3867,16 @@ class AgentCore:
                 friendly = f"Error en la sesión de voz en tiempo real: {error_msg}"
             logger.warning(f"RT fatal error notificado al frontend: {error_msg}")
             await emit_message(sid, friendly, "error", done=True)
-            await sio.emit("agent:status", {"status": "realtime_stopped"}, to=sid)
+            await sio.emit("agent:status", {"status": "realtime_stopped", "reason": "error"}, to=sid)
+
+        async def on_stopped(reason: str):
+            """La sesión se cerró sola (red, servidor, reconexión agotada): la UI suelta el micrófono."""
+            await sio.emit("agent:status", {"status": "realtime_stopped", "reason": reason}, to=sid)
+            if reason == "reconnect_failed":
+                await emit_message(
+                    sid, "Se cortó la sesión de voz y no pude reconectar. Pulsa el micrófono para empezar otra.",
+                    "warning", done=True,
+                )
 
         async def on_audio(audio_bytes: bytes):
             import base64
@@ -4138,6 +4147,7 @@ class AgentCore:
             on_error=on_error,
             on_interrupt=on_interrupt,
             on_ready=on_ready,
+            on_stopped=on_stopped,
         )
 
     async def stop_realtime_voice(self) -> None:
@@ -4186,14 +4196,16 @@ class AgentCore:
                 await emit_message_chunk(
                     sid,
                     "No se pudo iniciar la sesión con el modelo Live. "
-                    "Verifica tu API key de Google en Settings.",
+                    "Revisa la API key de Google (o Vertex AI) en Ajustes.",
                 )
                 await emit_message_done(sid)
                 return
             # Notificar al frontend que la sesión Live está activa
+            # auto: la abrió un mensaje escrito, no el botón de voz; la UI debe
+            # reproducir el audio sin abrir el micrófono.
             await sio.emit(
                 "agent:status",
-                {"status": "realtime_active", "provider": "google", "mode": "native"},
+                {"status": "realtime_active", "provider": "google", "mode": "native", "auto": True},
                 to=sid,
             )
 
