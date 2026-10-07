@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 import secrets
 import unicodedata
@@ -2582,17 +2583,20 @@ class AgentCore:
         self._memory.set_session_mode(self._current_mode)
         self._apply_system_prompt()
 
-        # Phase 2: Vision + Automation
+        # Phase 2: Vision + Automation. En modo servidor (sin pantalla) no se
+        # inicializan visión ni control de escritorio, pero sí el planner:
+        # terminal, archivos, skills, conectores, MCP y memoria siguen disponibles.
+        headless = os.environ.get("GMINI_HEADLESS") == "1"
         try:
-            if self._vision:
+            if self._vision and not headless:
                 await self._vision.initialize()
-            if self._ui_detector:
+            if self._ui_detector and not headless:
                 await self._ui_detector.initialize()
-            if self._automation:
+            if self._automation and not headless:
                 await self._automation.initialize()
             if self._adb:
                 await self._adb.initialize()
-            if self._browser:
+            if self._browser and not headless:
                 await self._browser.initialize()
             if self._automation and self._adb and self._vision and ActionPlanner:
                 self._planner = ActionPlanner(

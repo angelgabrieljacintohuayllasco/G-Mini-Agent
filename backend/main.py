@@ -6,6 +6,7 @@ Levanta FastAPI + Socket.IO montado en ASGI.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,6 +24,8 @@ from starlette.requests import Request as StarletteRequest
 from loguru import logger
 
 from backend.api.routes import router as api_router
+from backend.api.v1 import ApiError, api_error_handler
+from backend.api.v1 import router as api_v1_router
 from backend.api.websocket_handler import sio, set_agent_core
 from backend.automation.editor_bridge import get_editor_bridge
 from backend.automation.extension_bridge import get_bridge
@@ -162,6 +165,8 @@ def create_app() -> socketio.ASGIApp:
         return await call_next(request)
 
     app.include_router(api_router, prefix="/api")
+    app.include_router(api_v1_router, prefix="/api")
+    app.add_exception_handler(ApiError, api_error_handler)
 
     ext_bridge = get_bridge()
     editor_bridge = get_editor_bridge()
@@ -192,12 +197,29 @@ def create_app() -> socketio.ASGIApp:
     return socketio.ASGIApp(sio, other_asgi_app=app)
 
 
-def main():
-    """Entry point."""
-    host = config.get("server", "host", default="127.0.0.1")
-    port = config.get("server", "port", default=8765)
+def _parse_args(argv: list[str] | None = None):
+    import argparse
 
-    logger.info(f"Iniciando servidor en {host}:{port}")
+    parser = argparse.ArgumentParser(prog="gmini-backend", description="Núcleo de G-Mini Agent")
+    parser.add_argument("--headless", action="store_true",
+                        help="Modo servidor: sin visión ni control de escritorio (VPS, Raspberry Pi, Docker)")
+    parser.add_argument("--host", help="Interfaz de escucha (127.0.0.1 por defecto; 0.0.0.0 para la red)")
+    parser.add_argument("--port", type=int, help="Puerto (8765 por defecto)")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None):
+    """Entry point."""
+    args = _parse_args(argv)
+    if args.headless:
+        os.environ["GMINI_HEADLESS"] = "1"
+    host = args.host or os.environ.get("GMINI_BIND_HOST") or config.get("server", "host", default="127.0.0.1")
+    port = args.port or config.get("server", "port", default=8765)
+    os.environ["GMINI_BIND_HOST"] = str(host)  # local_auth decide la validación de Host según el bind
+
+    if str(host) not in ("127.0.0.1", "localhost", "::1"):
+        logger.warning(f"Escuchando en {host}: todas las rutas exigen token (usa Tailscale/VPN o TLS para exponerlo).")
+    logger.info(f"Iniciando servidor en {host}:{port}" + (" (headless)" if args.headless else ""))
     app = create_app()
 
     uvicorn.run(

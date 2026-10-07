@@ -1259,6 +1259,9 @@ class SchedulerService:
         if job["task_type"] == "skill_curator":
             from backend.core.skill_curator import get_curator
             return await asyncio.to_thread(get_curator().run)
+        if job["task_type"] == "agent_prompt":
+            from backend.core.remote_tasks import run_task
+            return await run_task(str(payload.get("task_id", "")))
         raise RuntimeError(f"Task type no soportado por el scheduler: {job['task_type']}")
 
     async def _ensure_job_columns(self, db: aiosqlite.Connection) -> None:
@@ -1335,7 +1338,7 @@ class SchedulerService:
         heartbeat_key: str,
         heartbeat_interval_seconds: int | None,
     ) -> None:
-        supported = ("skill", "mcp_tool", "budget_weekly_report", "learning_consolidate", "skill_curator")
+        supported = ("skill", "mcp_tool", "budget_weekly_report", "learning_consolidate", "skill_curator", "agent_prompt")
         if task_type not in supported:
             raise ValueError(f"task_type debe ser uno de: {', '.join(supported)}.")
         if not isinstance(payload, dict):
@@ -1351,6 +1354,9 @@ class SchedulerService:
         elif task_type == "mcp_tool":
             if not str(payload.get("server_id", "")).strip() or not str(payload.get("tool", "")).strip():
                 raise ValueError("Los jobs mcp_tool requieren payload.server_id y payload.tool.")
+        elif task_type == "agent_prompt":
+            if not str(payload.get("task_id", "")).strip():
+                raise ValueError("Los jobs agent_prompt requieren payload.task_id.")
 
         if trigger_type == "interval":
             try:

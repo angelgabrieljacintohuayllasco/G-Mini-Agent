@@ -24,14 +24,14 @@ try:
     pyautogui.FAILSAFE = True  # Mover al corner = abort
     pyautogui.PAUSE = 0.05  # Delay entre acciones
     HAS_PYAUTOGUI = True
-except ImportError:
+except Exception:  # sin pantalla (servidor Linux) falla con KeyError/Xlib, no solo ImportError
     HAS_PYAUTOGUI = False
     logger.warning("pyautogui no disponible — automatización deshabilitada")
 
 try:
     from pynput import keyboard as pynput_kb
     HAS_PYNPUT = True
-except ImportError:
+except Exception:
     HAS_PYNPUT = False
     logger.warning("pynput no disponible — kill switch limitado")
 

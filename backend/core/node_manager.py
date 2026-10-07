@@ -268,6 +268,51 @@ class NodeManager:
         await self._broadcast_node_update(node)
         return node
 
+    async def register_device_node(
+        self,
+        *,
+        node_id: str,
+        name: str,
+        node_type: str,
+        surfaces: list[str],
+        ws_sid: str,
+        meta: dict[str, Any] | None = None,
+        sio: Any = None,
+    ) -> NodeInfo:
+        """Alta o reconexión de un dispositivo autenticado por token (API v1).
+
+        No usa el emparejamiento propio del NodeManager: el token del dispositivo
+        ya lo emitió local_auth. Los permisos que el usuario haya desactivado se
+        conservan entre reconexiones.
+        """
+        await self.initialize()
+        if sio is not None and self._sio is None:
+            self._sio = sio
+        now = datetime.now(timezone.utc).isoformat()
+        async with self._lock:
+            node = self._nodes.get(node_id)
+            if node is not None and node.status == NodeStatus.BANNED.value:
+                raise PermissionError("Dispositivo bloqueado")
+            previous = dict(node.permissions) if node else {}
+            node = NodeInfo(
+                node_id=node_id,
+                name=name,
+                node_type=node_type,
+                status=NodeStatus.CONNECTED.value,
+                surfaces=list(surfaces),
+                permissions={s: previous.get(s, True) for s in surfaces},
+                ws_sid=ws_sid,
+                connected_at=now,
+                last_seen_at=now,
+                meta=dict(meta or {}),
+            )
+            self._nodes[node_id] = node
+            self._sid_to_node[ws_sid] = node_id
+        await self._persist_node(node)
+        await self._broadcast_node_update(node)
+        logger.info(f"Dispositivo conectado como nodo: {name} — superficies: {surfaces}")
+        return node
+
     async def node_disconnected(self, ws_sid: str) -> None:
         async with self._lock:
             node_id = self._sid_to_node.pop(ws_sid, None)

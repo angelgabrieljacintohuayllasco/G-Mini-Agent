@@ -342,6 +342,17 @@ class Memory:
 
         logger.info(f"Sesión cargada: {session_id} ({len(self._messages)} msgs LLM, {len(self._all_messages)} total)")
 
+    async def get_session_messages(self, session_id: str, limit: int = 100) -> list[dict]:
+        """Mensajes de usuario y agente de una sesión, sin cambiar la sesión activa."""
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute(
+                "SELECT role, content, timestamp FROM conversations "
+                "WHERE session_id = ? AND role IN ('user', 'assistant') ORDER BY id DESC LIMIT ?",
+                (session_id, int(limit)),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        return [{"role": r[0], "content": r[1], "created_at": r[2]} for r in reversed(rows)]
+
     async def list_sessions(self, limit: int = 20) -> list[dict]:
         """Lista las sesiones más recientes (solo las que tienen mensajes)."""
         sessions = []

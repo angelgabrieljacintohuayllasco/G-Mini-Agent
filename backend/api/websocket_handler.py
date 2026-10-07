@@ -27,6 +27,21 @@ sio = socketio.AsyncServer(
     max_http_buffer_size=10_000_000,
 )
 
+_socketio_emit = sio.emit
+
+
+async def _emit_with_v1_clients(event, data=None, to=None, room=None, **kwargs):
+    """Los clientes de la API v1 (REST/SSE, WebSocket plano, dispositivos) no son
+    sockets de Socket.IO: sus eventos se entregan por client_sinks."""
+    from backend.api import client_sinks
+
+    if client_sinks.deliver(to or room, event, data):
+        return None
+    return await _socketio_emit(event, data, to=to, room=room, **kwargs)
+
+
+sio.emit = _emit_with_v1_clients
+
 # Referencia al AgentCore (se inyecta en main.py)
 _agent_core = None
 
