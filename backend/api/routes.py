@@ -4119,6 +4119,14 @@ async def set_skill_env(skill_id: str, request: Request):
     return {"ok": True, "updated": sorted(body)}
 
 
+@router.get("/slash-commands")
+async def list_slash_commands():
+    """Comandos "/" del chat (incluidos y propios en data/commands) para la paleta."""
+    from backend.core import slash_commands
+
+    return {"ok": True, "commands": await asyncio.to_thread(slash_commands.list_commands)}
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Otros G-Mini emparejados (VPS, Raspberry Pi, otra PC)
 # ═══════════════════════════════════════════════════════════════════════

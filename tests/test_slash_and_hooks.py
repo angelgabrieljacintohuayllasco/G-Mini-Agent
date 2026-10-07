@@ -79,6 +79,14 @@ async def test_custom_markdown_commands(tmp_path, monkeypatch):
     assert "/resumir: Resume" in (await slash_commands.handle(_Agent(), "/ayuda")).reply
 
 
+def test_list_commands_for_the_palette(tmp_path, monkeypatch):
+    monkeypatch.setattr(slash_commands, "COMMANDS_DIR", tmp_path)
+    (tmp_path / "resumir.md").write_text("# Resume un texto\n$ARGUMENTS", encoding="utf-8")
+    items = {c["name"]: c for c in slash_commands.list_commands()}
+    assert items["plan"]["usage"] == "/plan <tarea>" and not items["plan"]["custom"]
+    assert items["resumir"] == {"name": "resumir", "usage": "/resumir", "description": "Resume un texto", "custom": True}
+
+
 def test_shipped_commands_exist():
     from backend.config import CODE_DIR
 

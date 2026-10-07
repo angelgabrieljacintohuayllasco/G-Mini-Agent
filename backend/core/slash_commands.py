@@ -62,6 +62,15 @@ def _describe_custom(path: Path) -> str:
     return first.lstrip("#").strip()[:100]
 
 
+def list_commands() -> list[dict[str, Any]]:
+    """Comandos para la paleta de la interfaz: los incluidos y los de data/commands."""
+    items = [{"name": name, "usage": usage, "description": text, "custom": False}
+             for name, (_fn, usage, text) in _BUILTINS.items()]
+    items += [{"name": name, "usage": f"/{name}", "description": _describe_custom(path), "custom": True}
+              for name, path in _custom_commands().items()]
+    return items
+
+
 async def handle(agent: Any, text: str) -> SlashResult | None:
     """None si el texto no es un comando; si lo es, qué hacer con él."""
     stripped = (text or "").strip()
