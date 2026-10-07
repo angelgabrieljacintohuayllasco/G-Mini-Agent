@@ -4162,9 +4162,8 @@ class SettingsManager {
     }
 
     _escapeHtml(str) {
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
+        // Escapa también comillas: es seguro dentro de atributos (SEC3).
+        return window.gminiDom.escapeHtml(str);
     }
 }
 

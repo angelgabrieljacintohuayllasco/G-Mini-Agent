@@ -3,7 +3,7 @@
  * Expone APIs seguras al renderer via contextBridge.
  */
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 // Tema inicial que el main pasa por argv (--gmini-theme=..., etc.). theme-boot.js
 // lo usa cuando todavía no hay nada guardado en localStorage.
@@ -30,6 +30,10 @@ contextBridge.exposeInMainWorld('gmini', {
 
     // Adjuntar archivos/carpeta al chat (mode: 'files' | 'folder'). Devuelve array de rutas.
     pickAttachments: (mode = 'files') => ipcRenderer.invoke('pick-attachments', mode),
+    // Ruta local de un File soltado sobre el compositor (arrastrar y soltar).
+    getPathForFile: (file) => {
+        try { return webUtils.getPathForFile(file) || ''; } catch (_) { return ''; }
+    },
 
     // Window controls
     minimize: () => ipcRenderer.invoke('minimize-window'),

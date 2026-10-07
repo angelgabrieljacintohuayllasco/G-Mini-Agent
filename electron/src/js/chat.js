@@ -515,9 +515,8 @@ class ChatManager {
     }
 
     _escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        // Escapa también comillas: es seguro dentro de atributos (SEC3).
+        return window.gminiDom.escapeHtml(text);
     }
 
     clear() {
@@ -828,7 +827,7 @@ class ChatManager {
             case 'right_click': return `Click derecho en (${params.x}, ${params.y})`;
             case 'type': return `Escribiendo texto`;
             case 'press': return `Tecla: ${params.key || '?'}`;
-            case 'hotkey': return `Hotkey: ${params.keys || '?'}`;
+            case 'hotkey': return `Atajo: ${Array.isArray(params.keys) ? params.keys.join(' + ') : (params.keys || '?')}`;
             case 'open_application': return `Abriendo: ${params.name || '?'}`;
             case 'browser_navigate': return `Navegando a URL`;
             case 'browser_click': return `Click en elemento web`;
@@ -856,33 +855,43 @@ class ChatManager {
 
     _formatActionParams(type, params) {
         if (!params || Object.keys(params).length === 0) return '';
+        // Todo lo que llega en params lo decide el modelo (o viene del historial):
+        // se escapa siempre y las coordenadas/contadores solo se muestran si son números (SEC1).
+        const esc = (v) => this._escapeHtml(v);
+        const num = (v) => (v !== null && v !== '' && Number.isFinite(Number(v)) ? String(Number(v)) : '?');
+        const code = (v) => `<code>${esc(v ?? '')}</code>`;
+        const tag = (v) => ` <span class="action-param-tag">${esc(v)}</span>`;
+        const detail = (v) => `<span class="action-param-detail">${esc(v)}</span>`;
         switch (type) {
-            case 'type': return `<code>${this._escapeHtml(params.text || '')}</code>${params.submit ? ' <span class="action-param-tag">+ Enter</span>' : ''}`;
-            case 'delegate_computer_use': return `<code>${this._escapeHtml(params.task || '')}</code>${params.monitor ? ` <span class="action-param-tag">monitor ${params.monitor}</span>` : ''}`;
-            case 'terminal_run': return `<code>${this._escapeHtml(params.command || '')}</code>`;
-            case 'browser_navigate': return `<code>${this._escapeHtml(params.url || '')}</code>`;
-            case 'browser_click': return `selector: <code>${this._escapeHtml(params.selector || '')}</code>${params.force ? ' <span class="action-param-tag">force</span>' : ''}`;
-            case 'browser_type': return `selector: <code>${this._escapeHtml(params.selector || '')}</code> → <code>${this._escapeHtml(params.text || '')}</code>`;
-            case 'generate_image': return `<code>${this._escapeHtml(params.prompt || '')}</code>${params.aspect_ratio ? ` <span class="action-param-tag">${params.aspect_ratio}</span>` : ''}`;
-            case 'generate_video': return `<code>${this._escapeHtml(params.prompt || '')}</code>${params.duration_seconds ? ` <span class="action-param-tag">${params.duration_seconds}s</span>` : ''}`;
-            case 'generate_music': return `<code>${this._escapeHtml(params.prompt || '')}</code>`;
-            case 'click': return `<span class="action-param-detail">botón: ${params.button || 'left'}${(params.clicks || 1) > 1 ? ` × ${params.clicks}` : ''}</span>`;
-            case 'double_click': return `<span class="action-param-detail">botón: ${params.button || 'left'}</span>`;
-            case 'right_click': return `<span class="action-param-detail">en (${params.x}, ${params.y})</span>`;
-            case 'screenshot': return params.monitor != null ? `<span class="action-param-detail">monitor: ${params.monitor}</span>` : '';
-            case 'open_application': return params.name ? `<span class="action-param-detail">${this._escapeHtml(params.name)}</span>` : '';
-            case 'hotkey': return `<code>${this._escapeHtml(params.keys || '')}</code>`;
-            case 'press': return `<code>${this._escapeHtml(params.key || '')}</code>`;
-            case 'scroll': return `<span class="action-param-detail">${Math.abs(params.clicks || 0)} clicks${params.x != null ? ` en (${params.x}, ${params.y})` : ''}</span>`;
-            case 'drag': return `<span class="action-param-detail">de (${params.startX || '?'}, ${params.startY || '?'}) a (${params.x}, ${params.y})</span>`;
-            case 'browser_switch_tab': return params.tab_id ? `<span class="action-param-detail">tab: ${params.tab_id}</span>` : '';
+            case 'type': return code(params.text) + (params.submit ? tag('+ Enter') : '');
+            case 'delegate_computer_use': return code(params.task) + (params.monitor != null ? tag(`monitor ${num(params.monitor)}`) : '');
+            case 'terminal_run': return code(params.command);
+            case 'browser_navigate': return code(params.url);
+            case 'browser_click': return `selector: ${code(params.selector)}` + (params.force ? tag('force') : '');
+            case 'browser_type': return `selector: ${code(params.selector)} → ${code(params.text)}`;
+            case 'generate_image': return code(params.prompt) + (params.aspect_ratio ? tag(params.aspect_ratio) : '');
+            case 'generate_video': return code(params.prompt) + (params.duration_seconds ? tag(`${num(params.duration_seconds)}s`) : '');
+            case 'generate_music': return code(params.prompt);
+            case 'click': {
+                const clicks = Number(params.clicks) || 1;
+                return detail(`botón: ${params.button || 'left'}${clicks > 1 ? `, ${num(clicks)} clics` : ''}`);
+            }
+            case 'double_click': return detail(`botón: ${params.button || 'left'}`);
+            case 'right_click': return detail(`en (${num(params.x)}, ${num(params.y)})`);
+            case 'screenshot': return params.monitor != null ? detail(`monitor: ${num(params.monitor)}`) : '';
+            case 'open_application': return params.name ? detail(params.name) : '';
+            case 'hotkey': return code(Array.isArray(params.keys) ? params.keys.join(' + ') : params.keys);
+            case 'press': return code(params.key);
+            case 'scroll': return detail(`${Math.abs(Number(params.clicks) || 0)} clics${params.x != null ? ` en (${num(params.x)}, ${num(params.y)})` : ''}`);
+            case 'drag': return detail(`de (${num(params.startX)}, ${num(params.startY)}) a (${num(params.x)}, ${num(params.y)})`);
+            case 'browser_switch_tab': return params.tab_id != null ? detail(`pestaña: ${params.tab_id}`) : '';
             default: {
-                // Mostrar todos los params como JSON compacto para tools no mapeadas
+                // Tools sin formato propio: todos los params como texto compacto.
                 const summary = Object.entries(params)
                     .filter(([, v]) => v !== undefined && v !== null && v !== '')
                     .map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
                     .join(' | ');
-                return summary ? `<span class="action-param-detail">${this._escapeHtml(summary)}</span>` : '';
+                return summary ? detail(summary) : '';
             }
         }
     }

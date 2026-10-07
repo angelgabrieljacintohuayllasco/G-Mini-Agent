@@ -744,6 +744,42 @@
     btnAttachFolder?.addEventListener('click', () => pickAttachments('folder'));
     syncComposer();
 
+    // ── Arrastrar y soltar archivos ───────────────────
+    // Sobre el compositor se convierten en adjuntos; en el resto de la ventana
+    // se ignoran (antes un archivo soltado navegaba la ventana a file://, SEC6).
+    const composerEl = document.getElementById('composer');
+    const isFileDrag = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+
+    document.addEventListener('dragover', (e) => { if (isFileDrag(e)) e.preventDefault(); });
+    document.addEventListener('drop', (e) => { if (isFileDrag(e)) e.preventDefault(); });
+
+    composerEl?.addEventListener('dragover', (e) => {
+        if (!isFileDrag(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        composerEl.classList.add('is-dragover');
+    });
+    composerEl?.addEventListener('dragleave', (e) => {
+        if (!composerEl.contains(e.relatedTarget)) composerEl.classList.remove('is-dragover');
+    });
+    composerEl?.addEventListener('drop', (e) => {
+        if (!isFileDrag(e)) return;
+        e.preventDefault();
+        composerEl.classList.remove('is-dragover');
+        let added = 0;
+        for (const file of Array.from(e.dataTransfer.files || [])) {
+            const localPath = window.gmini?.getPathForFile?.(file) || '';
+            if (!localPath || pendingAttachments.some((a) => a.local_path === localPath)) continue;
+            const fileName = file.name || localPath.split(/[\\/]/).pop();
+            pendingAttachments.push({ kind: 'file', file_name: fileName, local_path: localPath });
+            added += 1;
+        }
+        if (added) {
+            renderAttachmentChips();
+            userInput.focus();
+        }
+    });
+
     btnAgentStart?.addEventListener('click', () => {
         ws.sendCommand('start');
         if (agentRuntimeState === 'paused') {
@@ -933,9 +969,8 @@
     }
 
     function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = String(text || '');
-        return div.innerHTML;
+        // Escapa también comillas: es seguro dentro de atributos (SEC3).
+        return window.gminiDom.escapeHtml(text);
     }
 
     // ── Voice capture (btn-voice) ───────────────────────

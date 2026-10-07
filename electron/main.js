@@ -16,9 +16,13 @@ if (!electronModule || typeof electronModule !== 'object' || !electronModule.app
     process.exit(1);
 }
 
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, dialog, protocol, net, nativeTheme } = electronModule;
+const {
+    app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, dialog, protocol, net, nativeTheme,
+    shell, session, Notification,
+} = electronModule;
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
 const yaml = require('js-yaml');
@@ -1516,6 +1520,7 @@ function createMainWindow() {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
+            sandbox: true,
             backgroundThrottling: false,
             additionalArguments: themeArguments(),
         },
@@ -1578,6 +1583,7 @@ function createOverlayWindow() {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
+            sandbox: true,
             additionalArguments: themeArguments(),
         },
     });
@@ -1660,6 +1666,7 @@ function createSkinWindow() {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
+            sandbox: true,
             backgroundThrottling: false,
             additionalArguments: themeArguments(),
         },
@@ -1789,8 +1796,85 @@ function toggleOverlay(enable) {
     refreshTrayMenu();
 }
 
-// ── IPC Handlers ─────────────────────────────────────────────
+// ── Límites de confianza: páginas propias, IPC, navegación, permisos ──
 
+// Solo los documentos servidos desde electron/src son "la app".
+const APP_SRC_URL = `${pathToFileURL(path.join(__dirname, 'src')).href}/`.toLowerCase();
+
+function isAppUrl(rawUrl) {
+    return typeof rawUrl === 'string' && rawUrl.toLowerCase().startsWith(APP_SRC_URL);
+}
+
+// SEC7: cada handler comprueba que la llamada venga de un frame de la app.
+// Si una ventana terminara mostrando contenido ajeno, ese contenido no
+// podría usar window.gmini contra el proceso principal.
+function handleIpc(channel, handler) {
+    ipcMain.handle(channel, (event, ...args) => {
+        const senderUrl = event?.senderFrame?.url || '';
+        if (!isAppUrl(senderUrl)) {
+            console.warn(`[IPC] Rechazado ${channel} desde ${senderUrl || 'origen desconocido'}`);
+            return null;
+        }
+        return handler(event, ...args);
+    });
+}
+
+const EXTERNAL_PROTOCOLS = new Set(['https:', 'http:', 'mailto:']);
+
+/** Abre en el navegador del sistema solo enlaces web o de correo. */
+function openExternalSafe(rawUrl) {
+    try {
+        const url = new URL(rawUrl);
+        if (!EXTERNAL_PROTOCOLS.has(url.protocol)) return false;
+        void shell.openExternal(url.href);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+// SEC6: ninguna ventana navega fuera de su documento ni abre ventanas nuevas.
+// Soltar un archivo sobre la ventana ya no reemplaza la UI (con el preload
+// cargado) y los enlaces de las respuestas se abren en el navegador.
+app.on('web-contents-created', (_, contents) => {
+    contents.on('will-navigate', (event, url) => {
+        if (url === contents.getURL()) return;
+        event.preventDefault();
+        openExternalSafe(url);
+    });
+    contents.setWindowOpenHandler(({ url }) => {
+        openExternalSafe(url);
+        return { action: 'deny' };
+    });
+    contents.on('will-attach-webview', (event) => event.preventDefault());
+});
+
+// SEC8: micrófono (solo audio), pantalla completa de video y escritura en
+// portapapeles para las páginas propias; cualquier otro permiso se niega.
+const ALLOWED_PERMISSIONS = new Set(['media', 'fullscreen', 'clipboard-sanitized-write']);
+
+function configureSessionSecurity() {
+    const ses = session.defaultSession;
+    ses.setPermissionRequestHandler((webContents, permission, callback, details = {}) => {
+        const url = details.requestingUrl || webContents?.getURL?.() || '';
+        if (!isAppUrl(url) || !ALLOWED_PERMISSIONS.has(permission)) {
+            callback(false);
+            return;
+        }
+        if (permission === 'media') {
+            const types = Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
+            callback(types.length > 0 && types.every((type) => type === 'audio'));
+            return;
+        }
+        callback(true);
+    });
+    ses.setPermissionCheckHandler((webContents, permission, _origin, details = {}) => {
+        const url = webContents?.getURL?.() || details.requestingUrl || '';
+        return isAppUrl(url) && ALLOWED_PERMISSIONS.has(permission);
+    });
+}
+
+// ── IPC Handlers ─────────────────────────────────────────────
 
 function readSessionToken() {
     // Si el backend ya estaba corriendo (no lo lanzamos nosotros) su token es el del archivo.
@@ -1803,13 +1887,13 @@ function readSessionToken() {
     return SESSION_TOKEN;
 }
 
-ipcMain.handle('get-backend-url', () => BACKEND_URL);
-ipcMain.handle('get-session-token', () => readSessionToken());
+handleIpc('get-backend-url', () => BACKEND_URL);
+handleIpc('get-session-token', () => readSessionToken());
 
 // Configuración cambia el tema: fondo nativo y nativeTheme al instante, sin
 // esperar al sondeo de config.user.yaml. El resto de ventanas se entera por
 // el evento "storage" de localStorage (ver theme-boot.js).
-ipcMain.handle('theme:set', (_, prefs) => {
+handleIpc('theme:set', (_, prefs) => {
     applyThemePreferences(prefs && typeof prefs === 'object' ? prefs : {});
     return { ...themePreferences };
 });
@@ -1839,7 +1923,7 @@ function _fetchBufferFromUrl(url) {
     });
 }
 
-ipcMain.handle('save-media-as', async (_, url, filename) => {
+handleIpc('save-media-as', async (_, url, filename) => {
     try {
         if (!url) return { ok: false, error: 'sin url' };
 
@@ -1873,24 +1957,24 @@ ipcMain.handle('save-media-as', async (_, url, filename) => {
     }
 });
 
-ipcMain.handle('minimize-window', () => {
+handleIpc('minimize-window', () => {
     if (mainWindow) mainWindow.minimize();
 });
 
-ipcMain.handle('close-window', () => {
+handleIpc('close-window', () => {
     if (mainWindow) mainWindow.close();
 });
 
-ipcMain.handle('toggle-always-on-top', (_, value) => {
+handleIpc('toggle-always-on-top', (_, value) => {
     if (mainWindow) mainWindow.setAlwaysOnTop(value);
 });
 
-ipcMain.handle('toggle-overlay', (_, enable) => {
+handleIpc('toggle-overlay', (_, enable) => {
     toggleOverlay(enable);
     return getOverlayStateSnapshot();
 });
 
-ipcMain.handle('set-overlay-text', (_, text) => {
+handleIpc('set-overlay-text', (_, text) => {
     lastOverlayText = String(text || '');
     if (overlayWindow) {
         overlayWindow.webContents.send('overlay-text', lastOverlayText);
@@ -1898,19 +1982,19 @@ ipcMain.handle('set-overlay-text', (_, text) => {
     return { success: true };
 });
 
-ipcMain.handle('overlay:get-state', () => {
+handleIpc('overlay:get-state', () => {
     return getOverlayStateSnapshot();
 });
 
-ipcMain.handle('overlay:set-interactive', (_, interactive) => {
+handleIpc('overlay:set-interactive', (_, interactive) => {
     return setOverlayInteractive(interactive);
 });
 
-ipcMain.handle('overlay:set-character-runtime', (_, payload = {}) => {
+handleIpc('overlay:set-character-runtime', (_, payload = {}) => {
     return setOverlayCharacterRuntime(payload);
 });
 
-ipcMain.handle('overlay:move-by', (_, dx, dy) => {
+handleIpc('overlay:move-by', (_, dx, dy) => {
     if (!overlayWindow || overlayWindow.isDestroyed()) {
         return getOverlayStateSnapshot();
     }
@@ -1923,7 +2007,7 @@ ipcMain.handle('overlay:move-by', (_, dx, dy) => {
     });
 });
 
-ipcMain.handle('overlay:resize-by', (_, delta, anchor = 'center') => {
+handleIpc('overlay:resize-by', (_, delta, anchor = 'center') => {
     if (!overlayWindow || overlayWindow.isDestroyed()) {
         return getOverlayStateSnapshot();
     }
@@ -1962,7 +2046,7 @@ ipcMain.handle('overlay:resize-by', (_, delta, anchor = 'center') => {
     });
 });
 
-ipcMain.handle('overlay:set-bounds', (_, rawBounds = {}) => {
+handleIpc('overlay:set-bounds', (_, rawBounds = {}) => {
     if (!overlayWindow || overlayWindow.isDestroyed()) {
         return getOverlayStateSnapshot();
     }
@@ -1971,19 +2055,19 @@ ipcMain.handle('overlay:set-bounds', (_, rawBounds = {}) => {
 
 // ── Skin IPC ─────────────────────────────────────────────────
 
-ipcMain.handle('skin:set-mode', (_, mode) => {
+handleIpc('skin:set-mode', (_, mode) => {
     return setSkinMode(mode);
 });
 
-ipcMain.handle('skin:get-state', () => {
+handleIpc('skin:get-state', () => {
     return getSkinStateSnapshot();
 });
 
-ipcMain.handle('skin:list', () => {
+handleIpc('skin:list', () => {
     return scanAvailableSkins();
 });
 
-ipcMain.handle('skin:pick-file', async (_, kind) => {
+handleIpc('skin:pick-file', async (_, kind) => {
     if (!mainWindow || mainWindow.isDestroyed()) return null;
     const filters = kind === 'model'
         ? [{ name: 'Modelo 3D (VRoid)', extensions: ['vrm', 'glb', 'gltf'] }]
@@ -1998,7 +2082,7 @@ ipcMain.handle('skin:pick-file', async (_, kind) => {
 });
 
 // Adjuntos del chat: archivos (multi) o una carpeta. Devuelve array de rutas.
-ipcMain.handle('pick-attachments', async (_, mode = 'files') => {
+handleIpc('pick-attachments', async (_, mode = 'files') => {
     if (!mainWindow || mainWindow.isDestroyed()) return [];
     const isFolder = mode === 'folder';
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -2011,15 +2095,15 @@ ipcMain.handle('pick-attachments', async (_, mode = 'files') => {
     return result.filePaths;
 });
 
-ipcMain.handle('skin:create', (_, payload = {}) => {
+handleIpc('skin:create', (_, payload = {}) => {
     return createSkin(payload || {});
 });
 
-ipcMain.handle('skin:set-interactive', (_, interactive) => {
+handleIpc('skin:set-interactive', (_, interactive) => {
     return setSkinInteractive(interactive);
 });
 
-ipcMain.handle('skin:move-by', (_, dx, dy) => {
+handleIpc('skin:move-by', (_, dx, dy) => {
     if (!skinWindow || skinWindow.isDestroyed()) {
         return getSkinStateSnapshot();
     }
@@ -2033,7 +2117,7 @@ ipcMain.handle('skin:move-by', (_, dx, dy) => {
     });
 });
 
-ipcMain.handle('skin:resize-by', (_, delta) => {
+handleIpc('skin:resize-by', (_, delta) => {
     if (!skinWindow || skinWindow.isDestroyed()) {
         return getSkinStateSnapshot();
     }
@@ -2062,14 +2146,14 @@ ipcMain.handle('skin:resize-by', (_, delta) => {
     });
 });
 
-ipcMain.handle('skin:set-bounds', (_, rawBounds = {}) => {
+handleIpc('skin:set-bounds', (_, rawBounds = {}) => {
     if (!skinWindow || skinWindow.isDestroyed()) {
         return getSkinStateSnapshot();
     }
     return commitSkinBounds(rawBounds);
 });
 
-ipcMain.handle('skin:minimize', () => {
+handleIpc('skin:minimize', () => {
     stopSkinCursorPoll();
     if (skinWindow && !skinWindow.isDestroyed()) {
         setSkinInteractive(false);
@@ -2086,7 +2170,7 @@ ipcMain.handle('skin:minimize', () => {
 
 // ── Skin: mini-chat burbuja (proxy IPC, sin segundo socket) ────
 
-ipcMain.handle('skin:chat-open', () => {
+handleIpc('skin:chat-open', () => {
     if (!skinWindow || skinWindow.isDestroyed()) return null;
     const bounds = skinWindow.getBounds();
     if (!skinChatSavedBounds) {
@@ -2096,7 +2180,7 @@ ipcMain.handle('skin:chat-open', () => {
     return skinChatSavedBounds;
 });
 
-ipcMain.handle('skin:chat-close', () => {
+handleIpc('skin:chat-close', () => {
     if (skinWindow && !skinWindow.isDestroyed() && skinChatSavedBounds) {
         skinWindow.setBounds(skinChatSavedBounds);
     }
@@ -2104,14 +2188,14 @@ ipcMain.handle('skin:chat-close', () => {
     return getSkinStateSnapshot();
 });
 
-ipcMain.handle('skin:chat-send', (_, text) => {
+handleIpc('skin:chat-send', (_, text) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('skin-chat-send', String(text || ''));
     }
     return true;
 });
 
-ipcMain.handle('skin:chat-relay', (_, payload) => {
+handleIpc('skin:chat-relay', (_, payload) => {
     if (skinWindow && !skinWindow.isDestroyed()) {
         skinWindow.webContents.send('skin-chat-relay', payload);
     }
@@ -2120,14 +2204,14 @@ ipcMain.handle('skin:chat-relay', (_, payload) => {
 
 // ── Skin: boton mic (proxy hacia voz en tiempo real de mainWindow) ────
 
-ipcMain.handle('skin:voice-toggle', () => {
+handleIpc('skin:voice-toggle', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('skin-voice-toggle');
     }
     return true;
 });
 
-ipcMain.handle('skin:voice-state', (_, payload) => {
+handleIpc('skin:voice-state', (_, payload) => {
     skinVoiceActive = !!payload?.active;
     if (skinWindow && !skinWindow.isDestroyed()) {
         skinWindow.webContents.send('skin-voice-state', payload);
@@ -2135,18 +2219,18 @@ ipcMain.handle('skin:voice-state', (_, payload) => {
     return true;
 });
 
-ipcMain.handle('get-app-runtime-settings', () => {
+handleIpc('get-app-runtime-settings', () => {
     return getEffectiveAppRuntimeSettings();
 });
 
-ipcMain.handle('reload-app-runtime-settings', () => {
+handleIpc('reload-app-runtime-settings', () => {
     applyAppPreferences(loadAppPreferencesFromDisk());
     return getEffectiveAppRuntimeSettings();
 });
 
-ipcMain.handle('get-shortcuts', () => currentShortcuts);
+handleIpc('get-shortcuts', () => currentShortcuts);
 
-ipcMain.handle('update-shortcuts', (_, shortcuts) => {
+handleIpc('update-shortcuts', (_, shortcuts) => {
     registerShortcuts(shortcuts);
     return currentShortcuts;
 });
@@ -2173,6 +2257,7 @@ function createActionOverlayWindow() {
         webPreferences: {
             contextIsolation: true,
             nodeIntegration: false,
+            sandbox: true,
         },
     });
 
@@ -2458,13 +2543,13 @@ function createActionOverlayWindow() {
     });
 }
 
-ipcMain.handle('set-window-opacity', (_, opacity) => {
+handleIpc('set-window-opacity', (_, opacity) => {
     if (mainWindow) {
         mainWindow.setOpacity(Math.max(0.5, Math.min(1.0, opacity)));
     }
 });
 
-ipcMain.handle('show-click-indicator', async (_, x, y, type) => {
+handleIpc('show-click-indicator', async (_, x, y, type) => {
     try {
         if (!actionOverlayWindow || actionOverlayWindow.isDestroyed()) {
             createActionOverlayWindow();
@@ -2497,7 +2582,7 @@ ipcMain.handle('show-click-indicator', async (_, x, y, type) => {
     }
 });
 
-ipcMain.handle('show-screenshot-overlay', async () => {
+handleIpc('show-screenshot-overlay', async () => {
     try {
         // Ocultar ventana principal para que no salga en la captura
         if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
@@ -2537,7 +2622,7 @@ ipcMain.handle('show-screenshot-overlay', async () => {
     }
 });
 
-ipcMain.handle('set-executing-mode', (_, active) => {
+handleIpc('set-executing-mode', (_, active) => {
     if (mainWindow) {
         if (active) {
             mainWindow.hide();
@@ -2548,7 +2633,7 @@ ipcMain.handle('set-executing-mode', (_, active) => {
     setOverlayInteractionLocked(active);
 });
 
-ipcMain.handle('show-cursor-bubble', async (_, x, y) => {
+handleIpc('show-cursor-bubble', async (_, x, y) => {
     try {
         if (!actionOverlayWindow || actionOverlayWindow.isDestroyed()) {
             createActionOverlayWindow();
@@ -2604,6 +2689,8 @@ app.whenReady().then(async () => {
             return new Response('Error', { status: 500 });
         }
     });
+
+    configureSessionSecurity();
 
     // 2. Crear UI (con el tema ya resuelto para el color de fondo nativo)
     applyThemePreferences(normalizeThemePreferences(loadMergedProjectConfigFromDisk().app || {}));

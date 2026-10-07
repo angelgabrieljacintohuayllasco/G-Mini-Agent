@@ -1975,9 +1975,8 @@ class CodeManager {
     // ── Utilities ────────────────────────────────────────────────────────
 
     escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = String(text || '');
-        return div.innerHTML;
+        // Escapa también comillas: es seguro dentro de atributos (SEC3).
+        return window.gminiDom.escapeHtml(text);
     }
 }
 
