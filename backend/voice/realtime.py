@@ -47,6 +47,19 @@ except ImportError:
     logger.info("mss/Pillow no disponible — Screen streaming deshabilitado")
 
 
+def _grab_screen_jpeg(max_width: int = 1280, quality: int = 60) -> bytes:
+    """Monitor principal como JPEG. Corre en un hilo: mss abre y cierra su contexto en cada llamada."""
+    with mss.mss() as sct:
+        monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+        shot = sct.grab(monitor)
+    img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+    if img.width > max_width:
+        img = img.resize((max_width, int(img.height * max_width / img.width)), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
+
+
 class RealTimeVoice:
     """
     Voz en tiempo real via WebSocket.
@@ -1580,27 +1593,13 @@ class RealTimeVoice:
                 logger.warning("Screen stream: timeout esperando _google_ready, abortando")
                 self._screen_streaming = False
                 return
-        sct = None
         try:
-            sct = mss.mss()
             while self._screen_streaming and self._active and self._ws:
                 t0 = time.monotonic()
                 try:
-                    # Capturar pantalla completa (monitor 0 = all monitors, 1 = primary)
-                    monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
-                    screenshot = sct.grab(monitor)
-
-                    # Convertir a JPEG comprimido
-                    img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
-                    # Redimensionar para reducir tamaño (max 1280px de ancho)
-                    max_w = 1280
-                    if img.width > max_w:
-                        ratio = max_w / img.width
-                        img = img.resize((max_w, int(img.height * ratio)), Image.LANCZOS)
-
-                    buf = io.BytesIO()
-                    img.save(buf, format="JPEG", quality=60)
-                    frame_bytes = buf.getvalue()
+                    # Captura, escalado y JPEG tardan 40-200 ms: en un hilo para no
+                    # trabar el audio de la sesión.
+                    frame_bytes = await asyncio.to_thread(_grab_screen_jpeg)
                     b64_data = base64.b64encode(frame_bytes).decode("utf-8")
 
                     # Enviar como video frame
@@ -1627,11 +1626,6 @@ class RealTimeVoice:
         except Exception as e:
             logger.error(f"Screen stream loop error: {e}")
         finally:
-            if sct:
-                try:
-                    sct.close()
-                except Exception:
-                    pass
             self._screen_streaming = False
 
     @property
