@@ -98,6 +98,8 @@ class SandboxExecutor:
 
         if self._docker_available:
             return await self._exec_docker_python(code, cfg)
+        if not self._unisolated_fallback_allowed():
+            return self._unavailable_result()
         return await self._exec_subprocess_python(code, cfg)
 
     async def execute_shell(
@@ -120,7 +122,32 @@ class SandboxExecutor:
 
         if self._docker_available:
             return await self._exec_docker_shell(command, cfg)
+        if not self._unisolated_fallback_allowed():
+            return self._unavailable_result()
         return await self._exec_subprocess_shell(command, cfg)
+
+    @staticmethod
+    def _unisolated_fallback_allowed() -> bool:
+        """
+        Sin Docker no hay aislamiento real: un subproceso ve todo el disco y el
+        keyring del usuario. Solo se permite si el usuario lo activa a sabiendas.
+        """
+        return bool(config.get("security", "sandbox", "allow_unisolated_fallback", default=False))
+
+    @staticmethod
+    def _unavailable_result() -> SandboxResult:
+        return SandboxResult(
+            exit_code=1,
+            stdout="",
+            stderr=(
+                "Sandbox no disponible: se necesita Docker para ejecutar código aislado. "
+                "Instala o inicia Docker Desktop. La ejecución sin aislamiento está "
+                "desactivada (security.sandbox.allow_unisolated_fallback)."
+            ),
+            duration_ms=0,
+            killed=True,
+            sandbox_type="unavailable",
+        )
 
     # ── Docker execution ─────────────────────────────────────────────
 
@@ -187,7 +214,7 @@ class SandboxExecutor:
             return await self._run_process(
                 [sys.executable, script_path],
                 cfg,
-                sandbox_type="subprocess",
+                sandbox_type="unisolated",
                 env=clean_env,
             )
         finally:
@@ -203,7 +230,7 @@ class SandboxExecutor:
         shell_cmd = ["cmd", "/c", command] if os.name == "nt" else ["sh", "-c", command]
 
         return await self._run_process(
-            shell_cmd, cfg, sandbox_type="subprocess", env=clean_env,
+            shell_cmd, cfg, sandbox_type="unisolated", env=clean_env,
         )
 
     # ── Common process runner ────────────────────────────────────────

@@ -47,6 +47,48 @@ _SYSTEM_DENY_PATTERNS_WRITE: tuple[str, ...] = (
 )
 
 
+# Archivos de credenciales que el agente nunca lee: una inyección de prompt
+# (web, documento, mensaje) podría pedirle leerlos y mandarlos fuera.
+_CREDENTIAL_DIR_PARTS: frozenset[str] = frozenset({".ssh", ".gnupg", ".aws", ".azure", ".kube", ".password-store"})
+_CREDENTIAL_FILE_NAMES: frozenset[str] = frozenset({
+    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".netrc", "_netrc", ".git-credentials",
+    "login data", "login data for account", "cookies", "local state", "key4.db", "logins.json",
+    "application_default_credentials.json", "credentials.db", "access_tokens.db",
+})
+_CREDENTIAL_PATH_FRAGMENTS: tuple[str, ...] = (
+    "/appdata/roaming/gcloud/",
+    "/.config/gcloud/",
+    "/appdata/roaming/microsoft/credentials/",
+    "/appdata/roaming/microsoft/protect/",
+    "/appdata/local/microsoft/credentials/",
+    "/data/runtime/",
+)
+
+
+def credential_read_reason(resolved: Path) -> str | None:
+    """Motivo si la ruta es un almacén de credenciales; None si se puede leer."""
+    normalized = "/" + str(resolved).replace("\\", "/").lower().lstrip("/") + "/"
+    if any(fragment in normalized for fragment in _CREDENTIAL_PATH_FRAGMENTS):
+        return "almacén de credenciales protegido"
+    parts = {part.lower() for part in resolved.parts}
+    if parts & _CREDENTIAL_DIR_PARTS:
+        return "carpeta de credenciales protegida"
+    if resolved.name.lower() in _CREDENTIAL_FILE_NAMES:
+        return "archivo de credenciales protegido"
+    return None
+
+
+_GIT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/@{}~^:+-]{0,199}$")
+
+
+def _validate_git_ref(ref: str) -> str:
+    """Un ref nunca puede empezar con '-' (sería una opción de git, p. ej. --output=)."""
+    value = str(ref).strip()
+    if not _GIT_REF_RE.match(value):
+        raise ValueError(f"ref de git inválido: {value[:60]!r}")
+    return value
+
+
 class PathAccessDeniedError(PermissionError):
     """Raised when a file operation targets a path outside the allowed sandbox."""
 
@@ -118,6 +160,12 @@ class WorkspaceManager:
         if not path.is_absolute():
             path = self._root_dir / path
         return path.resolve()
+
+    def _check_read_access(self, resolved: Path) -> None:
+        reason = credential_read_reason(resolved)
+        if reason:
+            logger.warning(f"Lectura bloqueada ({reason}): {resolved}")
+            raise PathAccessDeniedError(resolved, reason)
 
     def _check_write_access(self, resolved: Path) -> None:
         """Validate that a resolved path is within an allowed write directory."""
@@ -197,6 +245,7 @@ class WorkspaceManager:
         encoding: str = "utf-8",
     ) -> dict[str, Any]:
         resolved = self.resolve_path(path)
+        self._check_read_access(resolved)
         if not resolved.exists():
             raise FileNotFoundError(f"archivo no encontrado: {resolved}")
         if not resolved.is_file():
@@ -239,6 +288,7 @@ class WorkspaceManager:
         encoding: str = "utf-8",
     ) -> dict[str, Any]:
         resolved = self.resolve_path(path)
+        self._check_read_access(resolved)
         if not resolved.exists():
             raise FileNotFoundError(f"archivo no encontrado: {resolved}")
         if not resolved.is_file():
@@ -296,6 +346,9 @@ class WorkspaceManager:
         query_cmp = needle if case_sensitive else needle.lower()
 
         for candidate in self._iter_search_files(base_path, pattern=pattern, recursive=recursive):
+            if credential_read_reason(candidate):
+                files_skipped += 1
+                continue
             try:
                 if candidate.stat().st_size > self._max_search_file_bytes:
                     files_skipped += 1
@@ -565,7 +618,7 @@ class WorkspaceManager:
         if staged:
             args.append("--cached")
         if ref:
-            args.append(str(ref))
+            args.append(_validate_git_ref(ref))
         if relative_target:
             args.extend(["--", relative_target])
 
@@ -639,6 +692,7 @@ class WorkspaceManager:
 
     def code_outline(self, path: str, *, max_symbols: int = 200) -> dict[str, Any]:
         resolved = self.resolve_path(path)
+        self._check_read_access(resolved)
         if not resolved.exists():
             raise FileNotFoundError(f"archivo no encontrado: {resolved}")
         if not resolved.is_file():
@@ -668,6 +722,7 @@ class WorkspaceManager:
         max_results: int = 20,
     ) -> dict[str, Any]:
         resolved = self.resolve_path(path)
+        self._check_read_access(resolved)
         if not resolved.exists():
             raise FileNotFoundError(f"archivo no encontrado: {resolved}")
         if not resolved.is_file():

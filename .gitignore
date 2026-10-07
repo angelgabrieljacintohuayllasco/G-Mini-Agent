@@ -126,3 +126,11 @@ data/skins/
 
 # Log de desarrollo / runtime
 _dev_log.txt
+
+# Estado de ejecución local (token de sesión, dispositivos emparejados)
+data/runtime/
+
+# Skills importadas por el usuario y su estado
+data/agent_skills/installed/
+data/agent_skills/state.json
+data/agent_skills/.tmp/

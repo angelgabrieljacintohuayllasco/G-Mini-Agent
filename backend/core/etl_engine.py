@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import sqlite3
 import time
 import uuid
@@ -18,6 +19,29 @@ from typing import Any
 from loguru import logger
 
 from backend.config import config
+from backend.core.workspace_manager import _SYSTEM_DENY_PATTERNS_WRITE, credential_read_reason
+
+_SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+_READ_ONLY_SQL_RE = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
+
+
+def _etl_path(raw: str, *, write: bool) -> Path:
+    """Valida rutas de origen/destino: nada de credenciales ni carpetas del sistema."""
+    path = Path(str(raw or "")).expanduser().resolve()
+    reason = credential_read_reason(path)
+    if reason:
+        raise PermissionError(f"ETL: ruta no permitida ({reason}): {path}")
+    if write:
+        text = str(path).lower()
+        if any(text.startswith(deny.lower()) for deny in _SYSTEM_DENY_PATTERNS_WRITE):
+            raise PermissionError(f"ETL: no se escribe en carpetas del sistema: {path}")
+    return path
+
+
+def _sql_identifier(name: str) -> str:
+    if not _SQL_IDENTIFIER_RE.match(str(name or "")):
+        raise ValueError(f"ETL: identificador SQL inválido: {name!r}")
+    return f'"{name}"'
 
 
 @dataclass
@@ -244,21 +268,26 @@ class ETLEngine:
 
     def _extract_csv(self, path: str, delimiter: str = ",") -> list[dict]:
         rows = []
-        with open(path, "r", encoding="utf-8") as f:
+        with open(_etl_path(path, write=False), "r", encoding="utf-8") as f:
             reader = csv.DictReader(f, delimiter=delimiter)
             for row in reader:
                 rows.append(dict(row))
         return rows
 
     def _extract_json(self, path: str) -> list[dict]:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(_etl_path(path, write=False), "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, list):
             return data
         return [data]
 
     def _extract_sqlite(self, db_path: str, query: str) -> list[dict]:
-        with sqlite3.connect(db_path) as conn:
+        if not _READ_ONLY_SQL_RE.match(str(query or "")):
+            raise ValueError("ETL: la extracción SQLite solo admite consultas SELECT/WITH")
+        safe_path = _etl_path(db_path, write=False)
+        uri = f"{safe_path.as_uri()}?mode=ro"
+        with sqlite3.connect(uri, uri=True) as conn:
+            conn.execute("PRAGMA query_only = ON")
             conn.row_factory = sqlite3.Row
             rows = conn.execute(query).fetchall()
         return [dict(r) for r in rows]
@@ -295,23 +324,23 @@ class ETLEngine:
         cfg = step.config
 
         if target == "json":
-            with open(cfg["path"], "w", encoding="utf-8") as f:
+            with open(_etl_path(cfg["path"], write=True), "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         elif target == "csv":
             if not data:
                 return
-            with open(cfg["path"], "w", encoding="utf-8", newline="") as f:
+            with open(_etl_path(cfg["path"], write=True), "w", encoding="utf-8", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=data[0].keys())
                 writer.writeheader()
                 writer.writerows(data)
         elif target == "sqlite":
-            table = cfg["table"]
+            table = _sql_identifier(cfg["table"])
             if not data:
                 return
-            with sqlite3.connect(cfg["db_path"]) as conn:
+            with sqlite3.connect(_etl_path(cfg["db_path"], write=True)) as conn:
                 cols = list(data[0].keys())
                 placeholders = ", ".join(["?"] * len(cols))
-                col_str = ", ".join(cols)
+                col_str = ", ".join(_sql_identifier(c) for c in cols)
                 for row in data:
                     conn.execute(
                         f"INSERT OR REPLACE INTO {table} ({col_str}) VALUES ({placeholders})",

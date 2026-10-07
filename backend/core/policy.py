@@ -139,52 +139,37 @@ def get_spend_permissions() -> dict[str, Any]:
     }
 
 
+# Un script de navegador se considera "solo lectura" únicamente si NO contiene
+# ninguno de estos marcadores. La lista es de bloqueo (lo prohibido), no de
+# permiso: un script que exfiltra con `new Image().src = ... + document.cookie`
+# o `navigator.sendBeacon(...)` debe clasificarse como crítico, no como lectura.
+_BROWSER_EXFIL_OR_MUTATION_MARKERS = (
+    ".click(", ".submit(", ".focus(", ".blur(", ".remove(", ".append(",
+    ".prepend(", ".insertadjacent", ".value", ".checked", ".setattribute(",
+    ".innerhtml", ".outerhtml", ".settimeout", ".setinterval",
+    "location", "window.open", "document.write", "document.cookie",
+    "localstorage", "sessionstorage", "indexeddb",
+    "fetch(", "xmlhttprequest", "sendbeacon", "websocket", "eventsource",
+    "new image", "importscripts", "import(", "navigator.",
+    "=",  # cualquier asignación puede mutar o preparar una exfiltración
+    "`",  # template literals: forma habitual de construir URLs de exfiltración
+)
+# Solo se permite como lectura si además hace una consulta/lectura del DOM;
+# así un `return 1` vacío no cuenta como acceso de lectura legítimo.
+_BROWSER_READ_MARKERS = (
+    "queryselector", ".gettext", ".innertext", ".textcontent", ".href",
+    ".getattribute(", ".dataset", ".length", ".children", ".parentelement",
+    ".closest(", ".matches(", "getelementby", "getelementsby",
+)
+
+
 def _looks_read_only_browser_script(script: str) -> bool:
     normalized = script.strip().lower()
     if not normalized:
         return False
-
-    mutation_markers = [
-        "=",
-        "click(",
-        ".click(",
-        ".submit(",
-        ".remove(",
-        ".append(",
-        ".prepend(",
-        ".focus(",
-        ".value",
-        "location.",
-        "window.open(",
-        "fetch(",
-        "xmlhttprequest",
-        "localstorage.setitem",
-        "sessionstorage.setitem",
-        "document.cookie",
-    ]
-    safe_markers = [
-        "document.queryselector",
-        "document.queryselectorall",
-        ".gettext",
-        ".innertext",
-        ".textcontent",
-        ".href",
-        ".getattribute(",
-        ".dataset",
-        ".length",
-        "return",
-    ]
-
-    if any(marker in normalized for marker in mutation_markers):
-        # Permitir selectores CSS con "=" dentro del script si el uso sigue siendo solo lectura.
-        return (
-            ("document.queryselector" in normalized or "document.queryselectorall" in normalized)
-            and not any(
-            risky in normalized for risky in [".click(", ".submit(", ".focus(", ".value", "location.", "fetch("]
-            )
-        )
-
-    return any(marker in normalized for marker in safe_markers)
+    if any(marker in normalized for marker in _BROWSER_EXFIL_OR_MUTATION_MARKERS):
+        return False
+    return any(marker in normalized for marker in _BROWSER_READ_MARKERS)
 
 
 class PolicyEngine:
@@ -359,6 +344,16 @@ class PolicyEngine:
 
         if action_type == "skill_uninstall":
             return self._review(action, "development", "system", "high", 0.70, "desinstala una skill del agente")
+
+        if action_type in {"skill_author", "skill_create", "skill_update"}:
+            # El agente escribe código ejecutable nuevo: siempre con aprobación
+            # humana, incluso en modo libre (approval_override="require").
+            review = self._review(
+                action, "development", "system", "high", 0.45,
+                "crea o modifica una skill con código que luego puede ejecutarse",
+            )
+            review["approval_override"] = "require"
+            return review
 
         if action_type == "skill_run":
             return self._review_skill_run(action)
