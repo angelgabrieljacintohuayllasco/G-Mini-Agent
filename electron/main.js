@@ -20,6 +20,7 @@ const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, dialog,
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 const yaml = require('js-yaml');
 
 protocol.registerSchemesAsPrivileged([
@@ -46,6 +47,9 @@ const BACKEND_START_TIMEOUT_MS = 60000;
 const BACKEND_HEALTH_CHECK_INTERVAL_MS = 1000;
 const BACKEND_HEALTH_REQUEST_TIMEOUT_MS = 1500;
 const PROJECT_ROOT = path.resolve(__dirname, '..');
+// Token de sesión que el núcleo exige a la UI (anti CSRF / DNS rebinding).
+const SESSION_TOKEN = crypto.randomBytes(32).toString('base64url');
+const SESSION_TOKEN_FILE = path.join(PROJECT_ROOT, 'data', 'runtime', 'session_token');
 const DEFAULT_CONFIG_PATH = path.join(PROJECT_ROOT, 'config.default.yaml');
 const USER_CONFIG_PATH = path.join(PROJECT_ROOT, 'config.user.yaml');
 const OVERLAY_STATE_FILENAME = 'overlay-state.json';
@@ -1309,6 +1313,7 @@ async function startBackend() {
                 PYTHONUNBUFFERED: '1',
                 PYTHONIOENCODING: 'utf-8',
                 PYTHONUTF8: '1',
+                GMINI_SESSION_TOKEN: SESSION_TOKEN,
             },
             stdio: ['ignore', 'pipe', 'pipe'],
         });
@@ -1701,7 +1706,19 @@ function toggleOverlay(enable) {
 
 // ── IPC Handlers ─────────────────────────────────────────────
 
+function readSessionToken() {
+    // Si el backend ya estaba corriendo (no lo lanzamos nosotros) su token es el del archivo.
+    try {
+        const stored = fs.readFileSync(SESSION_TOKEN_FILE, 'utf8').trim();
+        if (stored.length >= 32) return stored;
+    } catch (_) {
+        // sin archivo: usamos el token que pasamos al backend al lanzarlo
+    }
+    return SESSION_TOKEN;
+}
+
 ipcMain.handle('get-backend-url', () => BACKEND_URL);
+ipcMain.handle('get-session-token', () => readSessionToken());
 
 // ── Guardar media generada (imagen/video/audio) en una carpeta a eleccion ──
 function _fetchBufferFromUrl(url) {

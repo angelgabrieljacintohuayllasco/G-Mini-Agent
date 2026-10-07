@@ -18,6 +18,8 @@ import socketio
 import uvicorn
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.requests import Request as StarletteRequest
 from loguru import logger
 
 from backend.api.routes import router as api_router
@@ -28,6 +30,7 @@ from backend.config import config
 from backend.core.agent import AgentCore
 from backend.core.gateway_service import get_gateway
 from backend.core.scheduler import get_scheduler
+from backend.security import local_auth
 from backend.utils.logger import logger  # noqa: F811 - configura loguru
 
 
@@ -111,17 +114,58 @@ def create_app() -> socketio.ASGIApp:
         allow_headers=["*"],
     )
 
+    local_auth.get_session_token()  # crea data/runtime/session_token al arrancar
+
+    @app.middleware("http")
+    async def local_auth_middleware(request: StarletteRequest, call_next):
+        if not local_auth.host_is_allowed(request.headers.get("host")):
+            return JSONResponse(
+                status_code=403,
+                content={"error": {"code": "invalid_host", "message": "Host no permitido"}},
+            )
+        path = request.url.path
+        if (
+            path.startswith("/api/")
+            and request.method != "OPTIONS"
+            and local_auth.auth_required()
+            and not local_auth.is_public_route(request.method, path)
+        ):
+            token = local_auth.extract_token(request.headers, request.query_params)
+            info = local_auth.verify_token(token)
+            if info is None:
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": {"code": "invalid_token", "message": "Token ausente o inválido"}},
+                )
+            request.state.auth = info
+        return await call_next(request)
+
     app.include_router(api_router, prefix="/api")
 
     ext_bridge = get_bridge()
     editor_bridge = get_editor_bridge()
 
+    async def _reject_untrusted_ws(ws: WebSocket, *, allow_extensions: bool) -> bool:
+        """Cierra la conexión si viene de una web ajena o de un Host no permitido."""
+        origin = ws.headers.get("origin")
+        if not local_auth.host_is_allowed(ws.headers.get("host")) or local_auth.browser_origin_is_untrusted(
+            origin, allow_extensions=allow_extensions
+        ):
+            logger.warning(f"WebSocket {ws.url.path} rechazado (origin={origin!r})")
+            await ws.close(code=1008)
+            return True
+        return False
+
     @app.websocket("/ws/extension")
     async def ws_extension(ws: WebSocket):
+        if await _reject_untrusted_ws(ws, allow_extensions=True):
+            return
         await ext_bridge.handle_websocket(ws)
 
     @app.websocket("/ws/editor")
     async def ws_editor(ws: WebSocket):
+        if await _reject_untrusted_ws(ws, allow_extensions=False):
+            return
         await editor_bridge.handle_websocket(ws)
 
     return socketio.ASGIApp(sio, other_asgi_app=app)

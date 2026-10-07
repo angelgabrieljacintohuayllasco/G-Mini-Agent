@@ -5,6 +5,8 @@ Gestiona la comunicación bidireccional en tiempo real entre Electron y Python.
 
 from __future__ import annotations
 
+from typing import Any
+
 import socketio
 from loguru import logger
 
@@ -44,8 +46,32 @@ def _build_gateway_meta(environ: dict | None) -> dict[str, str]:
 
 # ── Connection Events ────────────────────────────────────────────
 
+def _authorize_socket(environ: dict, auth: Any) -> None:
+    """Rechaza la conexión Socket.IO sin token válido o desde un Host ajeno."""
+    from urllib.parse import parse_qs
+
+    from backend.security import local_auth
+
+    if not local_auth.host_is_allowed(environ.get("HTTP_HOST")):
+        raise socketio.exceptions.ConnectionRefusedError("invalid_host")
+    if not local_auth.auth_required():
+        return
+    token = ""
+    if isinstance(auth, dict):
+        token = str(auth.get("token") or "").strip()
+    if not token:
+        header = str(environ.get("HTTP_AUTHORIZATION") or "")
+        if header.lower().startswith("bearer "):
+            token = header[7:].strip()
+    if not token:
+        token = (parse_qs(str(environ.get("QUERY_STRING") or "")).get("token") or [""])[0]
+    if local_auth.verify_token(token) is None:
+        raise socketio.exceptions.ConnectionRefusedError("invalid_token")
+
+
 @sio.event
-async def connect(sid: str, environ: dict) -> None:
+async def connect(sid: str, environ: dict, auth: Any = None) -> None:
+    _authorize_socket(environ, auth)
     logger.info(f"Cliente conectado: {sid}")
     try:
         from backend.core.gateway_service import get_gateway

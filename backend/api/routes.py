@@ -375,6 +375,51 @@ async def list_models():
 
 # ── Config ───────────────────────────────────────────────────────
 
+@router.get("/auth/status")
+async def get_auth_status():
+    """Estado de la autenticación del núcleo (sin exponer tokens)."""
+    from backend.security import local_auth
+
+    devices = local_auth.list_devices()
+    return ConfigResponse(
+        success=True,
+        data={
+            "required": local_auth.auth_required(),
+            "session_token_file": str(local_auth.SESSION_TOKEN_FILE),
+            "api_tokens": sum(1 for d in devices if d.get("kind") == "api"),
+            "devices": sum(1 for d in devices if d.get("kind") == "device"),
+        },
+    )
+
+
+@router.post("/auth/regenerate")
+async def regenerate_auth_token():
+    """Emite un token de API nuevo. Se muestra una sola vez; se guarda hasheado."""
+    from backend.security import local_auth
+
+    token, record = local_auth.issue_device_token("Token de API", kind="api", scopes=list(local_auth.ALL_SCOPES))
+    return ConfigResponse(success=True, data={"token": token, "id": record.id})
+
+
+_SENSITIVE_KEY_PARTS = ("secret", "token", "password", "api_key", "apikey", "private_key")
+
+
+def _redact_config(value: Any) -> Any:
+    """Copia de la config sin valores de claves sensibles."""
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if any(part in lowered for part in _SENSITIVE_KEY_PARTS) and not lowered.endswith("_vault"):
+                out[key] = "***" if item else ""
+            else:
+                out[key] = _redact_config(item)
+        return out
+    if isinstance(value, list):
+        return [_redact_config(item) for item in value]
+    return value
+
+
 @router.get("/config")
 async def get_config():
     """Devuelve la configuración completa (sin API keys ni secciones sensibles)."""
@@ -390,10 +435,12 @@ async def get_config():
 @router.get("/config/{section}")
 async def get_config_section(section: str):
     """Devuelve una sección de la configuración."""
+    if section == "security":
+        raise HTTPException(status_code=403, detail="Sección protegida")
     data = config.get(section)
     if data is None:
         raise HTTPException(status_code=404, detail=f"Sección '{section}' no encontrada")
-    return ConfigResponse(success=True, data={section: data})
+    return ConfigResponse(success=True, data={section: _redact_config(data)})
 
 
 @router.get("/voice/metadata")

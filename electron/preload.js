@@ -8,6 +8,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('gmini', {
     // Backend URL
     getBackendUrl: () => ipcRenderer.invoke('get-backend-url'),
+    getSessionToken: () => ipcRenderer.invoke('get-session-token'),
 
     // Guardar media generada (imagen/video/audio) en carpeta a eleccion del usuario
     saveMediaAs: (url, filename) => ipcRenderer.invoke('save-media-as', url, filename),

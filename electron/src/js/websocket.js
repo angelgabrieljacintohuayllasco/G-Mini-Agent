@@ -29,7 +29,10 @@ class GminiWebSocket {
                 throw new Error('socket.io-client no cargado. Verifica que el script esté incluido en index.html');
             }
 
+            const token = window.gminiAuth ? await window.gminiAuth.ready : '';
+
             this.socket = io(this.backendUrl, {
+                auth: { token },
                 transports: ['websocket', 'polling'],
                 reconnection: true,
                 reconnectionAttempts: Infinity,
