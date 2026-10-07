@@ -27,6 +27,17 @@ except ImportError:
     HAS_WEBSOCKETS = False
     logger.info("websockets no disponible — Real-Time Voice deshabilitada")
 
+
+
+def _ws_connect(url: str, headers: dict | None = None):
+    """websockets>=14 recibe las cabeceras como additional_headers; 12 y 13, como extra_headers."""
+    if not headers:
+        return websockets.connect(url)
+    major = int(str(getattr(websockets, "__version__", "14")).split(".")[0])
+    key = "additional_headers" if major >= 14 else "extra_headers"
+    return websockets.connect(url, **{key: headers})
+
+
 try:
     import mss
     from PIL import Image
@@ -664,7 +675,7 @@ class RealTimeVoice:
             "Authorization": f"Bearer {api_key}",
         }
 
-        self._ws = await websockets.connect(url, extra_headers=headers)
+        self._ws = await _ws_connect(url, headers)
         self._active = True
 
         # Configurar sesión
@@ -935,7 +946,7 @@ class RealTimeVoice:
         )
 
         headers = {"Authorization": f"Bearer {access_token}"}
-        self._ws = await websockets.connect(url, additional_headers=headers)
+        self._ws = await _ws_connect(url, headers)
         self._active = True
 
         setup_msg: dict[str, Any] = {
@@ -1018,7 +1029,7 @@ class RealTimeVoice:
             "Authorization": f"Bearer {api_key}",
         }
 
-        self._ws = await websockets.connect(url, extra_headers=headers)
+        self._ws = await _ws_connect(url, headers)
         self._active = True
 
         # Configurar sesión (formato xAI Voice Agent API)
