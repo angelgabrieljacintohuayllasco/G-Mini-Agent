@@ -78,6 +78,38 @@ def credential_read_reason(resolved: Path) -> str | None:
     return None
 
 
+def self_write_reason(resolved: Path) -> str | None:
+    """Motivo si la escritura toca la config, el código o las skills ejecutables de G-Mini.
+
+    Con acceso de escritura a esas rutas, un texto inyectado (una web, un
+    archivo) podría agregar un hook o una skill que luego corre sin aprobación,
+    o cambiar la propia policy. Esas rutas se cambian desde la UI o con
+    skill_author (que siempre pide aprobación). security.protect_self: false lo
+    desactiva para quien desarrolla G-Mini con G-Mini.
+    """
+    from backend.config import CODE_DIR, ROOT_DIR, config
+
+    if not config.get("security", "protect_self", default=True):
+        return None
+    protected_files = {
+        (ROOT_DIR / "config.user.yaml").resolve(),
+        (CODE_DIR / "config.default.yaml").resolve(),
+    }
+    protected_dirs = (
+        ROOT_DIR / "data" / "runtime", ROOT_DIR / "data" / "skills", ROOT_DIR / "data" / "agent_skills",
+        CODE_DIR / "backend", CODE_DIR / "electron",
+    )
+    if resolved in protected_files:
+        return "configuración de G-Mini protegida (cámbiala desde Ajustes)"
+    for folder in protected_dirs:
+        try:
+            resolved.relative_to(folder.resolve())
+            return "archivos internos de G-Mini protegidos"
+        except ValueError:
+            continue
+    return None
+
+
 _GIT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/@{}~^:+-]{0,199}$")
 
 
@@ -169,6 +201,10 @@ class WorkspaceManager:
 
     def _check_write_access(self, resolved: Path) -> None:
         """Validate that a resolved path is within an allowed write directory."""
+        reason = self_write_reason(resolved) or credential_read_reason(resolved)
+        if reason:
+            logger.warning(f"Escritura bloqueada ({reason}): {resolved}")
+            raise PathAccessDeniedError(resolved, reason)
         resolved_str = str(resolved)
         for deny in _SYSTEM_DENY_PATTERNS_WRITE:
             if resolved_str.lower().startswith(deny.lower()):

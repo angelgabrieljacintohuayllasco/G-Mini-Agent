@@ -66,6 +66,13 @@ RealTimeVoice = None
 SimulatedRealtimeVoice = None
 
 
+PLAN_MODE_NOTE = (
+    "[MODO PLAN: no ejecutes ninguna acción en este turno. Responde con un plan numerado: pasos "
+    "concretos, qué acciones usarías en cada uno, riesgos y qué necesitas confirmar. Termina "
+    "preguntando si lo ejecutas; el usuario puede responder /ejecutar.]"
+)
+
+
 def _lazy_load_phase2():
     global VisionEngine, UIDetector, AutomationEngine, ADBController, BrowserController, ActionPlanner
     if VisionEngine is not None:
@@ -564,6 +571,7 @@ class AgentCore:
         self._pause_event.set()  # Starts unpaused
         self._current_task: asyncio.Task | None = None
         self._profile_memory_ids: set[str] = set()
+        self._plan_mode = False
         # Lote de acciones en curso: stop() lo cancela (y la terminal mata su árbol de procesos).
         self._current_action_task: asyncio.Task | None = None
         # Refs vivas de tasks fire-and-forget (evita GC mid-run; asyncio docs).
@@ -2702,6 +2710,18 @@ class AgentCore:
         if await self._handle_pending_approval(sid, text):
             return
 
+        # Comandos "/" (ayuda, nuevo, modo, plan, skills, recuerdos...): algunos
+        # responden sin llamar al modelo; otros le dan una instrucción precisa.
+        from backend.core import slash_commands
+
+        slash = await slash_commands.handle(self, text)
+        if slash is not None and slash.reply is not None:
+            await emit_message(sid, slash.reply, "text", done=True)
+            return
+        if slash is not None and slash.prompt:
+            text = slash.prompt
+        self._plan_mode = bool(slash and slash.plan_mode)
+
         # Configuración del loop
         max_iterations = config.get("automation", "max_loop_iterations", default=25)
         loop_timeout = config.get("automation", "loop_timeout_seconds", default=300)
@@ -2761,6 +2781,8 @@ class AgentCore:
             profile_directive = self._profile_directive_for_turn()
             if profile_directive:
                 turn_notes.append(profile_directive)
+            if self._plan_mode:
+                turn_notes.append(PLAN_MODE_NOTE)
             self._memory.set_turn_context("\n\n".join(turn_notes))
 
             # Rutas a archivos media que el usuario escribio directamente en el chat
@@ -2840,6 +2862,7 @@ class AgentCore:
             await self._emit_activity(sid, f"Error: {str(e)}", "error")
         finally:
             self._memory.clear_turn_context()
+            self._plan_mode = False
             await self._set_agent_status(sid, AgentStatus.IDLE)
             if self._active_sid == sid:
                 self._active_sid = ""
@@ -3074,6 +3097,13 @@ class AgentCore:
                     break
                 else:
                     consecutive_no_action_iterations = 0
+
+                if self._plan_mode:
+                    await emit_message(
+                        sid, "Modo plan: no ejecuté ninguna acción. Si el plan te sirve, escribe /ejecutar.",
+                        "system", done=True,
+                    )
+                    break
 
                 review = self._policy.review_actions(actions, mode_key=self._current_mode)
                 if review.get("blocked"):

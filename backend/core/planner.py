@@ -1459,7 +1459,15 @@ class ActionPlanner:
             action_id = f"act_{batch_stamp}_{index}"
             await _emit_action_start(action_id, action.type, action.params)
 
-            result = await self._execute_with_resilience(action)
+            # Hooks del usuario (config hooks.pre_action/post_action), como en Claude Code.
+            from backend.core import action_hooks
+
+            blocked_by = await action_hooks.run_pre(action.type, action.params)
+            if blocked_by:
+                result = {"action": action.type, "success": False, "message": f"Bloqueada por un hook: {blocked_by}"}
+            else:
+                result = await self._execute_with_resilience(action)
+                await action_hooks.run_post(action.type, action.params, result)
             if action.type == "task_complete":
                 result = self._validate_task_completion(
                     action,

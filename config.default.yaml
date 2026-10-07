@@ -394,6 +394,9 @@ payments:
   # per_transaction_limit_usd, daily_limit_usd, monthly_limit_usd y allowed_uses.
 
 security:
+  # El agente no puede escribir su config, su código ni sus skills ejecutables por la vía de
+  # archivos (un texto inyectado podría agregar un hook o una skill). false solo para desarrollar G-Mini.
+  protect_self: true
   virustotal:
     api_key_vault: "virustotal_api"
     timeout_seconds: 120
@@ -640,6 +643,13 @@ auxiliary:
   learning:
     provider: ""
     model: ""
+
+# ═══ Hooks antes/después de cada acción (como en Claude Code) ═══
+# Cada hook: {match: "terminal_run" | "browser_*" | "*", command: [programa, args...], timeout_s: 10}.
+# Reciben un JSON por stdin; en pre_action, salir con código 2 bloquea la acción.
+hooks:
+  pre_action: []
+  post_action: []
 
 # ═══ Phase 12: RPA + Macros + Rollback ═══
 macros:

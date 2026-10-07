@@ -23,7 +23,7 @@ ROOT_DIR = Path(_GMINI_HOME).expanduser().resolve() if _GMINI_HOME else CODE_DIR
 DEFAULT_CONFIG = CODE_DIR / "config.default.yaml"
 USER_CONFIG = ROOT_DIR / "config.user.yaml"
 # Recursos que trae el programa dentro de data/ (se copian a GMINI_HOME al arrancar).
-SHIPPED_DATA = ("prompts", "skills", "agent_skills/bundled", "crews", "models.yaml", "realtime_models.yaml")
+SHIPPED_DATA = ("prompts", "skills", "agent_skills/bundled", "crews", "commands", "models.yaml", "realtime_models.yaml")
 
 
 def sync_shipped_data(code_dir: Path = CODE_DIR, home_dir: Path = ROOT_DIR) -> None:
