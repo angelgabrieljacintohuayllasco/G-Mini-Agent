@@ -157,7 +157,7 @@
                     </div>
                 </div>
 
-                <aside id="code-panel" class="code-panel collapsed">
+                <aside id="code-panel" class="code-panel collapsed" aria-label="Workspace y panel de herramientas">
                     <div class="code-panel-header">
                         <div>
                             <div class="code-panel-title">Workspace y Scheduler</div>
@@ -169,15 +169,15 @@
                         </div>
                     </div>
 
-                    <div class="code-panel-tabs">
-                        <button id="btn-code-tab-workspace" class="code-tab is-active" type="button">Workspace</button>
-                        <button id="btn-code-tab-scheduler" class="code-tab" type="button">Scheduler</button>
-                        <button id="btn-code-tab-canvas" class="code-tab" type="button">Canvas</button>
-                        <button id="btn-code-tab-security" class="code-tab" type="button">Seguridad</button>
-                        <button id="btn-code-tab-analytics" class="code-tab" type="button">Analytics</button>
+                    <div class="code-panel-tabs" role="tablist" aria-label="Secciones del panel">
+                        <button id="btn-code-tab-workspace" role="tab" aria-controls="code-view-workspace" class="code-tab is-active" type="button">Workspace</button>
+                        <button id="btn-code-tab-scheduler" role="tab" aria-controls="code-view-scheduler" class="code-tab" type="button">Scheduler</button>
+                        <button id="btn-code-tab-canvas" role="tab" aria-controls="code-view-canvas" class="code-tab" type="button">Canvas</button>
+                        <button id="btn-code-tab-security" role="tab" aria-controls="code-view-security" class="code-tab" type="button">Seguridad</button>
+                        <button id="btn-code-tab-analytics" role="tab" aria-controls="code-view-analytics" class="code-tab" type="button">Analytics</button>
                     </div>
 
-                    <div id="code-view-workspace" class="code-panel-view is-active">
+                    <div id="code-view-workspace" role="tabpanel" aria-labelledby="btn-code-tab-workspace" class="code-panel-view is-active">
                         <div class="code-toolbar">
                             <input id="code-workspace-path" class="setting-input code-path-input" type="text" placeholder="Ruta del proyecto o workspace">
                             <button id="btn-load-code-workspace" class="btn-secondary">Abrir</button>
@@ -213,7 +213,7 @@
                         </div>
                     </div>
 
-                    <div id="code-view-scheduler" class="code-panel-view">
+                    <div id="code-view-scheduler" role="tabpanel" aria-labelledby="btn-code-tab-scheduler" class="code-panel-view">
                         <div class="code-toolbar">
                             <button id="btn-refresh-scheduler" class="btn-secondary">Recargar jobs</button>
                             <button id="btn-new-scheduler-job" class="btn-secondary">Nuevo job</button>
@@ -341,7 +341,7 @@
                         </div>
                     </div>
 
-                    <div id="code-view-canvas" class="code-panel-view">
+                    <div id="code-view-canvas" role="tabpanel" aria-labelledby="btn-code-tab-canvas" class="code-panel-view">
                         <div class="code-toolbar">
                             <button id="btn-refresh-canvas" class="btn-secondary">Recargar</button>
                             <button id="btn-new-canvas" class="btn-secondary">Nuevo canvas</button>
@@ -385,7 +385,7 @@
                     </div>
 
                     <!-- ═══ Phase 10: Security Panel ═══ -->
-                    <div id="code-view-security" class="code-panel-view">
+                    <div id="code-view-security" role="tabpanel" aria-labelledby="btn-code-tab-security" class="code-panel-view">
                         <div class="code-toolbar">
                             <button id="btn-refresh-security" class="btn-secondary">Actualizar</button>
                         </div>
@@ -446,7 +446,7 @@
                     </div>
 
                     <!-- Analytics & Goals Dashboard (Phase 13) -->
-                    <div id="code-view-analytics" class="code-panel-view">
+                    <div id="code-view-analytics" role="tabpanel" aria-labelledby="btn-code-tab-analytics" class="code-panel-view">
                         <div class="code-toolbar">
                             <button id="btn-refresh-analytics" class="btn-secondary">Actualizar</button>
                             <select id="analytics-period" class="setting-select" style="width:auto">

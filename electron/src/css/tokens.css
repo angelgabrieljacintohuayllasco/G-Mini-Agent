@@ -99,7 +99,8 @@
 
     --accent: var(--acc-600);
     --accent-hover: var(--acc-500);
-    --accent-text: var(--acc-500);
+    /* 400 y no 500: sobre la superficie oscura el 500 queda en 4.4:1 (AA pide 4.5). */
+    --accent-text: var(--acc-400);
     --accent-soft: color-mix(in srgb, var(--acc-500) 16%, transparent);
     --accent-glow: color-mix(in srgb, var(--acc-500) 32%, transparent);
 

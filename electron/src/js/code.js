@@ -243,6 +243,7 @@ class CodeManager {
         };
         for (const [key, { btn, view }] of Object.entries(tabMap)) {
             btn?.classList.toggle('is-active', key === tab);
+            btn?.setAttribute('aria-selected', key === tab ? 'true' : 'false');
             view?.classList.toggle('is-active', key === tab);
         }
         const subtitles = {
