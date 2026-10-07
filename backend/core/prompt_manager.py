@@ -4,6 +4,7 @@ Prompt registry and configurable prompt loading for G-Mini Agent.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -90,9 +91,38 @@ CORE_PROMPT_SPECS: dict[str, dict[str, str]] = {
 }
 
 
-class _SafeFormatDict(dict):
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
+# {{ y }} se vuelven llaves literales; {nombre}, {nombre!r} y {nombre:.2f} se
+# sustituyen solo si la variable existe. Cualquier otra llave ({...}, {}, {0},
+# JSON de ejemplo) queda tal cual, así un prompt editado por el usuario nunca
+# rompe el render.
+_PLACEHOLDER_RE = re.compile(
+    r"\{\{|\}\}|\{([A-Za-z_][A-Za-z0-9_]*)(?:!([rsa]))?(?::([^{}]*))?\}"
+)
+
+
+def render_template(template: str, variables: dict[str, Any]) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if token == "{{":
+            return "{"
+        if token == "}}":
+            return "}"
+        name, conversion, spec = match.group(1), match.group(2), match.group(3)
+        if name not in variables:
+            return token
+        value = variables[name]
+        if conversion == "r":
+            value = repr(value)
+        elif conversion == "a":
+            value = ascii(value)
+        elif conversion == "s":
+            value = str(value)
+        try:
+            return format(value, spec or "")
+        except (TypeError, ValueError):
+            return str(value)
+
+    return _PLACEHOLDER_RE.sub(_replace, template)
 
 
 def _load_text_file(relative_path: str | None) -> str:
@@ -143,7 +173,7 @@ def render_prompt_text(prompt_key: str, *, fallback: str = "", variables: dict[s
     template, _ = get_prompt_text(prompt_key, fallback=fallback)
     if not variables:
         return template
-    return template.format_map(_SafeFormatDict({key: value for key, value in variables.items()}))
+    return render_template(template, dict(variables))
 
 
 def set_prompt_override(prompt_key: str, content: str) -> None:
