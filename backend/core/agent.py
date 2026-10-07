@@ -18,6 +18,7 @@ from loguru import logger
 
 from backend.automation.editor_bridge import get_editor_bridge
 from backend.config import config, ROOT_DIR
+from backend.core.action_output import build_results_block
 from backend.core.memory import Memory
 from backend.core.ide_manager import IDEManager
 from backend.core.modes import DEFAULT_MODE_KEY, build_autonomy_context, build_mode_system_prompt, get_mode, get_mode_behavior_prompt, list_modes
@@ -559,6 +560,8 @@ class AgentCore:
         self._pause_event: asyncio.Event = asyncio.Event()
         self._pause_event.set()  # Starts unpaused
         self._current_task: asyncio.Task | None = None
+        # Lote de acciones en curso: stop() lo cancela (y la terminal mata su árbol de procesos).
+        self._current_action_task: asyncio.Task | None = None
         # Refs vivas de tasks fire-and-forget (evita GC mid-run; asyncio docs).
         self._bg_tasks: set[asyncio.Task] = set()
         self._active_sid: str = ""
@@ -1832,16 +1835,24 @@ class AgentCore:
                 ]},
             )
 
+        # El modelo recibe el contenido real de cada acción (archivos, terminal,
+        # MCP, DOM, diffs), no solo la línea de estado que ve la UI.
+        llm_feedback_parts = list(action_feedback_parts)
+        results_block = build_results_block(results)
+        if results_block:
+            llm_feedback_parts.append("")
+            llm_feedback_parts.append(results_block)
+
         if screenshot_b64 and not task_completed:
-            await self._inject_screenshot_result(screenshot_b64, screenshot_dims)
-            logger.info("📸 Screenshot re-inyectado al contexto del LLM")
-            if action_feedback_parts and (has_action_failures or has_desktop_fallback_guidance):
-                self._memory.add_user_message(
-                    self._build_action_feedback_prompt(action_feedback_parts, results)
-                )
+            only_screenshots = all(
+                str(r.get("action", "")) in {"screenshot", "browser_screenshot"} for r in results
+            )
+            extra_text = "" if only_screenshots else self._build_action_feedback_prompt(llm_feedback_parts, results)
+            await self._inject_screenshot_result(screenshot_b64, screenshot_dims, extra_text=extra_text)
+            logger.info("Screenshot re-inyectado al contexto del LLM")
         elif action_feedback_parts and not task_completed:
             self._memory.add_user_message(
-                self._build_action_feedback_prompt(action_feedback_parts, results)
+                self._build_action_feedback_prompt(llm_feedback_parts, results)
             )
 
         return task_completed
@@ -2211,7 +2222,11 @@ class AgentCore:
         set_planner_socket(sio, sid)
         await sio.emit("agent:executing", {"active": True}, to=sid)
         try:
-            results = await self._planner.execute_actions(actions)
+            results = await self._run_actions_cancellable(actions)
+        except asyncio.CancelledError:
+            await self._set_agent_status(sid, AgentStatus.IDLE)
+            await emit_message(sid, "Ejecución detenida.", "warning", done=True)
+            return
         except Exception as exc:
             logger.exception(f"Error ejecutando acciones aprobadas: {exc}")
             await self._set_agent_status(sid, AgentStatus.IDLE)
@@ -3041,7 +3056,7 @@ class AgentCore:
                 set_planner_socket(sio, sid)
                 await sio.emit("agent:executing", {"active": True}, to=sid)
                 try:
-                    results = await self._planner.execute_actions(actions)
+                    results = await self._run_actions_cancellable(actions)
                 finally:
                     await sio.emit("agent:executing", {"active": False}, to=sid)
 
@@ -3173,7 +3188,13 @@ class AgentCore:
         await self._set_agent_status(sid, AgentStatus.IDLE)
         await self._maybe_synthesize_tts(sid, self._memory.get_last_assistant_message())
 
-    async def _inject_screenshot_result(self, image_base64: str, screen_dims: dict | None = None) -> None:
+    async def _inject_screenshot_result(
+        self,
+        image_base64: str,
+        screen_dims: dict | None = None,
+        *,
+        extra_text: str = "",
+    ) -> None:
         """Re-inyecta un screenshot al contexto del LLM como mensaje con imagen."""
         dims_info = ""
         if screen_dims:
@@ -3199,6 +3220,8 @@ class AgentCore:
             ),
             variables={"dims_info": dims_info},
         )
+        if extra_text:
+            feedback = f"{extra_text}\n\n{feedback}"
         # Crear mensaje con imagen
         self._memory.add_message_with_image("user", feedback, [image_base64])
 
@@ -3241,11 +3264,27 @@ class AgentCore:
         except Exception as e:
             logger.warning(f"TTS error (non-blocking): {e}")
 
+    async def _run_actions_cancellable(self, actions: list) -> list[dict[str, Any]]:
+        """Ejecuta un lote de acciones como tarea cancelable por stop()."""
+        task = asyncio.create_task(self._planner.execute_actions(actions))
+        self._current_action_task = task
+        try:
+            return await task
+        finally:
+            if self._current_action_task is task:
+                self._current_action_task = None
+
     async def stop(self) -> None:
-        """Detiene la generación actual."""
+        """Detiene la generación y las acciones en curso."""
         self._cancel_event.set()
         self._paused = False
         self._pause_event.set()
+        action_task = self._current_action_task
+        if action_task is not None and not action_task.done():
+            action_task.cancel()
+            logger.info("AgentCore: lote de acciones cancelado por stop")
+        # Una aprobación pendiente no debe poder ejecutarse después de Stop.
+        self._pending_approval = None
         # Cancelar operaciones de media en curso
         try:
             from backend.providers.google_media import cancel_media_generation

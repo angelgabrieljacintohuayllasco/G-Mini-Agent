@@ -17,7 +17,63 @@ from uuid import uuid4
 
 from loguru import logger
 
+from backend.config import config
 from backend.core.exec_approvals import evaluate_command, get_exec_approvals_summary
+
+_MAX_OUTPUT_BYTES = 2 * 1024 * 1024
+
+
+def _default_timeout() -> float:
+    try:
+        return max(5.0, float(config.get("terminals", "timeout_seconds", default=120)))
+    except (TypeError, ValueError):
+        return 120.0
+
+
+def _new_process_group_kwargs() -> dict[str, Any]:
+    """Proceso en su propio grupo para poder matar también a sus hijos."""
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+    return {"start_new_session": True}
+
+
+def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                capture_output=True, timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        else:
+            import signal
+
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+    except Exception as exc:
+        logger.debug(f"No se pudo matar el árbol del proceso {process.pid}: {exc}")
+        try:
+            process.kill()
+        except Exception:
+            pass
+
+
+async def _read_capped(stream: asyncio.StreamReader | None, chunks: list[bytes]) -> None:
+    """Lee la salida sin bloquear al proceso; guarda hasta 2 MB (cabeza y cola)."""
+    if stream is None:
+        return
+    total = 0
+    while True:
+        data = await stream.read(65536)
+        if not data:
+            return
+        total += len(data)
+        chunks.append(data)
+        if total > _MAX_OUTPUT_BYTES:
+            # Conservar el inicio y lo último: se descarta lo del medio.
+            while sum(len(c) for c in chunks) > _MAX_OUTPUT_BYTES and len(chunks) > 2:
+                chunks.pop(1)
 
 
 @dataclass(frozen=True)
@@ -126,6 +182,7 @@ class TerminalManager:
         cwd: str | None = None,
         shell_key: str | None = None,
         task_type: str = "auto",
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         approval = evaluate_command(command)
         if not approval.allowed:
@@ -148,23 +205,56 @@ class TerminalManager:
         self._sessions[session.id] = session
 
         cmd_list, effective_cwd = self._build_command(shell, command, session.cwd)
-        logger.info(f"Terminal session {session.id} usando {shell.key}: {command}")
+        timeout = float(timeout_seconds or _default_timeout())
+        logger.info(f"Terminal session {session.id} usando {shell.key} (timeout {timeout:.0f}s): {command}")
         process = await asyncio.create_subprocess_exec(
             *cmd_list,
             cwd=effective_cwd,
+            stdin=asyncio.subprocess.DEVNULL,  # un comando que pide entrada no debe colgar al agente
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            **_new_process_group_kwargs(),
         )
         session.pid = process.pid
-        output_bytes, _ = await process.communicate()
+        chunks: list[bytes] = []
+        reader = asyncio.create_task(_read_capped(process.stdout, chunks))
+        timed_out = False
+        try:
+            await asyncio.wait_for(process.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            timed_out = True
+            _kill_process_tree(process)
+            logger.warning(f"Terminal session {session.id} superó {timeout:.0f}s; proceso detenido")
+        except asyncio.CancelledError:
+            # Stop del usuario: matar el árbol completo (cmd/npm dejan hijos vivos).
+            _kill_process_tree(process)
+            session.status = "cancelled"
+            session.finished_at = datetime.now().isoformat()
+            reader.cancel()
+            raise
+        try:
+            await asyncio.wait_for(reader, timeout=5)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            reader.cancel()
+
         session.return_code = process.returncode
         session.finished_at = datetime.now().isoformat()
-        session.output = (output_bytes or b"").decode("utf-8", errors="replace")
-        session.status = "completed" if process.returncode == 0 else "failed"
+        session.output = b"".join(chunks).decode("utf-8", errors="replace")
+        if timed_out:
+            session.status = "timeout"
+        else:
+            session.status = "completed" if process.returncode == 0 else "failed"
         logger.info(
-            f"Terminal session {session.id} finalizada | shell={shell.key} rc={session.return_code}"
+            f"Terminal session {session.id} finalizada | shell={shell.key} rc={session.return_code} status={session.status}"
         )
-        return session.to_dict()
+        result = session.to_dict()
+        result.update({
+            "output": session.output,
+            "stdout": session.output,
+            "exit_code": session.return_code,
+            "timed_out": timed_out,
+        })
+        return result
 
     def _first_available(self, keys: list[str]) -> ShellInfo:
         for key in keys:

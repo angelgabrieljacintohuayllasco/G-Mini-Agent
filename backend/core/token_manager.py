@@ -71,6 +71,12 @@ def count_messages_tokens(messages: list[dict]) -> int:
                     elif part.get("type") in ("image_url", "image"):
                         total += 1000
             total += 4
+        # El agente pasa imágenes y adjuntos en claves aparte (no dentro de content).
+        total += 1000 * len(msg.get("images") or [])
+        for attachment in msg.get("files") or []:
+            if isinstance(attachment, dict):
+                # base64 → bytes ≈ 3/4; ~4 bytes por token como estimación conservadora.
+                total += max(250, int(len(str(attachment.get("data", ""))) * 0.75 / 4))
     return total
 
 

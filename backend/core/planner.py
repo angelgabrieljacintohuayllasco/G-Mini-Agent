@@ -512,6 +512,26 @@ def _extract_action_matches(text: str) -> list[tuple[str, str, str]]:
     return matches
 
 
+_CANONICAL_INT_RE = re.compile(r"^-?(?:0|[1-9][0-9]*)$")
+_CANONICAL_FLOAT_RE = re.compile(r"^-?(?:0|[1-9][0-9]*)\.[0-9]+$")
+_KNOWN_ACTION_TYPES: frozenset[str] | None = None
+
+
+def _known_action_types() -> frozenset[str]:
+    """Nombres de acción que el planner sabe ejecutar (leídos de sus `case`)."""
+    global _KNOWN_ACTION_TYPES
+    if _KNOWN_ACTION_TYPES is None:
+        import inspect
+
+        source = inspect.getsource(ActionPlanner._execute_single)
+        names: set[str] = set()
+        for group in re.findall(r'case\s+((?:"[a-z_]+"\s*\|?\s*)+):', source):
+            names.update(re.findall(r'"([a-z_]+)"', group))
+        names.update(ACTION_TYPE_ALIASES.values())
+        _KNOWN_ACTION_TYPES = frozenset(names)
+    return _KNOWN_ACTION_TYPES
+
+
 class ActionPlanner:
     """
     Planificador de acciones.
@@ -635,7 +655,9 @@ class ActionPlanner:
                 continue
 
             key = pair[:eq_index].strip()
-            value: Any = _strip_wrapping_quotes(pair[eq_index + 1 :].strip())
+            raw_value = pair[eq_index + 1 :].strip()
+            was_quoted = len(raw_value) >= 2 and raw_value[0] == raw_value[-1] and raw_value[0] in "\"'"
+            value: Any = _strip_wrapping_quotes(raw_value)
             value = value.replace('\\"', '"').replace("\\'", "'")
             lowered_key = key.lower()
 
@@ -676,53 +698,47 @@ class ActionPlanner:
                 params[key] = _coerce_bool(value)
                 continue
 
-            try:
-                value = int(value)
-            except ValueError:
-                try:
+            # Solo números escritos sin comillas y en forma canónica: "000123",
+            # teléfonos con 0 inicial, OTPs o "1e3" se quedan como texto.
+            if not was_quoted and isinstance(value, str):
+                if _CANONICAL_INT_RE.match(value):
+                    value = int(value)
+                elif _CANONICAL_FLOAT_RE.match(value):
                     value = float(value)
-                except ValueError:
-                    pass
 
             params[key] = value
 
         return params
 
     def _parse_json_actions(self, text: str) -> list[Action]:
-        """Intenta parsear acciones en formato JSON del LLM."""
-        actions = []
-
-        # Buscar bloques JSON con tool_calls o actions
-        json_pattern = re.compile(r'```json\s*([\s\S]*?)```')
+        """
+        Acciones en bloques JSON. Solo cuenta un objeto con clave "action" cuyo
+        valor es una acción conocida: un ejemplo de JSON en la respuesta (un
+        esquema con "type": "object", un array de datos) no es una acción.
+        """
+        actions: list[Action] = []
+        known = _known_action_types()
+        json_pattern = re.compile(r"```(?:json|gmini-actions)\s*([\s\S]*?)```")
         for match in json_pattern.finditer(text):
             try:
                 data = json.loads(match.group(1))
-                if isinstance(data, list):
-                    for item in data:
-                        if "action" in item or "type" in item:
-                            action_type = self._normalize_action_type(item.get("action", item.get("type", "")))
-                            actions.append(Action(
-                                type=action_type,
-                                params=self._normalize_action_params(
-                                    action_type,
-                                    dict(item.get("params", item.get("parameters", {})) or {}),
-                                ),
-                                description=str(item),
-                            ))
-                elif isinstance(data, dict):
-                    if "action" in data or "type" in data:
-                        action_type = self._normalize_action_type(data.get("action", data.get("type", "")))
-                        actions.append(Action(
-                            type=action_type,
-                            params=self._normalize_action_params(
-                                action_type,
-                                dict(data.get("params", data.get("parameters", {})) or {}),
-                            ),
-                            description=str(data),
-                        ))
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, ValueError):
                 continue
-
+            items = data if isinstance(data, list) else [data]
+            for item in items:
+                if not isinstance(item, dict) or "action" not in item:
+                    continue
+                action_type = self._normalize_action_type(str(item.get("action", "")))
+                if action_type not in known:
+                    continue
+                raw_params = item.get("params", item.get("parameters", {}))
+                if not isinstance(raw_params, dict):
+                    continue
+                actions.append(Action(
+                    type=action_type,
+                    params=self._normalize_action_params(action_type, dict(raw_params)),
+                    description=json.dumps(item, ensure_ascii=False)[:500],
+                ))
         return actions
 
     def _normalize_action_type(self, action_type: str) -> str:
@@ -3044,18 +3060,30 @@ class ActionPlanner:
                     resolved_shell = str(shell_key) if shell_key else "powershell"
                     if resolved_shell in ("powershell", "cmd"):
                         command = command.replace("\\\\", "\\")
+                    timeout_param = action.params.get("timeout", action.params.get("timeout_seconds"))
+                    try:
+                        timeout_seconds = float(timeout_param) if timeout_param not in (None, "") else None
+                    except (TypeError, ValueError):
+                        timeout_seconds = None
                     data = await self._terminals.run_command(
                         command=command,
                         cwd=str(cwd) if cwd else None,
                         shell_key=str(shell_key) if shell_key else None,
                         task_type=task_type,
+                        timeout_seconds=timeout_seconds,
                     )
-                    result["success"] = data.get("return_code", 1) == 0
+                    result["success"] = data.get("return_code", 1) == 0 and not data.get("timed_out")
                     result["data"] = data
-                    result["message"] = (
-                        f"Terminal {data['shell_name']} rc={data.get('return_code')} | "
-                        f"{data.get('output_preview', '')}"
-                    )
+                    if data.get("timed_out"):
+                        result["message"] = (
+                            f"Terminal {data['shell_name']}: el comando superó el tiempo límite y se detuvo. "
+                            "Si es un servidor o proceso que no termina, ejecútalo en segundo plano."
+                        )
+                    else:
+                        result["message"] = (
+                            f"Terminal {data['shell_name']} rc={data.get('return_code')} | "
+                            f"{data.get('output_preview', '')}"
+                        )
 
                 case "chrome_open_profile":
                     query = action.params.get("query")

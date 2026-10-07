@@ -22,6 +22,15 @@ DB_DIR.mkdir(exist_ok=True)
 DB_PATH = DB_DIR / "memory.db"
 
 
+def _config_int(section: str, key: str, default: int) -> int:
+    try:
+        from backend.config import config
+
+        return max(0, int(config.get(section, key, default=default)))
+    except Exception:
+        return default
+
+
 class Memory:
     """
     Gestiona el historial de conversación y la persistencia.
@@ -184,23 +193,47 @@ class Memory:
                 return msg["content"]
         return None
 
-    def get_llm_messages(self) -> list[LLMMessage]:
-        """Retorna los mensajes en formato LLMMessage para enviar al provider."""
-        result = []
+    def get_llm_messages(
+        self,
+        *,
+        max_image_messages: int | None = None,
+        max_file_messages: int | None = None,
+    ) -> list[LLMMessage]:
+        """
+        Mensajes para el provider. Solo los últimos mensajes con imágenes/adjuntos
+        conservan sus binarios: reenviar cada captura en cada llamada hacía crecer
+        el costo en cada paso y terminaba superando el límite del proveedor.
+        """
+        if max_image_messages is None:
+            max_image_messages = _config_int("memory", "max_images_in_context", 3)
+        if max_file_messages is None:
+            max_file_messages = _config_int("memory", "max_attachments_in_context", 2)
 
-        # System prompt primero
+        keep_images: set[int] = set()
+        keep_files: set[int] = set()
+        for index in range(len(self._messages) - 1, -1, -1):
+            msg = self._messages[index]
+            if msg.get("images") and len(keep_images) < max_image_messages:
+                keep_images.add(index)
+            if msg.get("files") and len(keep_files) < max_file_messages:
+                keep_files.add(index)
+
+        result = []
         if self._system_prompt:
             result.append(LLMMessage(role="system", content=self._system_prompt))
 
-        # Historial de conversación (con imágenes si las hay)
-        for msg in self._messages:
-            images = msg.get("images", [])
-            result.append(LLMMessage(
-                role=msg["role"],
-                content=msg["content"],
-                images=images,
-                files=msg.get("files", []),
-            ))
+        for index, msg in enumerate(self._messages):
+            content = msg["content"]
+            images = msg.get("images", []) or []
+            files = msg.get("files", []) or []
+            if images and index not in keep_images:
+                content = f"{content}\n[{len(images)} captura(s) anterior(es) omitida(s) para ahorrar contexto]"
+                images = []
+            if files and index not in keep_files:
+                names = ", ".join(str(f.get("file_name", "archivo")) for f in files if isinstance(f, dict))
+                content = f"{content}\n[adjuntos ya enviados antes: {names}]"
+                files = []
+            result.append(LLMMessage(role=msg["role"], content=content, images=images, files=files))
 
         return result
 
