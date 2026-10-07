@@ -1,0 +1,43 @@
+# G-Mini sin escritorio: VPS, Raspberry Pi, contenedores (python -m backend.main --headless).
+# Deja fuera visión, control de mouse/teclado, OCR y los modelos locales, que
+# necesitan pantalla o pesan varios GB. Para reconocer voz en el servidor
+# agrega faster-whisper.
+
+# Núcleo
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-socketio>=5.11.0
+pydantic>=2.6.0
+pydantic-settings>=2.2.0
+pyyaml>=6.0
+aiofiles>=23.0.0
+aiohttp>=3.9.0
+requests>=2.31.0
+
+# Proveedores de IA
+openai>=1.82.0
+anthropic>=0.52.0
+cohere>=5.9.0
+google-genai>=1.14.0
+tiktoken>=0.7.0
+
+# Keys, memoria y tareas
+keyring>=25.0.0
+aiosqlite>=0.20.0
+croniter>=2.0.0
+loguru>=0.7.0
+numpy>=1.26.0
+Pillow>=10.2.0
+networkx>=3.2
+openpyxl>=3.1
+
+# Voz y conectores
+websockets>=12.0
+soundfile>=0.12.1
+edge-tts>=7.0.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# Gateway
+discord.py>=2.4.0
+slack-sdk>=3.27.0

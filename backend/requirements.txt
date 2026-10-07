@@ -34,6 +34,11 @@ loguru>=0.7.0
 # Utils
 numpy>=1.26.0
 Pillow>=10.2.0
+requests>=2.31.0
+
+# Conectores de datos (lector web, RSS, Wikipedia)
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
 
 # ═══ Phase 2: Vision + Automation ═══
 # Screen capture
@@ -64,6 +69,7 @@ einops>=0.8.0
 
 # ═══ Phase 3: Voice + Character ═══
 # TTS
+edge-tts>=7.0.0      # Voces neuronales de Edge, sin API key
 # melo-tts>=0.1.0    # Descomentar cuando esté disponible en PyPI
 elevenlabs>=1.0.0
 

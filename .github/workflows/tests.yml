@@ -4,24 +4,66 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  checks:
+  pytest:
+    name: pytest (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, python: "3.13" }
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: ubuntu-latest, python: "3.11" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements-server.txt
+            backend/requirements-ci.txt
+
+      # Sin visión, automatización de escritorio ni modelos locales: los tests
+      # no los cargan (la importación es diferida) y pesan varios GB.
+      - name: Instalar dependencias
+        run: python -m pip install -r backend/requirements-ci.txt
+
+      - name: Tests
+        run: python -m pytest -q
+
+  config:
+    name: config por defecto
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      # ponytail: CI runs syntax + CORS guard only. Importing the app drags in
-      # torch + transformers + melo (import-time coupling), too heavy for CI.
-      # Full auth tests run locally:
-      #   python -m unittest tests.test_webhook_security
-      - name: Syntax check (compile all)
-        run: python -m compileall -q backend tests
-
-      - name: CORS must not be wildcard (issue #1)
+      - name: CORS sin comodín y servidor solo en localhost
         run: |
           pip install pyyaml
-          python -c "import yaml,sys; o=yaml.safe_load(open('config.default.yaml',encoding='utf-8'))['server']['cors_origins']; print('cors_origins =', o); sys.exit('FAIL: wildcard CORS in default config' if '*' in o else 0)"
+          python - <<'EOF'
+          import sys, yaml
+          server = yaml.safe_load(open("config.default.yaml", encoding="utf-8"))["server"]
+          origins = server.get("cors_origins") or []
+          print("cors_origins =", origins, "| host =", server.get("host"))
+          if "*" in origins:
+              sys.exit("FAIL: CORS abierto a cualquier origen (*) en la config por defecto")
+          if server.get("host") not in ("127.0.0.1", "localhost"):
+              sys.exit("FAIL: el servidor por defecto debe escuchar solo en localhost")
+          EOF
