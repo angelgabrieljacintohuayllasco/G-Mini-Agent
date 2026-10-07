@@ -1,0 +1,407 @@
+/* ═══ G-Mini Agent — Design tokens, temas y acentos ═══
+ *
+ * Temas:   <html data-theme="dark|ocean|midnight|light|paper|contrast">
+ * Acentos: <html data-accent="blue|violet|green|amber|rose|cyan">
+ * Densidad:<html data-density="comfortable|compact">
+ * Motion:  <html data-motion="full|reduced">  (+ prefers-reduced-motion)
+ *
+ * Los nombres --bg-*, --text-*, --accent*, --border, --success/--warning/--error
+ * son la API pública que usa main.css; cada tema solo redefine valores.
+ * Contrastes verificados (WCAG AA): texto >= 4.5:1 sobre fondo y superficie.
+ */
+
+:root {
+    /* ── Escalas ───────────────────────────────────────────── */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --space-7: 48px;
+    --space-8: 64px;
+
+    --radius-xs: 4px;
+    --radius-sm: 6px;
+    --radius: 8px;
+    --radius-lg: 12px;
+    --radius-pill: 999px;
+
+    --fs-xs: 12px;
+    --fs-sm: 13px;
+    --fs-base: 14px;
+    --fs-md: 16px;
+    --fs-lg: 20px;
+    --fs-xl: 24px;
+    --lh-tight: 1.25;
+    --lh-base: 1.5;
+    --fw-regular: 400;
+    --fw-medium: 500;
+    --fw-semibold: 600;
+
+    --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    --font-mono: "Cascadia Code", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    --font-scale: 1;
+
+    --control-h-sm: 28px;
+    --control-h: 32px;
+    --control-h-lg: 40px;
+    --pad-x: 12px;
+    --pad-y: 8px;
+
+    --dur-fast: 120ms;
+    --dur: 160ms;
+    --dur-slow: 240ms;
+    --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+    --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+
+    --z-dropdown: 50;
+    --z-overlay: 90;
+    --z-modal: 100;
+    --z-toast: 200;
+    --z-palette: 300;
+
+    /* ── Acentos (por defecto: azul G-Mini) ────────────────── */
+    --acc-400: #7097ff;
+    --acc-500: #4d7cff;
+    --acc-600: #3563e9;
+    --acc-700: #2a50c4;
+    --acc-on-fill: #ffffff;
+}
+
+/* ── Acentos ─────────────────────────────────────────────────── */
+:root[data-accent="violet"] { --acc-400: #a68af5; --acc-500: #8a63f0; --acc-600: #7148dc; --acc-700: #5c37bd; --acc-on-fill: #ffffff; }
+:root[data-accent="green"]  { --acc-400: #3fcf98; --acc-500: #1f9d6f; --acc-600: #167f59; --acc-700: #116646; --acc-on-fill: #ffffff; }
+:root[data-accent="amber"]  { --acc-400: #f2bb63; --acc-500: #e8a33d; --acc-600: #e8a33d; --acc-700: #8a5a10; --acc-on-fill: #1a1307; }
+:root[data-accent="rose"]   { --acc-400: #ef7aa8; --acc-500: #e0558c; --acc-600: #c73c74; --acc-700: #a8305f; --acc-on-fill: #ffffff; }
+:root[data-accent="cyan"]   { --acc-400: #4fd0e3; --acc-500: #1aa5bb; --acc-600: #0f7d8f; --acc-700: #0e6a79; --acc-on-fill: #ffffff; }
+
+/* ── Tema oscuro "Grafito" (por defecto) ─────────────────────── */
+:root,
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg-primary: #0f1115;
+    --bg-secondary: #15181e;
+    --bg-surface: #1b1f27;
+    --bg-hover: #232833;
+    --bg-active: #2a303c;
+    --bg-elevated: #1d212a;
+    --bg-input: #13161c;
+    --bg-code: #0b0d11;
+    --border: #272c36;
+    --border-strong: #363c49;
+    --text-primary: #e7e9ee;
+    --text-secondary: #a4abb9;
+    --text-muted: #838b9b;
+    --text-on-accent: var(--acc-on-fill);
+
+    --accent: var(--acc-600);
+    --accent-hover: var(--acc-500);
+    --accent-text: var(--acc-500);
+    --accent-soft: color-mix(in srgb, var(--acc-500) 16%, transparent);
+    --accent-glow: color-mix(in srgb, var(--acc-500) 32%, transparent);
+
+    --success: #3fb97c;
+    --warning: #e9a23b;
+    --error: #f06464;
+    --info: #4fb3e8;
+    --success-soft: rgba(63, 185, 124, 0.14);
+    --warning-soft: rgba(233, 162, 59, 0.14);
+    --error-soft: rgba(240, 100, 100, 0.14);
+    --info-soft: rgba(79, 179, 232, 0.14);
+
+    --scrollbar: #2c323e;
+    --scrollbar-hover: #3b4250;
+    --selection: color-mix(in srgb, var(--acc-500) 35%, transparent);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.38), 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 20px 48px rgba(0, 0, 0, 0.5);
+    --overlay-backdrop: rgba(5, 6, 9, 0.6);
+    --focus-ring: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--accent-text);
+}
+
+/* ── Tema "Océano" (oscuro azulado, tono de la marca) ────────── */
+:root[data-theme="ocean"] {
+    color-scheme: dark;
+    --bg-primary: #0b1220;
+    --bg-secondary: #0f1828;
+    --bg-surface: #142033;
+    --bg-hover: #1b2a40;
+    --bg-active: #22334d;
+    --bg-elevated: #16233a;
+    --bg-input: #0d1626;
+    --bg-code: #081019;
+    --border: #1f2e45;
+    --border-strong: #2c3f5c;
+    --text-primary: #e6edf7;
+    --text-secondary: #a3b2c7;
+    --text-muted: #8494aa;
+    --scrollbar: #24344d;
+    --scrollbar-hover: #304563;
+    --overlay-backdrop: rgba(3, 8, 16, 0.62);
+}
+
+/* ── Tema "Medianoche" (negro OLED) ──────────────────────────── */
+:root[data-theme="midnight"] {
+    color-scheme: dark;
+    --bg-primary: #000000;
+    --bg-secondary: #07080a;
+    --bg-surface: #0f1013;
+    --bg-hover: #17191d;
+    --bg-active: #1e2126;
+    --bg-elevated: #121418;
+    --bg-input: #0a0b0d;
+    --bg-code: #050506;
+    --border: #1c1f24;
+    --border-strong: #2a2e35;
+    --text-primary: #e4e6ea;
+    --text-secondary: #a0a6b1;
+    --text-muted: #7a8090;
+    --scrollbar: #22252b;
+    --scrollbar-hover: #30343c;
+    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.7);
+    --overlay-backdrop: rgba(0, 0, 0, 0.72);
+}
+
+/* ── Tema claro ──────────────────────────────────────────────── */
+:root[data-theme="light"] {
+    color-scheme: light;
+    --bg-primary: #f6f7f9;
+    --bg-secondary: #eef0f3;
+    --bg-surface: #ffffff;
+    --bg-hover: #e7eaef;
+    --bg-active: #dde1e8;
+    --bg-elevated: #ffffff;
+    --bg-input: #ffffff;
+    --bg-code: #f0f2f5;
+    --border: #dde1e7;
+    --border-strong: #c7cdd6;
+    --text-primary: #161a21;
+    --text-secondary: #4a5260;
+    --text-muted: #636b7a;
+
+    --accent: var(--acc-600);
+    --accent-hover: var(--acc-700);
+    --accent-text: var(--acc-700);
+    --accent-soft: color-mix(in srgb, var(--acc-600) 10%, transparent);
+    --accent-glow: color-mix(in srgb, var(--acc-600) 22%, transparent);
+
+    --success: #15803d;
+    --warning: #a85d00;
+    --error: #c53030;
+    --info: #0b6aa2;
+    --success-soft: rgba(21, 128, 61, 0.1);
+    --warning-soft: rgba(168, 93, 0, 0.1);
+    --error-soft: rgba(197, 48, 48, 0.1);
+    --info-soft: rgba(11, 106, 162, 0.1);
+
+    --scrollbar: #c9ced6;
+    --scrollbar-hover: #aeb5c0;
+    --selection: color-mix(in srgb, var(--acc-600) 22%, transparent);
+    --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.08);
+    --shadow-md: 0 8px 24px rgba(16, 24, 40, 0.12), 0 1px 2px rgba(16, 24, 40, 0.06);
+    --shadow-lg: 0 20px 48px rgba(16, 24, 40, 0.18);
+    --overlay-backdrop: rgba(22, 26, 33, 0.32);
+}
+
+/* ── Tema "Papel" (claro cálido para leer) ───────────────────── */
+:root[data-theme="paper"] {
+    color-scheme: light;
+    --bg-primary: #f5f1e8;
+    --bg-secondary: #ede7da;
+    --bg-surface: #fbf8f2;
+    --bg-hover: #e8e0d0;
+    --bg-active: #e0d6c3;
+    --bg-elevated: #fdfbf7;
+    --bg-input: #fdfbf7;
+    --bg-code: #efe9dc;
+    --border: #e2d9c9;
+    --border-strong: #cfc3ae;
+    --text-primary: #2b2620;
+    --text-secondary: #5e554a;
+    --text-muted: #73695c;
+
+    --accent: var(--acc-600);
+    --accent-hover: var(--acc-700);
+    --accent-text: var(--acc-700);
+    --accent-soft: color-mix(in srgb, var(--acc-600) 11%, transparent);
+    --accent-glow: color-mix(in srgb, var(--acc-600) 22%, transparent);
+
+    --success: #2f6b3a;
+    --warning: #8a5a10;
+    --error: #a83232;
+    --info: #2d5f8a;
+    --success-soft: rgba(47, 107, 58, 0.1);
+    --warning-soft: rgba(138, 90, 16, 0.1);
+    --error-soft: rgba(168, 50, 50, 0.1);
+    --info-soft: rgba(45, 95, 138, 0.1);
+
+    --scrollbar: #d6ccb9;
+    --scrollbar-hover: #c2b59d;
+    --selection: color-mix(in srgb, var(--acc-600) 20%, transparent);
+    --shadow-sm: 0 1px 2px rgba(60, 45, 20, 0.08);
+    --shadow-md: 0 8px 24px rgba(60, 45, 20, 0.12);
+    --shadow-lg: 0 20px 48px rgba(60, 45, 20, 0.18);
+    --overlay-backdrop: rgba(43, 38, 32, 0.3);
+}
+
+/* ── Alto contraste (accesibilidad) ──────────────────────────── */
+:root[data-theme="contrast"] {
+    color-scheme: dark;
+    --bg-primary: #000000;
+    --bg-secondary: #000000;
+    --bg-surface: #0b0b0b;
+    --bg-hover: #1f1f1f;
+    --bg-active: #2b2b2b;
+    --bg-elevated: #0b0b0b;
+    --bg-input: #000000;
+    --bg-code: #000000;
+    --border: #ffffff;
+    --border-strong: #ffffff;
+    --text-primary: #ffffff;
+    --text-secondary: #f0f0f0;
+    --text-muted: #d6d6d6;
+    --text-on-accent: #000000;
+
+    --accent: #ffd400;
+    --accent-hover: #ffe24d;
+    --accent-text: #ffd400;
+    --accent-soft: rgba(255, 212, 0, 0.18);
+    --accent-glow: rgba(255, 212, 0, 0.45);
+
+    --success: #5cff9d;
+    --warning: #ffd400;
+    --error: #ff7070;
+    --info: #7dd3ff;
+    --success-soft: rgba(92, 255, 157, 0.16);
+    --warning-soft: rgba(255, 212, 0, 0.16);
+    --error-soft: rgba(255, 112, 112, 0.16);
+    --info-soft: rgba(125, 211, 255, 0.16);
+
+    --scrollbar: #ffffff;
+    --scrollbar-hover: #ffd400;
+    --selection: rgba(255, 212, 0, 0.4);
+    --shadow-sm: none;
+    --shadow-md: 0 0 0 1px #ffffff;
+    --shadow-lg: 0 0 0 2px #ffffff;
+    --overlay-backdrop: rgba(0, 0, 0, 0.85);
+    --focus-ring: 0 0 0 2px #000000, 0 0 0 5px #ffd400;
+}
+
+/* El acento elegido no aplica en alto contraste: el amarillo es parte del tema. */
+:root[data-theme="contrast"][data-accent] {
+    --acc-on-fill: #000000;
+}
+
+/* ── Densidad ────────────────────────────────────────────────── */
+:root[data-density="compact"] {
+    --control-h-sm: 24px;
+    --control-h: 28px;
+    --control-h-lg: 34px;
+    --pad-x: 10px;
+    --pad-y: 6px;
+}
+
+/* ── Movimiento reducido ─────────────────────────────────────── */
+:root[data-motion="reduced"] {
+    --dur-fast: 0ms;
+    --dur: 0ms;
+    --dur-slow: 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root:not([data-motion="full"]) {
+        --dur-fast: 0ms;
+        --dur: 0ms;
+        --dur-slow: 0ms;
+    }
+}
+
+:root[data-motion="reduced"] *,
+:root[data-motion="reduced"] *::before,
+:root[data-motion="reduced"] *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root:not([data-motion="full"]) *,
+    :root:not([data-motion="full"]) *::before,
+    :root:not([data-motion="full"]) *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* ── Base ligada a tokens ────────────────────────────────────── */
+html {
+    font-size: calc(14px * var(--font-scale));
+}
+
+::selection {
+    background: var(--selection);
+}
+
+:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+}
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar) transparent;
+}
+
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--scrollbar);
+    border-radius: var(--radius-pill);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-hover);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* Iconos SVG (sprite Lucide en assets/icons.svg) */
+.icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vertical-align: middle;
+}
+
+.icon-sm { width: 14px; height: 14px; }
+.icon-lg { width: 20px; height: 20px; }
+.icon-xl { width: 24px; height: 24px; }
+
+/* Transición suave al cambiar de tema (solo color, sin layout) */
+:root.theme-transition,
+:root.theme-transition * {
+    transition: background-color var(--dur-slow) var(--ease-in-out),
+        border-color var(--dur-slow) var(--ease-in-out),
+        color var(--dur-slow) var(--ease-in-out),
+        fill var(--dur-slow) var(--ease-in-out) !important;
+}

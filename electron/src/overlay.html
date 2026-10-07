@@ -3,77 +3,80 @@
 <head>
     <meta charset="UTF-8">
     <title>G-Mini Overlay</title>
+    <script src="js/theme-boot.js"></script>
+    <link rel="stylesheet" href="css/tokens.css">
     <style>
+        /* Ventana transparente: sin lienzo oscuro por color-scheme. */
+        :root,
+        :root[data-theme] {
+            color-scheme: normal !important;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body {
+
+        html,
+        body {
             background: transparent;
             overflow: hidden;
-            font-family: 'Segoe UI', system-ui, sans-serif;
+            font-family: var(--font);
             user-select: none;
             -webkit-app-region: no-drag;
         }
+
         #overlay-content {
             position: fixed;
-            bottom: 20px;
-            right: 20px;
+            right: var(--space-5);
+            bottom: var(--space-5);
+            display: flex;
+            align-items: flex-start;
+            gap: var(--space-2);
             max-width: 360px;
             max-height: 260px;
-            background: rgba(15, 15, 25, 0.85);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(100, 100, 255, 0.3);
-            border-radius: 16px;
-            padding: 16px;
-            color: #e0e0ff;
-            font-size: 14px;
-            line-height: 1.5;
             overflow-y: auto;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(100, 100, 255, 0.3) transparent;
+            padding: var(--space-3) var(--space-4);
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius-lg);
+            background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
+            backdrop-filter: blur(14px);
+            color: var(--text-primary);
+            font-size: var(--fs-base);
+            line-height: var(--lh-base);
+            box-shadow: var(--shadow-lg);
         }
-        #overlay-content::-webkit-scrollbar { width: 4px; }
-        #overlay-content::-webkit-scrollbar-track { background: transparent; }
-        #overlay-content::-webkit-scrollbar-thumb { background: rgba(100, 100, 255, 0.4); border-radius: 2px; }
 
         .status-dot {
-            display: inline-block;
+            flex: 0 0 auto;
             width: 8px;
             height: 8px;
+            margin-top: 7px;
             border-radius: 50%;
-            margin-right: 6px;
-            background: #4caf50;
-            animation: pulse 2s infinite;
+            background: var(--success);
+            box-shadow: 0 0 0 3px var(--success-soft);
         }
+
         .status-dot.thinking {
-            background: #ff9800;
-            animation: pulse 0.5s infinite;
+            background: var(--warning);
+            box-shadow: 0 0 0 3px var(--warning-soft);
+            animation: pulse 1s var(--ease-in-out) infinite;
         }
+
         @keyframes pulse {
             0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
+            50% { opacity: 0.45; }
         }
 
         #overlay-text {
             white-space: pre-wrap;
-            word-break: break-word;
+            overflow-wrap: anywhere;
         }
     </style>
 </head>
 <body>
-    <div id="overlay-content">
-        <span id="status-dot" class="status-dot"></span>
+    <div id="overlay-content" role="status" aria-live="polite">
+        <span id="status-dot" class="status-dot" aria-hidden="true"></span>
         <span id="overlay-text">G-Mini Agent listo</span>
     </div>
 
-    <script>
-        const overlayText = document.getElementById('overlay-text');
-        const statusDot = document.getElementById('status-dot');
-
-        // Recibir texto del main process
-        if (window.gmini) {
-            window.gmini.onOverlayText((text) => {
-                overlayText.textContent = text;
-            });
-        }
-    </script>
+    <script src="js/overlay.js"></script>
 </body>
 </html>

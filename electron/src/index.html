@@ -5,69 +5,123 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src ws://127.0.0.1:8765 http://127.0.0.1:8765; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: http://127.0.0.1:8765; media-src 'self' http://127.0.0.1:8765 blob:;">
     <title>G-Mini Agent</title>
+    <script src="js/theme-boot.js"></script>
+    <link rel="stylesheet" href="css/tokens.css">
     <link rel="stylesheet" href="css/main.css">
 </head>
 <body>
     <div id="titlebar" class="titlebar">
         <div class="titlebar-drag">
-            <button id="btn-toggle-sidebar" class="btn-toggle-sidebar" title="Historial (Ctrl+H)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
-            <img src="../assets/icon.png" alt="G-Mini Agent" class="titlebar-icon-img">
+            <button id="btn-toggle-sidebar" class="btn-toggle-sidebar" type="button" title="Historial (Ctrl+H)" aria-label="Mostrar u ocultar el historial" aria-controls="sidebar" aria-expanded="true">
+                <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-panel-left"></use></svg>
+            </button>
+            <img src="../assets/icon.png" alt="" class="titlebar-icon-img">
             <span class="titlebar-text">G-Mini Agent</span>
         </div>
         <div class="titlebar-controls">
-            <button id="btn-toggle-code" class="titlebar-btn" title="Workspace y codigo">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            <button id="btn-command-palette" class="titlebar-search" type="button" title="Buscar o ejecutar (Ctrl+K)" aria-label="Abrir la paleta de comandos" aria-haspopup="dialog">
+                <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-search"></use></svg>
+                <span class="titlebar-search-label">Buscar o ejecutar</span>
+                <kbd>Ctrl K</kbd>
             </button>
-            <button id="btn-settings" class="titlebar-btn" title="Configuracion">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <button id="btn-toggle-code" class="titlebar-btn" type="button" title="Workspace y código" aria-label="Panel de workspace" aria-controls="code-panel" aria-pressed="false">
+                <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-panel-right"></use></svg>
             </button>
-            <button id="btn-minimize" class="titlebar-btn" title="Minimizar"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
-            <button id="btn-close" class="titlebar-btn titlebar-btn-close" title="Cerrar"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+            <button id="btn-settings" class="titlebar-btn" type="button" title="Configuración" aria-label="Configuración" aria-controls="settings-panel" aria-pressed="false">
+                <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-settings"></use></svg>
+            </button>
+            <span class="titlebar-sep" aria-hidden="true"></span>
+            <button id="btn-minimize" class="titlebar-btn" type="button" title="Minimizar" aria-label="Minimizar">
+                <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-minus"></use></svg>
+            </button>
+            <button id="btn-close" class="titlebar-btn titlebar-btn-close" type="button" title="Cerrar" aria-label="Cerrar">
+                <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-x"></use></svg>
+            </button>
         </div>
     </div>
 
     <div class="app-layout">
-        <div id="sidebar" class="sidebar">
+        <aside id="sidebar" class="sidebar" aria-label="Historial de conversaciones">
             <div class="sidebar-header">
                 <h3>Historial</h3>
-                <button id="btn-new-chat" class="btn-new-chat">+ Nuevo</button>
+                <div class="sidebar-header-actions">
+                    <button id="btn-export-chat" class="btn-icon" type="button" title="Exportar conversación a Markdown" aria-label="Exportar conversación a Markdown">
+                        <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-file-down"></use></svg>
+                    </button>
+                    <button id="btn-new-chat" class="btn-new-chat" type="button" title="Nueva conversación (Ctrl+N)">
+                        <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-plus"></use></svg>
+                        Nuevo
+                    </button>
+                </div>
+            </div>
+            <div class="sidebar-search" role="search">
+                <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-search"></use></svg>
+                <input id="chat-search" type="text" placeholder="Buscar conversaciones" aria-label="Buscar conversaciones" autocomplete="off" spellcheck="false">
             </div>
             <div id="chat-list" class="chat-list">
                 <div class="chat-list-empty">
-                    <div class="chat-list-empty-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div>
+                    <div class="chat-list-empty-icon"><svg class="icon icon-xl" aria-hidden="true"><use href="assets/icons.svg#i-message-square"></use></svg></div>
                     <div>No hay conversaciones guardadas</div>
                 </div>
             </div>
-        </div>
+        </aside>
+
+        <div id="drawer-scrim" class="drawer-scrim" aria-hidden="true"></div>
 
         <div class="main-content">
             <div id="status-bar" class="status-bar">
-                <span id="status-indicator" class="status-dot idle"></span>
-                <span id="status-text">Conectando...</span>
-                <span id="mode-label" class="model-label">modo: ---</span>
-                <span id="model-label" class="model-label">---</span>
-                <div class="agent-control-group">
-                    <button id="btn-agent-start" class="agent-control-btn" type="button" title="Reanudar agente" disabled>Start</button>
-                    <button id="btn-agent-pause" class="agent-control-btn" type="button" title="Pausar agente" disabled>Pause</button>
-                    <button id="btn-agent-stop" class="agent-control-btn stop" type="button" title="Detener agente" disabled>Stop</button>
+                <div class="agent-identity">
+                    <span id="status-indicator" class="status-dot disconnected" role="img" aria-label="Estado del agente"></span>
+                    <div class="agent-identity-text">
+                        <span id="agent-name" class="agent-name">G-Mini</span>
+                        <span id="status-text" role="status" aria-live="polite">Conectando...</span>
+                    </div>
+                </div>
+                <div class="status-chips">
+                    <span id="mode-label" class="model-label" title="Modo del agente">modo: ---</span>
+                    <span id="model-label" class="model-label" title="Modelo activo">---</span>
+                </div>
+                <div class="agent-control-group" role="group" aria-label="Control del agente">
+                    <button id="btn-agent-start" class="agent-control-btn" type="button" title="Reanudar" aria-label="Reanudar agente" disabled>
+                        <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-play"></use></svg>
+                    </button>
+                    <button id="btn-agent-pause" class="agent-control-btn" type="button" title="Pausar" aria-label="Pausar agente" disabled>
+                        <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-pause"></use></svg>
+                    </button>
+                    <button id="btn-agent-stop" class="agent-control-btn stop" type="button" title="Detener" aria-label="Detener agente" disabled>
+                        <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-square"></use></svg>
+                    </button>
                 </div>
             </div>
-            <div id="subagents-bar" class="subagents-bar hidden"></div>
-            <div id="terminals-bar" class="subagents-bar hidden"></div>
+            <div id="subagents-bar" class="subagents-bar hidden" aria-label="Sub-agentes activos"></div>
+            <div id="terminals-bar" class="subagents-bar hidden" aria-label="Terminales"></div>
 
             <div class="workspace-shell">
                 <div class="chat-section">
-                    <div id="chat-container" class="chat-container">
+                    <div id="action-notifications" class="action-notification-host" aria-hidden="true"></div>
+                    <div id="chat-container" class="chat-container" role="log" aria-label="Conversación">
                         <div id="messages" class="messages">
-                            <div class="message system-message">
-                                <p>Bienvenido a <strong>G-Mini Agent</strong>. Escribe un mensaje para comenzar.</p>
+                            <div class="chat-empty">
+                                <img class="chat-empty-mark" src="../assets/icon.png" alt="">
+                                <div class="chat-empty-title">¿En qué te ayudo hoy?</div>
+                                <p class="chat-empty-sub">Pídele a <span data-agent-name>G-Mini</span> que investigue, programe o actúe en tu PC. Puedes adjuntar archivos o hablarle por voz.</p>
+                                <div class="chat-suggestions">
+                                    <button class="chat-suggestion" type="button" data-prompt="Toma una captura de mi pantalla y descríbeme lo que ves."><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-monitor"></use></svg>Describir mi pantalla</button>
+                                    <button class="chat-suggestion" type="button" data-prompt="Revisa la carpeta del proyecto y resúmeme su estructura."><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-folder-open"></use></svg>Resumir un proyecto</button>
+                                    <button class="chat-suggestion" type="button" data-prompt="Ayúdame a organizar mis tareas de hoy por prioridad."><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-list"></use></svg>Planificar el día</button>
+                                </div>
                             </div>
                         </div>
                     </div>
 
                     <div id="input-area" class="input-area">
-                        <div id="attachment-chips" class="attachment-chips" style="display:none"></div>
-                        <div class="input-row">
+                        <button id="btn-scroll-bottom" class="scroll-bottom-pill" type="button" hidden>
+                            <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-arrow-down"></use></svg>
+                            Ir al final
+                        </button>
+                        <div id="composer" class="composer">
+                            <div id="attachment-chips" class="attachment-chips" style="display:none"></div>
+                            <label for="user-input" class="sr-only">Mensaje para el agente</label>
                             <textarea
                                 id="user-input"
                                 class="user-input"
@@ -75,16 +129,31 @@
                                 rows="1"
                                 autofocus
                             ></textarea>
-                            <button id="btn-send" class="btn-send" title="Enviar (Enter)">▶</button>
+                            <div class="composer-bar">
+                                <div class="composer-tools">
+                                    <button id="btn-attach" class="btn-small" type="button" title="Adjuntar archivos (pdf, csv, excel, código, video)" aria-label="Adjuntar archivos">
+                                        <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-paperclip"></use></svg>
+                                    </button>
+                                    <button id="btn-attach-folder" class="btn-small" type="button" title="Importar una carpeta" aria-label="Importar una carpeta">
+                                        <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-folder"></use></svg>
+                                    </button>
+                                    <button id="btn-voice" class="btn-small" type="button" title="Dictar por voz" aria-label="Dictar por voz">
+                                        <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-mic"></use></svg>
+                                    </button>
+                                    <button id="btn-realtime" class="btn-small" type="button" title="Conversación en tiempo real" aria-label="Conversación en tiempo real">
+                                        <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-audio-lines"></use></svg>
+                                    </button>
+                                    <button id="btn-video-stream" class="btn-small" type="button" title="Mostrar pantalla a la IA (Live API)" aria-label="Compartir pantalla" style="display:none">
+                                        <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-monitor"></use></svg>
+                                    </button>
+                                </div>
+                                <span id="char-count" class="char-count" hidden>0</span>
+                                <button id="btn-send" class="btn-send" type="button" title="Enviar (Enter)" aria-label="Enviar mensaje">
+                                    <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-arrow-up"></use></svg>
+                                </button>
+                            </div>
                         </div>
-                        <div class="input-footer">
-                            <span id="char-count" class="char-count">0</span>
-                            <button id="btn-attach" class="btn-small" title="Adjuntar archivos (pdf, csv, excel, código, video…)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg></button>
-                            <button id="btn-attach-folder" class="btn-small" title="Importar una carpeta"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg></button>
-                            <button id="btn-voice" class="btn-small" title="Entrada por voz"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
-                            <button id="btn-realtime" class="btn-small" title="Conversación en tiempo real"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="8" x2="4" y2="16"/><line x1="8" y1="4" x2="8" y2="20"/><line x1="12" y1="6" x2="12" y2="18"/><line x1="16" y1="4" x2="16" y2="20"/><line x1="20" y1="8" x2="20" y2="16"/></svg></button>
-                            <button id="btn-video-stream" class="btn-small" title="Mostrar pantalla a la IA (Live API streaming)" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></button>
-                        </div>
+                        <div class="composer-hint"><kbd>Enter</kbd> enviar &middot; <kbd>Shift</kbd> + <kbd>Enter</kbd> nueva línea &middot; <kbd>Ctrl</kbd> + <kbd>K</kbd> comandos</div>
                     </div>
                 </div>
 
@@ -318,7 +387,7 @@
                     <!-- ═══ Phase 10: Security Panel ═══ -->
                     <div id="code-view-security" class="code-panel-view">
                         <div class="code-toolbar">
-                            <button id="btn-refresh-security" class="btn-secondary">⟳ Actualizar</button>
+                            <button id="btn-refresh-security" class="btn-secondary">Actualizar</button>
                         </div>
                         <div class="code-panel-body">
                             <!-- RBAC Users -->
@@ -379,7 +448,7 @@
                     <!-- Analytics & Goals Dashboard (Phase 13) -->
                     <div id="code-view-analytics" class="code-panel-view">
                         <div class="code-toolbar">
-                            <button id="btn-refresh-analytics" class="btn-secondary">⟳ Actualizar</button>
+                            <button id="btn-refresh-analytics" class="btn-secondary">Actualizar</button>
                             <select id="analytics-period" class="setting-select" style="width:auto">
                                 <option value="24">Últimas 24h</option>
                                 <option value="168">Última semana</option>
@@ -449,29 +518,31 @@
         </div>
     </div>
 
-    <div id="settings-panel" class="settings-panel hidden">
+    <div id="settings-panel" class="settings-panel hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <div class="settings-header">
-            <h2>Configuracion</h2>
-            <button id="btn-close-settings" class="titlebar-btn" title="Cerrar"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+            <h2 id="settings-title">Configuración</h2>
+            <button id="btn-close-settings" class="titlebar-btn" type="button" title="Cerrar (Esc)" aria-label="Cerrar configuración">
+                <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-x"></use></svg>
+            </button>
         </div>
         <div class="settings-layout">
-            <!-- ── Sidebar de categorías ── -->
-            <nav class="settings-nav">
-                <button class="settings-nav-item active" data-page="general"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg> General</button>
-                <button class="settings-nav-item" data-page="model"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg> Modelo IA</button>
-                <button class="settings-nav-item" data-page="voice"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg> Voz</button>
-                <button class="settings-nav-item" data-page="prompts"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Prompts</button>
-                <button class="settings-nav-item" data-page="security"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg> Seguridad</button>
-                <button class="settings-nav-item" data-page="integrations"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg> Integraciones</button>
-                <button class="settings-nav-item" data-page="scheduler"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Scheduler</button>
-                <button class="settings-nav-item" data-page="crews"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> Equipos</button>
+            <nav class="settings-nav" role="tablist" aria-label="Secciones de configuración" aria-orientation="vertical">
+                <button class="settings-nav-item active" type="button" role="tab" id="settings-tab-general" aria-controls="settings-page-general" aria-selected="true" data-page="general"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-sliders-horizontal"></use></svg>General</button>
+                <button class="settings-nav-item" type="button" role="tab" id="settings-tab-personality" aria-controls="settings-page-personality" aria-selected="false" tabindex="-1" data-page="personality"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-bot"></use></svg>Personalidad</button>
+                <button class="settings-nav-item" type="button" role="tab" id="settings-tab-model" aria-controls="settings-page-model" aria-selected="false" tabindex="-1" data-page="model"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-cpu"></use></svg>Modelo IA</button>
+                <button class="settings-nav-item" type="button" role="tab" id="settings-tab-voice" aria-controls="settings-page-voice" aria-selected="false" tabindex="-1" data-page="voice"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-mic"></use></svg>Voz</button>
+                <button class="settings-nav-item" type="button" role="tab" id="settings-tab-prompts" aria-controls="settings-page-prompts" aria-selected="false" tabindex="-1" data-page="prompts"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-file-text"></use></svg>Prompts</button>
+                <button class="settings-nav-item" type="button" role="tab" id="settings-tab-security" aria-controls="settings-page-security" aria-selected="false" tabindex="-1" data-page="security"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-shield"></use></svg>Seguridad</button>
+                <button class="settings-nav-item" type="button" role="tab" id="settings-tab-integrations" aria-controls="settings-page-integrations" aria-selected="false" tabindex="-1" data-page="integrations"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-waypoints"></use></svg>Integraciones</button>
+                <button class="settings-nav-item" type="button" role="tab" id="settings-tab-scheduler" aria-controls="settings-page-scheduler" aria-selected="false" tabindex="-1" data-page="scheduler"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-clock"></use></svg>Scheduler</button>
+                <button class="settings-nav-item" type="button" role="tab" id="settings-tab-crews" aria-controls="settings-page-crews" aria-selected="false" tabindex="-1" data-page="crews"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-users"></use></svg>Equipos</button>
             </nav>
 
             <!-- ── Contenido de cada página ── -->
             <div class="settings-content">
 
                 <!-- ═══ GENERAL ═══ -->
-                <div class="settings-page active" data-page="general">
+                <div class="settings-page active" data-page="general" id="settings-page-general" role="tabpanel" aria-labelledby="settings-tab-general">
                     <h3 class="settings-page-title">General</h3>
 
                     <div class="setting-group">
@@ -489,7 +560,7 @@
                             <option value="media">Media - Equilibrado: completa la tarea y sus pasos necesarios</option>
                             <option value="alta">Alta - Proactivo: encadena planes y propone acciones de seguimiento</option>
                         </select>
-                        <div class="setting-help-text" style="font-size: 11px; margin-top: 4px;">
+                        <div class="setting-help-text">
                             Cuanta libertad e iniciativa tiene el agente para realizar actividades.<br>
                             El agente solo actua cuando le pides una tarea operativa. Un "Hola" nunca dispara acciones.
                         </div>
@@ -503,7 +574,7 @@
                             <option value="supervisado">Supervisado: lee solo, pregunta antes de modificar</option>
                             <option value="libre">Libre: ejecuta acciones sin pedir permiso</option>
                         </select>
-                        <div class="setting-help-text" style="font-size: 11px; margin-top: 4px;">
+                        <div class="setting-help-text">
                             Decide cuando el agente pide tu aprobacion antes de ejecutar una accion.
                         </div>
                         <div id="autonomy-meta" class="setting-help-text"></div>
@@ -511,7 +582,7 @@
 
                     <div class="setting-group">
                         <label>Monitor objetivo</label>
-                        <div class="setting-help-text" style="font-size: 11px; margin-bottom: 6px;">
+                        <div class="setting-help-text">
                             Pantalla donde el agente toma screenshots y ejecuta acciones. Cada monitor tiene su propia resolucion.
                         </div>
                         <select id="select-target-monitor" class="setting-select">
@@ -519,6 +590,49 @@
                         </select>
                         <button id="btn-refresh-monitors" class="btn-save-key" style="margin-top: 4px;">Detectar monitores</button>
                         <div id="monitor-meta" class="setting-help-text"></div>
+                    </div>
+
+                    <div class="setting-group" id="appearance-group">
+                        <label>Apariencia</label>
+                        <div class="appearance-field">
+                            <span class="setting-subhead" id="theme-label">Tema</span>
+                            <div class="theme-grid" id="theme-options" role="radiogroup" aria-labelledby="theme-label">
+                            <button type="button" class="theme-card" role="radio" aria-checked="false" data-theme-value="system" data-preview="system"><span class="theme-card-preview" aria-hidden="true"><span class="tp-side"></span><span class="tp-main"><span class="tp-line"></span><span class="tp-line short"></span><span class="tp-bubble"></span></span></span>Sistema</button>
+                            <button type="button" class="theme-card" role="radio" aria-checked="false" data-theme-value="dark" data-preview="dark"><span class="theme-card-preview" aria-hidden="true"><span class="tp-side"></span><span class="tp-main"><span class="tp-line"></span><span class="tp-line short"></span><span class="tp-bubble"></span></span></span>Grafito</button>
+                            <button type="button" class="theme-card" role="radio" aria-checked="false" data-theme-value="ocean" data-preview="ocean"><span class="theme-card-preview" aria-hidden="true"><span class="tp-side"></span><span class="tp-main"><span class="tp-line"></span><span class="tp-line short"></span><span class="tp-bubble"></span></span></span>Océano</button>
+                            <button type="button" class="theme-card" role="radio" aria-checked="false" data-theme-value="midnight" data-preview="midnight"><span class="theme-card-preview" aria-hidden="true"><span class="tp-side"></span><span class="tp-main"><span class="tp-line"></span><span class="tp-line short"></span><span class="tp-bubble"></span></span></span>Medianoche</button>
+                            <button type="button" class="theme-card" role="radio" aria-checked="false" data-theme-value="light" data-preview="light"><span class="theme-card-preview" aria-hidden="true"><span class="tp-side"></span><span class="tp-main"><span class="tp-line"></span><span class="tp-line short"></span><span class="tp-bubble"></span></span></span>Claro</button>
+                            <button type="button" class="theme-card" role="radio" aria-checked="false" data-theme-value="paper" data-preview="paper"><span class="theme-card-preview" aria-hidden="true"><span class="tp-side"></span><span class="tp-main"><span class="tp-line"></span><span class="tp-line short"></span><span class="tp-bubble"></span></span></span>Papel</button>
+                            <button type="button" class="theme-card" role="radio" aria-checked="false" data-theme-value="contrast" data-preview="contrast"><span class="theme-card-preview" aria-hidden="true"><span class="tp-side"></span><span class="tp-main"><span class="tp-line"></span><span class="tp-line short"></span><span class="tp-bubble"></span></span></span>Alto contraste</button>
+                            </div>
+                        </div>
+                        <div class="appearance-field">
+                            <span class="setting-subhead" id="accent-label">Color de acento</span>
+                            <div class="accent-swatches" role="radiogroup" aria-labelledby="accent-label" data-accent-group>
+                                <button type="button" class="accent-swatch" role="radio" aria-checked="false" data-accent="blue" title="Azul" aria-label="Azul"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-check"></use></svg></button>
+                                <button type="button" class="accent-swatch" role="radio" aria-checked="false" data-accent="violet" title="Violeta" aria-label="Violeta"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-check"></use></svg></button>
+                                <button type="button" class="accent-swatch" role="radio" aria-checked="false" data-accent="green" title="Verde" aria-label="Verde"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-check"></use></svg></button>
+                                <button type="button" class="accent-swatch" role="radio" aria-checked="false" data-accent="amber" title="Ámbar" aria-label="Ámbar"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-check"></use></svg></button>
+                                <button type="button" class="accent-swatch" role="radio" aria-checked="false" data-accent="rose" title="Rosa" aria-label="Rosa"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-check"></use></svg></button>
+                                <button type="button" class="accent-swatch" role="radio" aria-checked="false" data-accent="cyan" title="Cian" aria-label="Cian"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-check"></use></svg></button>
+                            </div>
+                            <div class="setting-help-text">En Alto contraste el acento es siempre amarillo.</div>
+                        </div>
+                        <div class="appearance-field">
+                            <span class="setting-subhead" id="density-label">Densidad</span>
+                            <div class="segmented" id="density-options" role="radiogroup" aria-labelledby="density-label">
+                                <button type="button" role="radio" aria-checked="false" data-density="comfortable">Cómoda</button>
+                                <button type="button" role="radio" aria-checked="false" data-density="compact">Compacta</button>
+                            </div>
+                        </div>
+                        <div class="appearance-field">
+                            <span class="setting-subhead" id="motion-label">Animaciones</span>
+                            <div class="segmented" id="motion-options" role="radiogroup" aria-labelledby="motion-label">
+                                <button type="button" role="radio" aria-checked="false" data-motion="system">Sistema</button>
+                                <button type="button" role="radio" aria-checked="false" data-motion="full">Completas</button>
+                                <button type="button" role="radio" aria-checked="false" data-motion="reduced">Reducidas</button>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="setting-group">
@@ -556,10 +670,66 @@
                             <button id="btn-save-app-behavior" class="btn-secondary">Guardar modo 24/7</button>
                         </div>
                     </div>
+
+                    <div class="setting-group">
+                        <label>Atajos de teclado globales</label>
+                        <div class="setting-help-text">Funcionan aunque la ventana no tenga el foco. Formato: Alt+G, Ctrl+Shift+Q.</div>
+                        <div class="shortcut-row">
+                            <span id="shortcut-label-window">Mostrar u ocultar</span>
+                            <input type="text" id="input-shortcut-toggle-window" class="api-key-input" placeholder="Alt+G" aria-labelledby="shortcut-label-window" spellcheck="false">
+                        </div>
+                        <div class="shortcut-row">
+                            <span id="shortcut-label-overlay">Modo overlay</span>
+                            <input type="text" id="input-shortcut-toggle-overlay" class="api-key-input" placeholder="Alt+Shift+G" aria-labelledby="shortcut-label-overlay" spellcheck="false">
+                        </div>
+                        <div class="shortcut-row">
+                            <span id="shortcut-label-quit">Salir</span>
+                            <input type="text" id="input-shortcut-quit" class="api-key-input" placeholder="Ctrl+Shift+Q" aria-labelledby="shortcut-label-quit" spellcheck="false">
+                        </div>
+                        <div id="shortcuts-meta" class="setting-help-text" role="status"></div>
+                        <div class="setting-actions">
+                            <button id="btn-save-shortcuts" class="btn-secondary" type="button">Guardar atajos</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══ PERSONALIDAD ═══ -->
+                <div class="settings-page" data-page="personality" id="settings-page-personality" role="tabpanel" aria-labelledby="settings-tab-personality">
+                    <h3 class="settings-page-title">Personalidad</h3>
+                    <p class="settings-page-lead">Cómo se presenta el agente en la interfaz y en las notificaciones.</p>
+
+                    <div class="setting-group">
+                        <label for="input-agent-name">Nombre del agente</label>
+                        <div class="identity-preview" aria-hidden="true">
+                            <span class="status-dot idle"></span>
+                            <div>
+                                <div class="identity-preview-name" id="identity-preview-name">G-Mini</div>
+                                <div class="identity-preview-sub">Así aparece en la cabecera, el chat y las notificaciones.</div>
+                            </div>
+                        </div>
+                        <input id="input-agent-name" class="setting-input" type="text" maxlength="32" placeholder="G-Mini" autocomplete="off" spellcheck="false">
+                        <div id="agent-name-meta" class="setting-help-text" role="status"></div>
+                        <div class="setting-actions">
+                            <button id="btn-save-agent-name" class="btn-secondary" type="button">Guardar nombre</button>
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <label>Color de acento</label>
+                        <div class="accent-swatches" role="radiogroup" aria-label="Color de acento" data-accent-group>
+                            <button type="button" class="accent-swatch" role="radio" aria-checked="false" data-accent="blue" title="Azul" aria-label="Azul"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-check"></use></svg></button>
+                            <button type="button" class="accent-swatch" role="radio" aria-checked="false" data-accent="violet" title="Violeta" aria-label="Violeta"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-check"></use></svg></button>
+                            <button type="button" class="accent-swatch" role="radio" aria-checked="false" data-accent="green" title="Verde" aria-label="Verde"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-check"></use></svg></button>
+                            <button type="button" class="accent-swatch" role="radio" aria-checked="false" data-accent="amber" title="Ámbar" aria-label="Ámbar"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-check"></use></svg></button>
+                            <button type="button" class="accent-swatch" role="radio" aria-checked="false" data-accent="rose" title="Rosa" aria-label="Rosa"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-check"></use></svg></button>
+                            <button type="button" class="accent-swatch" role="radio" aria-checked="false" data-accent="cyan" title="Cian" aria-label="Cian"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-check"></use></svg></button>
+                        </div>
+                        <div class="setting-help-text">Tiñe el orbe de estado, los botones principales y la selección. Es el mismo ajuste que en General.</div>
+                    </div>
                 </div>
 
                 <!-- ═══ MODELO IA ═══ -->
-                <div class="settings-page" data-page="model">
+                <div class="settings-page" data-page="model" id="settings-page-model" role="tabpanel" aria-labelledby="settings-tab-model">
                     <h3 class="settings-page-title">Modelo IA</h3>
 
                     <div class="setting-group">
@@ -594,11 +764,11 @@
 
                         <div id="google-vertex-config" style="display: none; margin-top: 10px;">
                             <div style="margin-bottom: 8px;">
-                                <label style="font-size: 12px; color: var(--text-secondary);">Project ID (GCP)</label>
+                                <label class="setting-subhead">Project ID (GCP)</label>
                                 <input type="text" id="input-google-project-id" class="setting-input" placeholder="my-first-project-12345" autocomplete="off">
                             </div>
                             <div style="margin-bottom: 8px;">
-                                <label style="font-size: 12px; color: var(--text-secondary);">Región</label>
+                                <label class="setting-subhead">Región</label>
                                 <select id="select-google-location" class="setting-select">
                                     <option value="global">global (recomendado para Gemini 3.x)</option>
                                     <option value="us-central1">us-central1 (Iowa) — solo Gemini 2.5</option>
@@ -610,12 +780,12 @@
                                     <option value="asia-southeast1">asia-southeast1 (Singapore)</option>
                                     <option value="southamerica-east1">southamerica-east1 (São Paulo)</option>
                                 </select>
-                                <div class="setting-help-text" style="font-size: 11px; margin-top: 2px;">Usa "global" para Gemini 3.x preview. Las regiones específicas solo tienen Gemini 2.5.</div>
+                                <div class="setting-help-text">Usa "global" para Gemini 3.x preview. Las regiones específicas solo tienen Gemini 2.5.</div>
                             </div>
                             <div style="margin-bottom: 8px;">
-                                <label style="font-size: 12px; color: var(--text-secondary);">Archivo de credenciales (opcional)</label>
+                                <label class="setting-subhead">Archivo de credenciales (opcional)</label>
                                 <input type="text" id="input-google-credentials-file" class="setting-input" placeholder="C:\ruta\a\service-account-key.json" autocomplete="off">
-                                <div class="setting-help-text" style="font-size: 11px; margin-top: 2px;">Si se deja vacío, usa Application Default Credentials (gcloud auth application-default login)</div>
+                                <div class="setting-help-text">Si se deja vacío, usa Application Default Credentials (gcloud auth application-default login)</div>
                             </div>
                             <button id="btn-save-google-backend" class="btn-save-key" style="margin-top: 4px;">Guardar y conectar</button>
                         </div>
@@ -638,19 +808,19 @@
                         
                         <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
                             <div>
-                                <label style="font-size: 12px; color: var(--text-secondary);">Imágenes (Nano/Imagen)</label>
+                                <label class="setting-subhead">Imágenes (Nano/Imagen)</label>
                                 <select id="select-image-model" class="setting-select">
                                     <option value="none">Desactivado</option>
                                 </select>
                             </div>
                             <div>
-                                <label style="font-size: 12px; color: var(--text-secondary);">Video (Veo)</label>
+                                <label class="setting-subhead">Video (Veo)</label>
                                 <select id="select-video-model" class="setting-select">
                                     <option value="none">Desactivado</option>
                                 </select>
                             </div>
                             <div>
-                                <label style="font-size: 12px; color: var(--text-secondary);">Música (Lyria)</label>
+                                <label class="setting-subhead">Música (Lyria)</label>
                                 <select id="select-music-model" class="setting-select">
                                     <option value="none">Desactivado</option>
                                 </select>
@@ -658,6 +828,27 @@
                         </div>
                         <div class="setting-actions" style="margin-top: 10px;">
                             <button id="btn-save-generative-models" class="btn-secondary">Guardar Generativos</button>
+                        </div>
+                    </div>
+
+                    <!-- ═══ EMBEDDINGS CONFIG ═══ -->
+                    <div class="setting-group" id="embedding-config-group">
+                        <label>Proveedor de Embeddings</label>
+                        <div class="setting-help-text">Los embeddings permiten al agente recordar y buscar información del usuario semánticamente. Usa Vertex AI si los créditos de AI Studio están agotados.</div>
+                        <select id="select-embedding-provider" class="setting-select">
+                            <option value="auto">Auto (detecta por backend activo)</option>
+                            <option value="vertex_ai">Google Vertex AI</option>
+                            <option value="google">Google AI Studio (API Key)</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="hash">Local (hash deterministico — sin red)</option>
+                        </select>
+                        <div style="margin-top: 8px;">
+                            <label class="setting-subhead">Modelo de embeddings</label>
+                            <input type="text" id="input-embedding-model" class="setting-input" placeholder="auto (gemini-embedding-001 / text-embedding-3-small)" autocomplete="off">
+                        </div>
+                        <span id="embedding-config-meta" class="api-key-status" style="margin-top: 4px; display: block;">—</span>
+                        <div class="setting-actions">
+                            <button id="btn-save-embedding-config" class="btn-secondary">Guardar Embeddings</button>
                         </div>
                     </div>
 
@@ -680,25 +871,25 @@
                         </label>
                         <div style="display: flex; gap: 12px; margin-top: 8px;">
                             <div style="flex: 1;">
-                                <label style="font-size: 12px;">Proveedor</label>
+                                <label class="setting-subhead">Proveedor</label>
                                 <select id="select-computer-use-provider" class="setting-select"></select>
                             </div>
                             <div style="flex: 2;">
-                                <label style="font-size: 12px;">Modelo</label>
+                                <label class="setting-subhead">Modelo</label>
                                 <select id="select-computer-use-model" class="setting-select"></select>
                             </div>
                         </div>
                         <div style="display: flex; gap: 12px; margin-top: 8px;">
                             <div style="flex: 1;">
-                                <label style="font-size: 12px;">Max iteraciones</label>
+                                <label class="setting-subhead">Max iteraciones</label>
                                 <input type="number" id="input-computer-use-max-iter" class="setting-input" value="30" min="1" max="100">
                             </div>
                             <div style="flex: 1;">
-                                <label style="font-size: 12px;">Timeout (seg)</label>
+                                <label class="setting-subhead">Timeout (seg)</label>
                                 <input type="number" id="input-computer-use-timeout" class="setting-input" value="180" min="30" max="600">
                             </div>
                             <div style="flex: 1;">
-                                <label style="font-size: 12px;">Delay estabilización (seg)</label>
+                                <label class="setting-subhead">Delay estabilización (seg)</label>
                                 <input type="number" id="input-computer-use-delay" class="setting-input" value="3" min="1" max="15" step="0.5">
                             </div>
                         </div>
@@ -709,7 +900,7 @@
                 </div>
 
                 <!-- ═══ VOZ ═══ -->
-                <div class="settings-page" data-page="voice">
+                <div class="settings-page" data-page="voice" id="settings-page-voice" role="tabpanel" aria-labelledby="settings-tab-voice">
                     <h3 class="settings-page-title">Voz y Personaje</h3>
 
                     <div class="setting-group">
@@ -899,7 +1090,7 @@
                 </div>
 
                 <!-- ═══ PROMPTS ═══ -->
-                <div class="settings-page" data-page="prompts">
+                <div class="settings-page" data-page="prompts" id="settings-page-prompts" role="tabpanel" aria-labelledby="settings-tab-prompts">
                     <h3 class="settings-page-title">Prompts del Agente</h3>
 
                     <div class="setting-group">
@@ -938,7 +1129,7 @@
                 </div>
 
                 <!-- ═══ SEGURIDAD ═══ -->
-                <div class="settings-page" data-page="security">
+                <div class="settings-page" data-page="security" id="settings-page-security" role="tabpanel" aria-labelledby="settings-tab-security">
                     <h3 class="settings-page-title">Seguridad y Permisos</h3>
 
                     <div class="setting-group">
@@ -968,6 +1159,18 @@
                         <div class="setting-actions">
                             <button id="btn-save-exec-approvals" class="btn-secondary">Guardar exec approvals</button>
                         </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <label>Autenticacion API</label>
+                        <div class="setting-help-text">
+                            Protege los endpoints /api/* con Bearer token. El trafico local (127.0.0.1) no requiere token.
+                        </div>
+                        <div id="api-auth-status" class="setting-help-text"></div>
+                        <div class="setting-actions">
+                            <button id="btn-regenerate-api-token" class="btn-secondary">Generar / Regenerar token</button>
+                        </div>
+                        <div id="api-auth-token-display" class="setting-help-text" style="word-break:break-all"></div>
                     </div>
 
                     <div class="setting-group">
@@ -1021,7 +1224,7 @@
                 </div>
 
                 <!-- ═══ INTEGRACIONES ═══ -->
-                <div class="settings-page" data-page="integrations">
+                <div class="settings-page" data-page="integrations" id="settings-page-integrations" role="tabpanel" aria-labelledby="settings-tab-integrations">
                     <h3 class="settings-page-title">Integraciones</h3>
 
                     <div class="setting-group mcp-panel">
@@ -1034,12 +1237,12 @@
                         </div>
 
                         <div style="margin: 8px 0;">
-                            <label style="font-size: 12px; color: var(--text-secondary);">Modo de acceso a Integraciones (Voz RT)</label>
+                            <label class="setting-subhead">Modo de acceso a Integraciones (Voz RT)</label>
                             <select id="select-mcp-integration-mode" class="setting-select">
                                 <option value="preloaded">Pre-cargadas (modelo conoce las tools MCP al iniciar)</option>
                                 <option value="on_demand">Bajo demanda (modelo solicita tools MCP manualmente)</option>
                             </select>
-                            <div class="setting-help-text" style="font-size: 11px; margin-top: 4px;">
+                            <div class="setting-help-text">
                                 Pre-cargadas: las herramientas MCP se inyectan en la sesión de voz en tiempo real al iniciar (recomendado).<br>
                                 Bajo demanda: el modelo no conoce las tools MCP hasta que las solicite explícitamente.
                             </div>
@@ -1167,7 +1370,7 @@
                 </div>
 
                 <!-- ═══ SCHEDULER ═══ -->
-                <div class="settings-page" data-page="scheduler">
+                <div class="settings-page" data-page="scheduler" id="settings-page-scheduler" role="tabpanel" aria-labelledby="settings-tab-scheduler">
                     <h3 class="settings-page-title">Scheduler</h3>
 
                     <div class="setting-group">
@@ -1185,7 +1388,7 @@
                 </div>
 
                 <!-- ═══ EQUIPOS (CREWS) ═══ -->
-                <div class="settings-page" data-page="crews">
+                <div class="settings-page" data-page="crews" id="settings-page-crews" role="tabpanel" aria-labelledby="settings-tab-crews">
                     <h3 class="settings-page-title">Equipos Multi-Agente</h3>
 
                     <div class="setting-group">
@@ -1210,7 +1413,7 @@
                                 <option value="hierarchical">Jerárquico (con manager)</option>
                             </select>
                             <div id="crew-manager-section" style="display:none;">
-                                <label style="font-size:12px; color: var(--text-secondary);">Modelo del Manager</label>
+                                <label class="setting-subhead">Modelo del Manager</label>
                                 <input id="input-crew-manager-model" class="setting-input" type="text" placeholder="provider:model (ej: anthropic:claude-opus-4-6)">
                             </div>
 
@@ -1230,6 +1433,7 @@
         </div>
     </div>
 
+    <script src="js/dom-utils.js"></script>
     <script src="js/api-auth.js"></script>
     <script src="../node_modules/socket.io-client/dist/socket.io.min.js"></script>
     <script src="js/websocket.js"></script>
@@ -1239,6 +1443,7 @@
     <script src="js/overlay-effects.js"></script>
     <script src="js/settings.js"></script>
     <script src="js/voiceRealtime.js"></script>
+    <script src="js/onboarding.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

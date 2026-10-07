@@ -5,10 +5,25 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Tema inicial que el main pasa por argv (--gmini-theme=..., etc.). theme-boot.js
+// lo usa cuando todavía no hay nada guardado en localStorage.
+function readInitialTheme() {
+    const out = {};
+    for (const arg of process.argv || []) {
+        const match = /^--gmini-(theme|accent|density|motion)=([a-z]+)$/.exec(arg);
+        if (match) out[match[1]] = match[2];
+    }
+    return out;
+}
+
 contextBridge.exposeInMainWorld('gmini', {
     // Backend URL
     getBackendUrl: () => ipcRenderer.invoke('get-backend-url'),
     getSessionToken: () => ipcRenderer.invoke('get-session-token'),
+
+    // Tema
+    initialTheme: readInitialTheme(),
+    setTheme: (prefs) => ipcRenderer.invoke('theme:set', prefs),
 
     // Guardar media generada (imagen/video/audio) en carpeta a eleccion del usuario
     saveMediaAs: (url, filename) => ipcRenderer.invoke('save-media-as', url, filename),
@@ -22,6 +37,8 @@ contextBridge.exposeInMainWorld('gmini', {
     toggleAlwaysOnTop: (value) => ipcRenderer.invoke('toggle-always-on-top', value),
     getAppRuntimeSettings: () => ipcRenderer.invoke('get-app-runtime-settings'),
     reloadAppRuntimeSettings: () => ipcRenderer.invoke('reload-app-runtime-settings'),
+    getShortcuts: () => ipcRenderer.invoke('get-shortcuts'),
+    updateShortcuts: (shortcuts) => ipcRenderer.invoke('update-shortcuts', shortcuts),
 
     // Overlay
     toggleOverlay: (enable) => ipcRenderer.invoke('toggle-overlay', enable),

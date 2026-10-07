@@ -12,11 +12,40 @@ class HistoryManager {
         this.currentSessionId = null;
         this.sessions = [];
         this.isSidebarCollapsed = false;
+        // Por debajo de este ancho el historial es un cajón sobre el chat (B15).
+        this._narrowQuery = window.matchMedia('(max-width: 759px)');
     }
 
     init() {
+        this._restoreSidebarState();
         this._bindEvents();
         this.loadSessions();
+    }
+
+    _restoreSidebarState() {
+        const saved = () => {
+            try { return localStorage.getItem('gmini_sidebar_collapsed') === 'true'; } catch (e) { return false; }
+        };
+        // En ventana estrecha arranca cerrado; en escritorio se recuerda la última elección.
+        this.isSidebarCollapsed = this._narrowQuery.matches ? true : saved();
+        this._applySidebarState(false);
+        this._narrowQuery.addEventListener('change', (e) => {
+            this.isSidebarCollapsed = e.matches ? true : saved();
+            this._applySidebarState(false);
+        });
+    }
+
+    _applySidebarState(persist) {
+        this.sidebar?.classList.toggle('collapsed', this.isSidebarCollapsed);
+        this.btnToggle?.setAttribute('aria-expanded', this.isSidebarCollapsed ? 'false' : 'true');
+        if (persist && !this._narrowQuery.matches) {
+            try { localStorage.setItem('gmini_sidebar_collapsed', String(this.isSidebarCollapsed)); } catch (e) { /* sin storage */ }
+        }
+        window.gminiLayout?.syncScrim();
+    }
+
+    isNarrow() {
+        return this._narrowQuery.matches;
     }
 
     _bindEvents() {
@@ -40,9 +69,10 @@ class HistoryManager {
         });
     }
 
-    toggleSidebar() {
-        this.isSidebarCollapsed = !this.isSidebarCollapsed;
-        this.sidebar?.classList.toggle('collapsed', this.isSidebarCollapsed);
+    /** Sin argumento alterna; con booleano fuerza abierto (true) o cerrado (false). */
+    toggleSidebar(forceOpen) {
+        this.isSidebarCollapsed = typeof forceOpen === 'boolean' ? !forceOpen : !this.isSidebarCollapsed;
+        this._applySidebarState(true);
     }
 
     async loadSessions() {

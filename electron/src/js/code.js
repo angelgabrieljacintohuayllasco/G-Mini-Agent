@@ -220,6 +220,8 @@ class CodeManager {
         const nextOpen = typeof forceOpen === 'boolean' ? forceOpen : this.panel.classList.contains('collapsed');
         this.panelOpen = nextOpen;
         this.panel.classList.toggle('collapsed', !nextOpen);
+        this.btnToggle?.setAttribute('aria-pressed', nextOpen ? 'true' : 'false');
+        window.gminiLayout?.syncScrim();
         if (nextOpen) await this.loadActiveView();
     }
 

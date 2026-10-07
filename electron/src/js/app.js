@@ -6,6 +6,8 @@
 (function () {
     'use strict';
 
+    // El tema lo aplica js/theme-boot.js en <head>, antes del primer pintado.
+
     // ── SVG icon constants (replacing emojis) ────────
     // Mic: push-to-talk voice input
     const SVG_MIC = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>';
@@ -228,12 +230,63 @@
     }
 
     // ── Initialize modules ────────────────────────────
-    chatManager.init();
-    settingsManager.init();
-    historyManager.init();
-    if (window.codeManager?.init) {
-        window.codeManager.init();
+    // Cada módulo arranca aislado: si uno falla, el resto (y ws.connect) sigue.
+    [
+        ['chat', () => chatManager.init()],
+        ['settings', () => settingsManager.init()],
+        ['history', () => historyManager.init()],
+        ['code', () => window.codeManager?.init?.()],
+    ].forEach(([name, start]) => {
+        try {
+            start();
+        } catch (err) {
+            console.error(`[App] Falló el arranque del módulo ${name}:`, err);
+        }
+    });
+
+    // ── Cajones (historial y panel lateral) en ventanas estrechas ──
+    const drawerScrim = document.getElementById('drawer-scrim');
+    const narrowPanelQuery = window.matchMedia('(max-width: 899px)');
+
+    function syncScrim() {
+        const sidebarOpen = historyManager.isNarrow?.() && !historyManager.isSidebarCollapsed;
+        const panelOpen = narrowPanelQuery.matches && !!window.codeManager?.panelOpen;
+        drawerScrim?.classList.toggle('is-visible', !!(sidebarOpen || panelOpen));
     }
+
+    function closeDrawers() {
+        let closed = false;
+        if (historyManager.isNarrow?.() && !historyManager.isSidebarCollapsed) {
+            historyManager.toggleSidebar(false);
+            closed = true;
+        }
+        if (narrowPanelQuery.matches && window.codeManager?.panelOpen) {
+            window.codeManager.togglePanel(false);
+            closed = true;
+        }
+        syncScrim();
+        return closed;
+    }
+
+    drawerScrim?.addEventListener('click', closeDrawers);
+    narrowPanelQuery.addEventListener('change', syncScrim);
+    window.gminiLayout = { syncScrim, closeDrawers };
+    syncScrim();
+
+    // Escape cierra cajones y el panel lateral si el foco está dentro.
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape' || e.defaultPrevented) return;
+        if (settingsManager.isOpen?.()) return;
+        if (document.querySelector('.palette-backdrop, #screenshot-modal, #onboarding-modal')) return;
+        const codePanel = document.getElementById('code-panel');
+        if (window.codeManager?.panelOpen && codePanel?.contains(document.activeElement)) {
+            e.preventDefault();
+            window.codeManager.togglePanel(false);
+            document.getElementById('btn-toggle-code')?.focus();
+            return;
+        }
+        if (closeDrawers()) e.preventDefault();
+    });
 
     // ── WebSocket events ──────────────────────────────
 
@@ -604,6 +657,11 @@
         }
     });
 
+    // ── Onboarding wizard ────────────────────────────
+    if (window.OnboardingWizard) {
+        new OnboardingWizard(ws);
+    }
+
     // ── Connect to backend ────────────────────────────
     ws.connect();
     setInterval(refreshTerminals, 5000);
@@ -618,47 +676,55 @@
         }
     });
 
-    userInput.addEventListener('input', () => {
-        // Auto-resize
-        userInput.style.height = 'auto';
-        userInput.style.height = Math.min(userInput.scrollHeight, 120) + 'px';
-        // Char count
-        charCount.textContent = userInput.value.length;
-    });
+    userInput.addEventListener('input', syncComposer);
 
     btnSend.addEventListener('click', sendMessage);
+
+    // Clic en cualquier zona vacía del compositor = enfocar el texto.
+    document.getElementById('composer')?.addEventListener('mousedown', (e) => {
+        if (e.target.closest('button, select, textarea, input, a')) return;
+        e.preventDefault();
+        userInput.focus();
+    });
+
+    // Sugerencias del estado vacío: rellenan el borrador, no envían.
+    document.getElementById('messages')?.addEventListener('click', (e) => {
+        const chip = e.target.closest('.chat-suggestion');
+        if (!chip) return;
+        updateComposerValue(chip.dataset.prompt || '');
+        userInput.focus();
+    });
 
     // ── Adjuntos (clip) ───────────────────────────────
     let pendingAttachments = [];  // [{ kind, file_name, local_path }]
 
     function renderAttachmentChips() {
         if (!attachmentChips) return;
-        if (!pendingAttachments.length) {
-            attachmentChips.style.display = 'none';
-            attachmentChips.innerHTML = '';
-            return;
-        }
-        attachmentChips.style.display = 'flex';
         attachmentChips.innerHTML = '';
+        attachmentChips.style.display = pendingAttachments.length ? 'flex' : 'none';
         pendingAttachments.forEach((att, i) => {
             const chip = document.createElement('span');
             chip.className = 'attachment-chip';
+            chip.appendChild(window.gminiDom.iconEl(att.kind === 'folder' ? 'folder' : 'paperclip'));
             const label = document.createElement('span');
             label.className = 'attachment-chip-name';
             label.textContent = att.file_name;
             label.title = att.local_path;
             const rm = document.createElement('button');
+            rm.type = 'button';
             rm.className = 'attachment-chip-remove';
-            rm.textContent = '×';
-            rm.title = 'Quitar';
+            rm.title = `Quitar ${att.file_name}`;
+            rm.setAttribute('aria-label', `Quitar ${att.file_name}`);
+            rm.appendChild(window.gminiDom.iconEl('x'));
             rm.addEventListener('click', () => {
                 pendingAttachments.splice(i, 1);
                 renderAttachmentChips();
+                userInput.focus();
             });
-            chip.appendChild(label);
-            chip.appendChild(rm);
+            chip.append(label, rm);
             attachmentChips.appendChild(chip);
         });
+        updateSendState();
     }
 
     async function pickAttachments(mode) {
@@ -678,6 +744,7 @@
 
     btnAttach?.addEventListener('click', () => pickAttachments('files'));
     btnAttachFolder?.addEventListener('click', () => pickAttachments('folder'));
+    syncComposer();
 
     btnAgentStart?.addEventListener('click', () => {
         ws.sendCommand('start');
@@ -715,7 +782,11 @@
 
     function sendMessage() {
         const text = userInput.value.trim();
-        if ((!text && !pendingAttachments.length) || isGenerating) return;
+        if (!text && !pendingAttachments.length) return;
+        if (isGenerating) {
+            chatManager._toast('El agente sigue respondiendo; tu borrador queda guardado.');
+            return;
+        }
 
         if (!ws.connected) {
             chatManager.addSystemMessage('No hay conexion con el backend. Intenta de nuevo.');
@@ -724,7 +795,7 @@
 
         const attachments = pendingAttachments.slice();
         const displayText = attachments.length
-            ? `${text}${text ? '\n' : ''}📎 ${attachments.map((a) => a.file_name).join(', ')}`
+            ? `${text}${text ? '\n' : ''}Adjuntos: ${attachments.map((a) => a.file_name).join(', ')}`
             : text;
         chatManager.addUserMessage(displayText);
         ws.sendMessage(text, attachments);
@@ -755,9 +826,22 @@
 
     function updateComposerValue(value) {
         userInput.value = String(value || '');
+        syncComposer();
+    }
+
+    // Altura automática, contador y estado del botón enviar.
+    function syncComposer() {
         userInput.style.height = 'auto';
-        userInput.style.height = Math.min(userInput.scrollHeight, 120) + 'px';
-        charCount.textContent = userInput.value.length;
+        userInput.style.height = Math.min(userInput.scrollHeight, 200) + 'px';
+        const length = userInput.value.length;
+        charCount.textContent = length;
+        charCount.hidden = length === 0;
+        updateSendState();
+    }
+
+    function updateSendState() {
+        const hasContent = userInput.value.trim().length > 0 || pendingAttachments.length > 0;
+        btnSend.disabled = isGenerating || !hasContent;
     }
 
     function setStatus(state, text) {
@@ -765,10 +849,11 @@
         statusText.textContent = text;
     }
 
+    // El textarea sigue editable mientras el agente responde (B25): se puede
+    // ir escribiendo el siguiente mensaje; solo se bloquea el envío.
     function setGenerating(value) {
         isGenerating = value;
-        btnSend.disabled = value;
-        userInput.disabled = value;
+        updateSendState();
         updateAgentControls();
     }
 

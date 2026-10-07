@@ -190,6 +190,17 @@ class GminiWebSocket {
         this.socket.on('agent:realtime_user_text', (data) => {
             this._emit('agent:realtime_user_text', data);
         });
+
+        // Onboarding wizard
+        this.socket.on('onboarding:required', (data) => {
+            this._emit('onboarding:required', data);
+        });
+        this.socket.on('onboarding:step', (data) => {
+            this._emit('onboarding:step', data);
+        });
+        this.socket.on('onboarding:done', (data) => {
+            this._emit('onboarding:done', data);
+        });
     }
 
     // ── Enviar eventos ────────────────────────────────

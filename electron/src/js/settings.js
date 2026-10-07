@@ -198,6 +198,11 @@ class SettingsManager {
         this.currentSpendAutoApproveUnderUsd = 5.0;
         this.currentDefaultPaymentAccountId = '';
         this.currentPaymentAccounts = [];
+        this.shortcutToggleWindowInput = document.getElementById('input-shortcut-toggle-window');
+        this.shortcutToggleOverlayInput = document.getElementById('input-shortcut-toggle-overlay');
+        this.shortcutQuitInput = document.getElementById('input-shortcut-quit');
+        this.shortcutsMeta = document.getElementById('shortcuts-meta');
+        this.shortcutsSaveBtn = document.getElementById('btn-save-shortcuts');
         this.currentPage = 'general';
         this.currentModelAssignments = {};
         this.currentCrews = [];
@@ -211,10 +216,13 @@ class SettingsManager {
         document.getElementById('btn-settings').addEventListener('click', () => this.toggle());
         document.getElementById('btn-close-settings').addEventListener('click', () => this.hide());
 
-        // ── Sidebar navigation ──
+        // ── Sidebar navigation (tablist con flechas) ──
         this.panel.querySelectorAll('.settings-nav-item').forEach((btn) => {
             btn.addEventListener('click', () => this._switchPage(btn.dataset.page));
         });
+        this.panel.querySelector('.settings-nav')?.addEventListener('keydown', (e) => this._onNavKeydown(e));
+        this._initAppearanceControls();
+        this._enhanceLabels();
 
         this.modeSelect.addEventListener('change', async (e) => {
             this.currentMode = e.target.value;
@@ -280,6 +288,14 @@ class SettingsManager {
                 await this._syncMonitors();
             });
         }
+
+        this.shortcutsSaveBtn?.addEventListener('click', async () => {
+            await this._saveShortcuts();
+        });
+
+        document.getElementById('btn-regenerate-api-token')?.addEventListener('click', async () => {
+            await this._regenerateApiToken();
+        });
 
         this.blockedSitesEnabledCheckbox.addEventListener('change', async (e) => {
             await this._saveConfigValue('agent', 'blocked_sites_enabled', e.target.checked);
@@ -664,6 +680,12 @@ class SettingsManager {
             });
         }
 
+        // ── Embedding Config ──
+        document.getElementById('select-embedding-provider')?.addEventListener('change', () => this._renderEmbeddingMeta());
+        document.getElementById('btn-save-embedding-config')?.addEventListener('click', async () => {
+            await this._saveEmbeddingConfig();
+        });
+
         this._updateModelOptions();
         this._renderApiKeys();
         // Cargar catálogo de modelos desde backend y luego sincronizar config
@@ -675,21 +697,178 @@ class SettingsManager {
         }, 1500);
     }
 
-    toggle() { this.panel.classList.toggle('hidden'); }
-    show()   {
-        this.panel.classList.remove('hidden');
-        this._loadComputerUseConfig().catch(() => {});
+    isOpen() { return !this.panel.classList.contains('hidden'); }
+
+    toggle() {
+        if (this.isOpen()) this.hide();
+        else this.show();
     }
-    hide()   { this.panel.classList.add('hidden'); }
+
+    show() {
+        if (this.isOpen()) return;
+        this._returnFocus = document.activeElement;
+        this.panel.classList.remove('hidden');
+        document.getElementById('btn-settings')?.setAttribute('aria-pressed', 'true');
+        this._loadComputerUseConfig().catch(() => {});
+        const activeTab = this.panel.querySelector('.settings-nav-item.active');
+        (activeTab || this.panel.querySelector('.settings-nav-item'))?.focus();
+        if (!this._onPanelKeydown) this._onPanelKeydown = (e) => this._handlePanelKeydown(e);
+        document.addEventListener('keydown', this._onPanelKeydown, true);
+    }
+
+    hide() {
+        if (!this.isOpen()) return;
+        this.panel.classList.add('hidden');
+        document.getElementById('btn-settings')?.setAttribute('aria-pressed', 'false');
+        if (this._onPanelKeydown) document.removeEventListener('keydown', this._onPanelKeydown, true);
+        const back = this._returnFocus;
+        this._returnFocus = null;
+        if (back && document.contains(back) && typeof back.focus === 'function') back.focus();
+    }
+
+    /** Abre Configuración directamente en una página (paleta de comandos, atajos). */
+    openPage(pageId) {
+        this.show();
+        this._switchPage(pageId);
+        this.panel.querySelector(`.settings-nav-item[data-page="${pageId}"]`)?.focus();
+    }
+
+    _handlePanelKeydown(e) {
+        if (!this.isOpen()) return;
+        // Si hay otro diálogo encima (paleta, visor de imagen, onboarding), que lo maneje él.
+        if (document.querySelector('.palette-backdrop, #screenshot-modal, #onboarding-modal')) return;
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            this.hide();
+            return;
+        }
+        window.gminiDom?.trapFocus(this.panel, e);
+    }
+
+    _onNavKeydown(e) {
+        const tabs = Array.from(this.panel.querySelectorAll('.settings-nav-item'));
+        const idx = tabs.indexOf(document.activeElement);
+        if (idx < 0) return;
+        const keys = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
+        let next = -1;
+        if (keys[e.key]) next = (idx + keys[e.key] + tabs.length) % tabs.length;
+        else if (e.key === 'Home') next = 0;
+        else if (e.key === 'End') next = tabs.length - 1;
+        if (next < 0) return;
+        e.preventDefault();
+        tabs[next].focus();
+        this._switchPage(tabs[next].dataset.page);
+    }
 
     _switchPage(pageId) {
         this.currentPage = pageId;
         this.panel.querySelectorAll('.settings-nav-item').forEach((btn) => {
-            btn.classList.toggle('active', btn.dataset.page === pageId);
+            const selected = btn.dataset.page === pageId;
+            btn.classList.toggle('active', selected);
+            btn.setAttribute('aria-selected', selected ? 'true' : 'false');
+            btn.tabIndex = selected ? 0 : -1;
         });
         this.panel.querySelectorAll('.settings-page').forEach((page) => {
             page.classList.toggle('active', page.dataset.page === pageId);
         });
+        const content = this.panel.querySelector('.settings-content');
+        if (content) content.scrollTop = 0;
+    }
+
+    /**
+     * Asocia el título de cada grupo con su control: for= cuando hay un solo
+     * control con id; si hay varios, el grupo pasa a role=group con aria-labelledby.
+     */
+    _enhanceLabels() {
+        let seq = 0;
+        this.panel.querySelectorAll('.setting-group').forEach((group) => {
+            const title = group.querySelector(':scope > label:not(.setting-toggle)');
+            if (!title || title.htmlFor) return;
+            if (!title.id) title.id = `setting-group-title-${++seq}`;
+            const controls = group.querySelectorAll(':scope > select, :scope > input, :scope > textarea');
+            if (controls.length === 1 && controls[0].id) {
+                title.htmlFor = controls[0].id;
+            } else {
+                group.setAttribute('role', 'group');
+                group.setAttribute('aria-labelledby', title.id);
+            }
+        });
+    }
+
+    // ── Apariencia: tema, acento, densidad y movimiento ──────────
+    // Se aplica al instante (theme-boot) y se persiste en config.user.yaml.
+
+    _initAppearanceControls() {
+        const bind = (group, selector, key, attr) => {
+            if (group) this._bindRadioGroup(group, selector, (btn) => this._setAppearance({ [key]: btn.dataset[attr] }));
+        };
+        bind(document.getElementById('theme-options'), '[data-theme-value]', 'theme', 'themeValue');
+        document.querySelectorAll('[data-accent-group]').forEach((group) => bind(group, '[data-accent]', 'accent', 'accent'));
+        bind(document.getElementById('density-options'), '[data-density]', 'density', 'density');
+        bind(document.getElementById('motion-options'), '[data-motion]', 'motion', 'motion');
+        this._renderAppearanceState();
+    }
+
+    /** Radiogroup accesible: click, flechas y Home/End con tabindex móvil. */
+    _bindRadioGroup(group, selector, onSelect) {
+        group.addEventListener('click', (e) => {
+            const btn = e.target.closest(selector);
+            if (btn && group.contains(btn)) onSelect(btn);
+        });
+        group.addEventListener('keydown', (e) => {
+            const items = Array.from(group.querySelectorAll(selector));
+            const idx = items.indexOf(document.activeElement);
+            if (idx < 0) return;
+            const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+            let next = -1;
+            if (step) next = (idx + step + items.length) % items.length;
+            else if (e.key === 'Home') next = 0;
+            else if (e.key === 'End') next = items.length - 1;
+            if (next < 0) return;
+            e.preventDefault();
+            items[next].focus();
+            onSelect(items[next]);
+        });
+    }
+
+    _setAppearance(partial) {
+        if (!window.gminiTheme) return;
+        window.gminiTheme.set(partial);
+        window.gmini?.setTheme?.(window.gminiTheme.get())?.catch?.(() => {});
+        this._renderAppearanceState();
+        Object.entries(partial).forEach(([key, value]) => {
+            this._saveConfigValue('app', key, value);
+        });
+    }
+
+    _renderAppearanceState() {
+        const prefs = window.gminiTheme ? window.gminiTheme.get() : {};
+        const mark = (selector, attr, value) => {
+            document.querySelectorAll(selector).forEach((btn) => {
+                const checked = btn.dataset[attr] === value;
+                btn.setAttribute('aria-checked', checked ? 'true' : 'false');
+                btn.tabIndex = checked ? 0 : -1;
+            });
+        };
+        mark('#theme-options [data-theme-value]', 'themeValue', prefs.theme);
+        mark('[data-accent-group] [data-accent]', 'accent', prefs.accent);
+        mark('#density-options [data-density]', 'density', prefs.density);
+        mark('#motion-options [data-motion]', 'motion', prefs.motion);
+    }
+
+    /** config.user.yaml manda: si difiere del cache local, se aplica sin animar. */
+    _applyAppearanceFromConfig(appConfig = {}) {
+        if (!window.gminiTheme) return;
+        const next = {};
+        ['theme', 'accent', 'density', 'motion'].forEach((key) => {
+            if (typeof appConfig[key] === 'string' && appConfig[key]) next[key] = appConfig[key];
+        });
+        const current = window.gminiTheme.get();
+        if (Object.keys(next).some((key) => current[key] !== next[key])) {
+            window.gminiTheme.set(next, { animate: false });
+            window.gmini?.setTheme?.(window.gminiTheme.get())?.catch?.(() => {});
+        }
+        this._renderAppearanceState();
     }
 
     _updateModelOptions() {
@@ -1349,11 +1528,14 @@ class SettingsManager {
                 if (this.appStartHiddenToTrayCheckbox) {
                     this.appStartHiddenToTrayCheckbox.checked = this.currentStartHiddenToTray;
                 }
+                this._applyAppearanceFromConfig(appConfig);
             }
         } catch (err) {
             // Backend no listo
         }
         await this._syncAppRuntimeSettings();
+        this._loadShortcuts();
+        this._loadApiAuthStatus();
         this._renderAppBehaviorMeta();
         try {
             const resp = await fetch(`${BACKEND_API}/config/model_router`);
@@ -1721,7 +1903,59 @@ class SettingsManager {
         await this._syncModelAssignments();
         await this._loadComputerUseConfig();
         await this._syncCrews();
+        await this._syncEmbeddingConfig();
         this._toggleBudgetFields();
+    }
+
+    async _syncEmbeddingConfig() {
+        try {
+            const resp = await fetch(`${BACKEND_API}/config/memory`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const mem = data?.data?.memory || {};
+            const provSel = document.getElementById('select-embedding-provider');
+            const modelInput = document.getElementById('input-embedding-model');
+            if (provSel) provSel.value = mem.embedding_provider || 'auto';
+            if (modelInput) modelInput.value = mem.embedding_model || '';
+            this._renderEmbeddingMeta(mem.embedding_provider || 'auto', mem.embedding_model || '');
+        } catch (err) {
+            // Backend no listo
+        }
+    }
+
+    async _saveEmbeddingConfig() {
+        const provSel = document.getElementById('select-embedding-provider');
+        const modelInput = document.getElementById('input-embedding-model');
+        const metaEl = document.getElementById('embedding-config-meta');
+        const provider = provSel?.value || 'auto';
+        const model = modelInput?.value?.trim() || '';
+        const ok1 = await this._saveConfigValue('memory', 'embedding_provider', provider);
+        const ok2 = await this._saveConfigValue('memory', 'embedding_model', model);
+        if (metaEl) {
+            if (ok1 && ok2) {
+                metaEl.textContent = 'Guardado. Reinicia el backend para aplicar el nuevo proveedor.';
+                metaEl.className = 'api-key-status set';
+            } else {
+                metaEl.textContent = 'Error al guardar.';
+                metaEl.className = 'api-key-status error';
+            }
+        }
+    }
+
+    _renderEmbeddingMeta(provider, model) {
+        const provSel = document.getElementById('select-embedding-provider');
+        const metaEl = document.getElementById('embedding-config-meta');
+        if (!metaEl) return;
+        const prov = provider ?? provSel?.value ?? 'auto';
+        const labels = {
+            auto: 'Auto — usa Vertex AI si el backend Google es Vertex; si no, AI Studio o OpenAI.',
+            vertex_ai: 'Vertex AI — usa las credenciales GCP configuradas en Backend de Google.',
+            google: 'Google AI Studio — requiere API key de Google activa con créditos.',
+            openai: 'OpenAI — requiere API key de OpenAI.',
+            hash: 'Local — hash determinístico, sin red. Sin semántica real.',
+        };
+        metaEl.textContent = labels[prov] || '—';
+        metaEl.className = 'api-key-status';
     }
 
     async _syncMcpRuntime() {
@@ -2692,6 +2926,66 @@ class SettingsManager {
         if (this.paymentsAccountsInput) this.paymentsAccountsInput.value = JSON.stringify(accounts, null, 2);
 
         this._renderPaymentAccountsMeta();
+    }
+
+    async _loadApiAuthStatus() {
+        try {
+            const resp = await fetch(`${BACKEND_API}/auth/status`);
+            if (resp.ok) {
+                const data = await resp.json();
+                const info = data?.data || {};
+                const el = document.getElementById('api-auth-status');
+                if (el) el.textContent = info.enabled
+                    ? `Activa — token: ${info.token_masked}`
+                    : 'Desactivada — trafico externo sin proteccion.';
+            }
+        } catch (err) { /* backend not ready */ }
+    }
+
+    async _regenerateApiToken() {
+        try {
+            const resp = await fetch(`${BACKEND_API}/auth/regenerate`, { method: 'POST' });
+            if (resp.ok) {
+                const data = await resp.json();
+                const token = data?.data?.token || '';
+                const display = document.getElementById('api-auth-token-display');
+                if (display) display.textContent = `Token: ${token}`;
+                await this._loadApiAuthStatus();
+            }
+        } catch (err) {
+            const display = document.getElementById('api-auth-token-display');
+            if (display) display.textContent = 'Error al regenerar token.';
+        }
+    }
+
+    async _loadShortcuts() {
+        try {
+            if (window.gmini?.getShortcuts) {
+                const shortcuts = await window.gmini.getShortcuts();
+                if (this.shortcutToggleWindowInput) this.shortcutToggleWindowInput.value = shortcuts.toggle_window || '';
+                if (this.shortcutToggleOverlayInput) this.shortcutToggleOverlayInput.value = shortcuts.toggle_overlay || '';
+                if (this.shortcutQuitInput) this.shortcutQuitInput.value = shortcuts.quit || '';
+            }
+        } catch (err) {
+            console.warn('[Settings] No se pudieron cargar atajos:', err);
+        }
+    }
+
+    async _saveShortcuts() {
+        const shortcuts = {
+            toggle_window: (this.shortcutToggleWindowInput?.value || '').trim(),
+            toggle_overlay: (this.shortcutToggleOverlayInput?.value || '').trim(),
+            quit: (this.shortcutQuitInput?.value || '').trim(),
+        };
+        try {
+            if (window.gmini?.updateShortcuts) {
+                await window.gmini.updateShortcuts(shortcuts);
+            }
+            await this._saveConfigValue('app', 'shortcuts', shortcuts);
+            if (this.shortcutsMeta) this.shortcutsMeta.textContent = 'Atajos guardados y aplicados.';
+        } catch (err) {
+            if (this.shortcutsMeta) this.shortcutsMeta.textContent = 'Error al guardar atajos.';
+        }
     }
 
     async _saveConfigValue(section, key, value) {

@@ -16,7 +16,7 @@ if (!electronModule || typeof electronModule !== 'object' || !electronModule.app
     process.exit(1);
 }
 
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, dialog, protocol, net } = electronModule;
+const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, screen, dialog, protocol, net, nativeTheme } = electronModule;
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -78,6 +78,11 @@ const DEFAULT_APP_PREFERENCES = Object.freeze({
     closeToTray: true,
     startHiddenToTray: false,
 });
+const DEFAULT_SHORTCUTS = Object.freeze({
+    toggle_window: 'Alt+G',
+    toggle_overlay: 'Alt+Shift+G',
+    quit: 'Ctrl+Shift+Q',
+});
 const DEFAULT_CHARACTER_PREFERENCES = Object.freeze({
     type: '3d',
     skin: 'energy-ball',
@@ -99,6 +104,7 @@ const DEFAULT_OVERLAY_CHARACTER_RUNTIME = Object.freeze({
 });
 
 let appPreferences = { ...DEFAULT_APP_PREFERENCES };
+let currentShortcuts = { ...DEFAULT_SHORTCUTS };
 let characterPreferences = { ...DEFAULT_CHARACTER_PREFERENCES };
 let configReloadTimer = null;
 let overlayRuntimeState = null;
@@ -145,6 +151,50 @@ function normalizeAppPreferences(rawAppConfig = {}) {
         closeToTray: rawAppConfig.close_to_tray !== false,
         startHiddenToTray: !!rawAppConfig.start_hidden_to_tray,
     };
+}
+
+// ── Tema de la interfaz (app.theme / accent / density / motion) ──
+const THEME_VALUES = Object.freeze(['system', 'dark', 'ocean', 'midnight', 'light', 'paper', 'contrast']);
+const ACCENT_VALUES = Object.freeze(['blue', 'violet', 'green', 'amber', 'rose', 'cyan']);
+// Fondo nativo por tema: evita el primer fotograma blanco al abrir la ventana.
+const THEME_BACKGROUNDS = Object.freeze({
+    dark: '#0f1115',
+    ocean: '#0b1220',
+    midnight: '#000000',
+    light: '#f6f7f9',
+    paper: '#f5f1e8',
+    contrast: '#000000',
+});
+let themePreferences = { theme: 'dark', accent: 'blue', density: 'comfortable', motion: 'system' };
+
+function normalizeThemePreferences(raw = {}) {
+    const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
+    return {
+        theme: pick(String(raw.theme || ''), THEME_VALUES, 'dark'),
+        accent: pick(String(raw.accent || ''), ACCENT_VALUES, 'blue'),
+        density: pick(String(raw.density || ''), ['comfortable', 'compact'], 'comfortable'),
+        motion: pick(String(raw.motion || ''), ['system', 'full', 'reduced'], 'system'),
+    };
+}
+
+function themeBackgroundColor() {
+    const theme = themePreferences.theme === 'system'
+        ? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
+        : themePreferences.theme;
+    return THEME_BACKGROUNDS[theme] || THEME_BACKGROUNDS.dark;
+}
+
+/** El preload los expone como gmini.initialTheme para que theme-boot.js pinte bien desde el inicio. */
+function themeArguments() {
+    return Object.entries(themePreferences).map(([key, value]) => `--gmini-${key}=${value}`);
+}
+
+function applyThemePreferences(next = {}) {
+    themePreferences = normalizeThemePreferences({ ...themePreferences, ...next });
+    if (!app.isReady()) return;
+    const light = themePreferences.theme === 'light' || themePreferences.theme === 'paper';
+    nativeTheme.themeSource = themePreferences.theme === 'system' ? 'system' : (light ? 'light' : 'dark');
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBackgroundColor(themeBackgroundColor());
 }
 
 function loadMergedProjectConfigFromDisk() {
@@ -331,6 +381,34 @@ function reloadRuntimePreferencesFromDisk() {
     const mergedConfig = loadMergedProjectConfigFromDisk();
     applyAppPreferences(normalizeAppPreferences(mergedConfig.app || {}));
     applyCharacterPreferences(normalizeCharacterPreferences(mergedConfig.character || {}));
+    applyThemePreferences(normalizeThemePreferences(mergedConfig.app || {}));
+    registerShortcuts(mergedConfig.app?.shortcuts);
+}
+
+function registerShortcuts(shortcuts = {}) {
+    if (!app.isReady()) return;
+    globalShortcut.unregisterAll();
+    currentShortcuts = { ...DEFAULT_SHORTCUTS, ...shortcuts };
+
+    const actions = {
+        toggle_window: () => {
+            if (mainWindow) {
+                if (mainWindow.isVisible()) mainWindow.hide();
+                else { mainWindow.show(); mainWindow.focus(); }
+            }
+        },
+        toggle_overlay: () => toggleOverlay(!isOverlayMode),
+        quit: () => { app.isQuitting = true; app.quit(); },
+    };
+
+    for (const [action, combo] of Object.entries(currentShortcuts)) {
+        if (!combo || !actions[action]) continue;
+        try {
+            globalShortcut.register(combo, actions[action]);
+        } catch (err) {
+            console.warn(`[Shortcuts] No se pudo registrar ${action} = ${combo}:`, err.message);
+        }
+    }
 }
 
 function scheduleAppPreferencesReload() {
@@ -1415,17 +1493,21 @@ function stopBackend() {
 // ── Main Window ──────────────────────────────────────────────
 
 function createMainWindow() {
-    const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+    const work = screen.getPrimaryDisplay().workArea;
+    // Tamaño de escritorio por defecto (B15); en pantallas chicas se ajusta al área útil.
+    const winWidth = Math.min(1040, Math.round(work.width * 0.92));
+    const winHeight = Math.min(720, Math.round(work.height * 0.92));
 
     mainWindow = new BrowserWindow({
-        width: 420,
-        height: 700,
+        width: winWidth,
+        height: winHeight,
         minWidth: 360,
         minHeight: 500,
-        x: width - 440,
-        y: height - 720,
+        x: work.x + Math.round((work.width - winWidth) / 2),
+        y: work.y + Math.round((work.height - winHeight) / 2),
         frame: false,
         transparent: false,
+        backgroundColor: themeBackgroundColor(),
         resizable: true,
         alwaysOnTop: true,
         skipTaskbar: false,
@@ -1435,6 +1517,7 @@ function createMainWindow() {
             contextIsolation: true,
             nodeIntegration: false,
             backgroundThrottling: false,
+            additionalArguments: themeArguments(),
         },
         // No hay .ico en assets; Electron acepta PNG como icono de ventana en Windows.
         icon: path.join(__dirname, 'assets', 'icon.png'),
@@ -1495,6 +1578,7 @@ function createOverlayWindow() {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
+            additionalArguments: themeArguments(),
         },
     });
 
@@ -1577,6 +1661,7 @@ function createSkinWindow() {
             contextIsolation: true,
             nodeIntegration: false,
             backgroundThrottling: false,
+            additionalArguments: themeArguments(),
         },
     });
 
@@ -1706,6 +1791,7 @@ function toggleOverlay(enable) {
 
 // ── IPC Handlers ─────────────────────────────────────────────
 
+
 function readSessionToken() {
     // Si el backend ya estaba corriendo (no lo lanzamos nosotros) su token es el del archivo.
     try {
@@ -1719,6 +1805,14 @@ function readSessionToken() {
 
 ipcMain.handle('get-backend-url', () => BACKEND_URL);
 ipcMain.handle('get-session-token', () => readSessionToken());
+
+// Configuración cambia el tema: fondo nativo y nativeTheme al instante, sin
+// esperar al sondeo de config.user.yaml. El resto de ventanas se entera por
+// el evento "storage" de localStorage (ver theme-boot.js).
+ipcMain.handle('theme:set', (_, prefs) => {
+    applyThemePreferences(prefs && typeof prefs === 'object' ? prefs : {});
+    return { ...themePreferences };
+});
 
 // ── Guardar media generada (imagen/video/audio) en una carpeta a eleccion ──
 function _fetchBufferFromUrl(url) {
@@ -2048,6 +2142,13 @@ ipcMain.handle('get-app-runtime-settings', () => {
 ipcMain.handle('reload-app-runtime-settings', () => {
     applyAppPreferences(loadAppPreferencesFromDisk());
     return getEffectiveAppRuntimeSettings();
+});
+
+ipcMain.handle('get-shortcuts', () => currentShortcuts);
+
+ipcMain.handle('update-shortcuts', (_, shortcuts) => {
+    registerShortcuts(shortcuts);
+    return currentShortcuts;
 });
 
 // ── Effect Handlers (Click indicators, Screenshot overlay, Transparency) ────
@@ -2504,7 +2605,8 @@ app.whenReady().then(async () => {
         }
     });
 
-    // 2. Crear UI
+    // 2. Crear UI (con el tema ya resuelto para el color de fondo nativo)
+    applyThemePreferences(normalizeThemePreferences(loadMergedProjectConfigFromDisk().app || {}));
     createMainWindow();
     createOverlayWindow();
     createSkinWindow();
@@ -2513,27 +2615,9 @@ app.whenReady().then(async () => {
     applyAppPreferences(appPreferences);
     setSkinMode(characterPreferences.mode);
 
-    // Global shortcuts
-    globalShortcut.register('Alt+G', () => {
-        if (mainWindow) {
-            if (mainWindow.isVisible()) {
-                mainWindow.hide();
-            } else {
-                mainWindow.show();
-                mainWindow.focus();
-            }
-        }
-    });
-
-    globalShortcut.register('Alt+Shift+G', () => {
-        toggleOverlay(!isOverlayMode);
-    });
-
-    // Kill switch — Ctrl+Shift+Esc ya es del OS Task Manager, usar Ctrl+Shift+Q
-    globalShortcut.register('Ctrl+Shift+Q', () => {
-        app.isQuitting = true;
-        app.quit();
-    });
+    // Global shortcuts (from config)
+    const mergedConfig = loadMergedProjectConfigFromDisk();
+    registerShortcuts(mergedConfig.app?.shortcuts);
 });
 
 app.on('window-all-closed', () => {
