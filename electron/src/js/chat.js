@@ -3,6 +3,15 @@
  * Renderizado de mensajes, streaming y Markdown básico.
  */
 
+// Saneado del Markdown que devuelve marked: sin estilos ni formularios y
+// enlaces siempre a una ventana nueva (el proceso principal la convierte en
+// el navegador del sistema y nunca navega la app).
+const MARKDOWN_SANITIZE = Object.freeze({
+    FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'iframe', 'object', 'embed'],
+    FORBID_ATTR: ['style'],
+    ADD_ATTR: ['target'],
+});
+
 class ChatManager {
     constructor() {
         this.messagesContainer = document.getElementById('messages');
@@ -14,18 +23,45 @@ class ChatManager {
     }
 
     init() {
-        // Nada extra por ahora
         this._lastScreenshotTime = 0;
+        this.container = document.getElementById('chat-container');
+        this.scrollPill = document.getElementById('btn-scroll-bottom');
+        this._stickToBottom = true;
+        this._typingEl = null;
+        this._renderQueued = false;
+        // Estado vacío original, para volver a mostrarlo al limpiar el chat.
+        this._emptyStateHtml = this.messagesContainer.querySelector('.chat-empty')?.outerHTML || '';
+
+        // B16: solo se sigue el final si el usuario ya estaba abajo.
+        this.container?.addEventListener('scroll', () => {
+            this._stickToBottom = this._isNearBottom();
+            if (this._stickToBottom) this._setScrollPill(false);
+        }, { passive: true });
+        this.scrollPill?.addEventListener('click', () => this._scrollToBottom(true));
+        this.messagesContainer.addEventListener('click', (e) => this._onMessagesClick(e));
+
+        if (window.marked) window.marked.use({ gfm: true, breaks: true });
+        if (window.DOMPurify && !ChatManager._sanitizerHooked) {
+            window.DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+                if (node.tagName === 'A' && node.hasAttribute('href')) {
+                    node.setAttribute('target', '_blank');
+                    node.setAttribute('rel', 'noopener noreferrer');
+                }
+            });
+            ChatManager._sanitizerHooked = true;
+        }
     }
 
     /**
      * Añade un mensaje del usuario al chat.
      */
     addUserMessage(text) {
+        this.hideTyping();
         const el = this._createMessageEl('user-message');
-        el.innerHTML = this._escapeHtml(text);
+        el.textContent = String(text || '');
         this.messagesContainer.appendChild(el);
-        this._scrollToBottom();
+        // Lo que escribe el usuario siempre lleva la vista al final.
+        this._scrollToBottom(true);
     }
 
     addSystemMessage(text) {
@@ -274,12 +310,26 @@ class ChatManager {
      * Visor de imagen ampliada con zoom (botones + rueda + arrastre) y descarga.
      */
     _showMediaViewer(src, filename = '') {
-        const existing = document.getElementById('screenshot-modal');
-        if (existing) existing.remove();
+        this._closeViewer?.();
+        const returnFocus = document.activeElement;
 
         const overlay = document.createElement('div');
         overlay.id = 'screenshot-modal';
         overlay.className = 'screenshot-modal-overlay';
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
+        overlay.setAttribute('aria-label', filename || 'Visor de imagen');
+
+        let onKey = null;
+        const close = () => {
+            overlay.remove();
+            if (onKey) document.removeEventListener('keydown', onKey);
+            this._closeViewer = null;
+            if (returnFocus && document.contains(returnFocus) && typeof returnFocus.focus === 'function') {
+                returnFocus.focus();
+            }
+        };
+        this._closeViewer = close;
 
         let scale = 1, tx = 0, ty = 0, dragging = false, sx = 0, sy = 0;
 
@@ -311,7 +361,7 @@ class ChatManager {
         bar.appendChild(mk('zoom-out', 'Alejar', () => setScale(scale / 1.25)));
         bar.appendChild(mk('reset', 'Restablecer', () => setScale(1)));
         bar.appendChild(mk('download', 'Descargar / Guardar como…', () => this._downloadMedia(src, filename)));
-        bar.appendChild(mk('close', 'Cerrar', () => overlay.remove()));
+        bar.appendChild(mk('close', 'Cerrar (Esc)', () => close()));
 
         stage.addEventListener('wheel', (e) => {
             e.preventDefault();
@@ -332,9 +382,10 @@ class ChatManager {
             if (scale > 1) img.style.cursor = 'grab';
         });
         img.addEventListener('dblclick', (e) => { e.stopPropagation(); setScale(scale > 1 ? 1 : 2); });
-        overlay.addEventListener('click', (e) => { if (e.target === overlay || e.target === stage) overlay.remove(); });
-        const onKey = (e) => {
-            if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', onKey); }
+        overlay.addEventListener('click', (e) => { if (e.target === overlay || e.target === stage) close(); });
+        onKey = (e) => {
+            if (e.key === 'Escape') { e.preventDefault(); close(); }
+            else if (e.key === 'Tab') window.gminiDom.trapFocus(overlay, e);
             else if (e.key === '+' || e.key === '=') setScale(scale * 1.25);
             else if (e.key === '-') setScale(scale / 1.25);
             else if (e.key === '0') setScale(1);
@@ -344,6 +395,7 @@ class ChatManager {
         overlay.appendChild(bar);
         overlay.appendChild(stage);
         document.body.appendChild(overlay);
+        bar.lastElementChild?.focus();
     }
 
     /** Alias retro-compatible: capturas de pantalla usan el mismo visor con zoom. */
@@ -413,10 +465,13 @@ class ChatManager {
      * Inicia un nuevo mensaje streaming.
      */
     startStreaming() {
+        this.hideTyping();
         this.isStreaming = true;
         this.streamingText = '';
         this.currentStreamingEl = this._createMessageEl('assistant-message streaming-cursor');
         this.messagesContainer.appendChild(this.currentStreamingEl);
+        // Los lectores de pantalla esperan a que termine en vez de leer cada fragmento.
+        this.container?.setAttribute('aria-busy', 'true');
     }
 
     /**
@@ -435,6 +490,7 @@ class ChatManager {
         this.currentStreamingEl = null;
         this.streamingText = '';
         this.isStreaming = false;
+        this.container?.setAttribute('aria-busy', 'false');
         this._scrollToBottom();
     }
 
@@ -454,18 +510,44 @@ class ChatManager {
      * Actualiza el contenido del mensaje streaming.
      */
     _updateStreamingContent() {
-        if (!this.currentStreamingEl) return;
-        const cleanText = this._stripActionLines(this.streamingText);
-        if (!cleanText) {
-            this.currentStreamingEl.style.display = 'none';
-        } else {
-            this.currentStreamingEl.style.display = '';
-            this.currentStreamingEl.innerHTML = this._renderMarkdown(cleanText);
-        }
+        // B16: como mucho un render por fotograma aunque lleguen muchos fragmentos.
+        if (this._renderQueued) return;
+        this._renderQueued = true;
+        requestAnimationFrame(() => {
+            this._renderQueued = false;
+            if (!this.currentStreamingEl) return;
+            const cleanText = this._stripActionLines(this.streamingText);
+            if (!cleanText) {
+                this.currentStreamingEl.style.display = 'none';
+            } else {
+                this.currentStreamingEl.style.display = '';
+                this.currentStreamingEl.innerHTML = this._renderMarkdown(cleanText);
+            }
+            this._scrollToBottom();
+        });
+    }
+
+    /** Tres puntos animados mientras el agente piensa y aún no hay texto. */
+    showTyping() {
+        if (this.isStreaming || this._typingEl) return;
+        const el = document.createElement('div');
+        el.className = 'typing-indicator';
+        el.setAttribute('role', 'status');
+        el.setAttribute('aria-label', 'El agente está pensando');
+        el.innerHTML = '<span></span><span></span><span></span>';
+        this._typingEl = el;
+        this.messagesContainer.appendChild(el);
         this._scrollToBottom();
     }
 
+    hideTyping() {
+        if (!this._typingEl) return;
+        this._typingEl.remove();
+        this._typingEl = null;
+    }
+
     _addErrorMessage(text) {
+        this.hideTyping();
         const el = this._createMessageEl('error-message');
         el.textContent = text;
         this.messagesContainer.appendChild(el);
@@ -478,40 +560,110 @@ class ChatManager {
         return div;
     }
 
-    _scrollToBottom() {
-        const container = document.getElementById('chat-container');
+    _isNearBottom() {
+        const c = this.container;
+        return !c || c.scrollHeight - c.scrollTop - c.clientHeight < 48;
+    }
+
+    _setScrollPill(visible) {
+        if (this.scrollPill) this.scrollPill.hidden = !visible;
+    }
+
+    /**
+     * Baja al final solo si el usuario ya estaba ahí (o si se fuerza). Si está
+     * leyendo más arriba, aparece la pastilla "Ir al final" en vez de saltar.
+     */
+    _scrollToBottom(force = false) {
+        const container = this.container || document.getElementById('chat-container');
         if (!container) return;
+        if (!force && !this._stickToBottom) {
+            this._setScrollPill(true);
+            return;
+        }
         requestAnimationFrame(() => {
             container.scrollTop = container.scrollHeight;
+            this._stickToBottom = true;
+            this._setScrollPill(false);
         });
     }
 
     /**
      * Renderizado básico de Markdown.
      */
+    /**
+     * Markdown real (marked, GFM) saneado con DOMPurify (B17). El código queda
+     * protegido de las reglas de negrita/cursiva y cada bloque lleva su barra
+     * con lenguaje y botón de copiar. Sin las librerías, cae a texto escapado.
+     */
     _renderMarkdown(text) {
         if (!text) return '';
+        const source = String(text);
+        if (!window.marked || !window.DOMPurify) {
+            return this._escapeHtml(source).replace(/\n/g, '<br>');
+        }
+        const clean = window.DOMPurify.sanitize(window.marked.parse(source), MARKDOWN_SANITIZE);
+        if (!clean.includes('<pre')) return clean;
+        // <template> es inerte: decorar aquí no ejecuta ni carga nada.
+        const tpl = document.createElement('template');
+        tpl.innerHTML = clean;
+        tpl.content.querySelectorAll('pre').forEach((pre) => this._wrapCodeBlock(pre));
+        return tpl.innerHTML;
+    }
 
-        let html = this._escapeHtml(text);
+    _wrapCodeBlock(pre) {
+        const code = pre.querySelector('code');
+        const langClass = Array.from(code?.classList || []).find((c) => c.startsWith('language-'));
+        const block = document.createElement('div');
+        block.className = 'code-block';
+        const header = document.createElement('div');
+        header.className = 'code-block-header';
+        const lang = document.createElement('span');
+        lang.className = 'code-block-lang';
+        lang.textContent = langClass ? langClass.slice('language-'.length) : 'texto';
+        const copy = document.createElement('button');
+        copy.type = 'button';
+        copy.className = 'code-copy-btn';
+        copy.dataset.copyCode = '';
+        copy.setAttribute('aria-label', 'Copiar código');
+        copy.innerHTML = `${window.gminiDom.icon('copy')}<span>Copiar</span>`;
+        header.append(lang, copy);
+        pre.replaceWith(block);
+        block.append(header, pre);
+    }
 
-        // Code blocks ```...```
-        html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-            return `<pre><code class="lang-${lang}">${code.trim()}</code></pre>`;
+    _onMessagesClick(e) {
+        const copyBtn = e.target.closest('[data-copy-code]');
+        if (!copyBtn) return;
+        const code = copyBtn.closest('.code-block')?.querySelector('pre')?.innerText || '';
+        this._copyText(code).then((ok) => {
+            copyBtn.classList.toggle('is-copied', ok);
+            copyBtn.innerHTML = `${window.gminiDom.icon(ok ? 'copy-check' : 'circle-x')}<span>${ok ? 'Copiado' : 'Sin acceso'}</span>`;
+            clearTimeout(copyBtn._resetTimer);
+            copyBtn._resetTimer = setTimeout(() => {
+                copyBtn.classList.remove('is-copied');
+                copyBtn.innerHTML = `${window.gminiDom.icon('copy')}<span>Copiar</span>`;
+            }, 1600);
         });
+    }
 
-        // Inline code `...`
-        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-        // Bold **...**
-        html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-
-        // Italic *...*
-        html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-        // Line breaks
-        html = html.replace(/\n/g, '<br>');
-
-        return html;
+    async _copyText(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (_) {
+            // Respaldo: selección temporal + execCommand.
+            const area = document.createElement('textarea');
+            area.value = text;
+            area.setAttribute('readonly', '');
+            area.style.position = 'fixed';
+            area.style.opacity = '0';
+            document.body.appendChild(area);
+            area.select();
+            let ok = false;
+            try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+            area.remove();
+            return ok;
+        }
     }
 
     _escapeHtml(text) {
@@ -520,9 +672,13 @@ class ChatManager {
     }
 
     clear() {
-        this.messagesContainer.innerHTML = '';
+        this.hideTyping();
+        this.messagesContainer.innerHTML = this._emptyStateHtml || '';
         this.finishStreaming();
         this.approvalCardEl = null;
+        this._stickToBottom = true;
+        this._setScrollPill(false);
+        window.gminiIdentity?.refreshNameSlots?.();
     }
 
     // ── Action activity cards ────────────────────────
@@ -534,6 +690,7 @@ class ChatManager {
      * @returns {HTMLElement} El elemento de la card para poder actualizarlo con el resultado
      */
     addActionCard(type, params) {
+        this.hideTyping();
         const el = this._createMessageEl('action-message');
         const icon = this._getActionIcon(type, params);
         const label = this._getActionLabel(type, params);
@@ -641,7 +798,10 @@ class ChatManager {
                 : 'var(--error)';
             setTimeout(() => {
                 const bar = cardEl.querySelector('.action-progress-bar');
-                if (bar) bar.style.opacity = '0';
+                if (!bar) return;
+                bar.style.opacity = '0';
+                // Al terminar la barra deja de ocupar espacio en la tarjeta.
+                setTimeout(() => bar.remove(), 400);
             }, 600);
         }
 
@@ -945,7 +1105,7 @@ class ChatManager {
             `;
         }).join('');
 
-        const title = isDryRun ? 'Dry Run requerido' : 'Aprobacion requerida';
+        const title = isDryRun ? 'Dry Run requerido' : 'Aprobación requerida';
         const approveLabel = isDryRun ? 'Ejecutar' : 'Aprobar';
         const decisionBadge = data.decision
             ? `<div class="approval-meta">Critic: ${this._escapeHtml(data.decision)}</div>`
@@ -960,17 +1120,19 @@ class ChatManager {
             <div class="approval-summary">${this._renderMarkdown(data.summary || '')}</div>
             <div class="approval-findings">${findingsHtml}</div>
             <div class="approval-actions">
-                <button class="approval-btn approval-approve" data-action="approve">${approveLabel}</button>
-                <button class="approval-btn approval-cancel" data-action="cancel">Cancelar</button>
+                <button class="approval-btn approval-approve" type="button" data-action="approve">${approveLabel}</button>
+                <button class="approval-btn approval-cancel" type="button" data-action="cancel">Cancelar</button>
             </div>
         `;
 
-        this.approvalCardEl.querySelector('[data-action="approve"]')?.addEventListener('click', () => {
-            ws.sendCommand('approve_pending');
-        });
-        this.approvalCardEl.querySelector('[data-action="cancel"]')?.addEventListener('click', () => {
-            ws.sendCommand('cancel_pending');
-        });
+        const card = this.approvalCardEl;
+        const decide = (command) => {
+            card.querySelectorAll('.approval-btn').forEach((b) => { b.disabled = true; });
+            ws.sendCommand(command);
+        };
+        card.querySelector('[data-action="approve"]')?.addEventListener('click', () => decide('approve_pending'));
+        card.querySelector('[data-action="cancel"]')?.addEventListener('click', () => decide('cancel_pending'));
+        this.hideTyping();
 
         this._scrollToBottom();
     }

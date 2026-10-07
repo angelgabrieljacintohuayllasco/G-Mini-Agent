@@ -26,6 +26,19 @@ let GOOGLE_IMAGE_MODELS = [];
 let GOOGLE_VIDEO_MODELS = [];
 let GOOGLE_MUSIC_MODELS = [];
 
+/**
+ * Ids de modelo de un proveedor. El catálogo trae listas para casi todos y un
+ * dict rico para Google; iterar el dict con for...of rompía Configuración (B2).
+ */
+function catalogModelIds(provider) {
+    const raw = MODEL_OPTIONS[provider];
+    if (Array.isArray(raw)) {
+        return raw.map((m) => (typeof m === 'string' ? m : (m && (m.id || m.name)) || '')).filter(Boolean);
+    }
+    if (raw && typeof raw === 'object') return Object.keys(raw);
+    return [];
+}
+
 // ── Modelos con soporte de computer use por proveedor (sub-agente dedicado) ──
 const COMPUTER_USE_MODELS = {
     google: ['gemini-2.5-computer-use-preview-10-2025'],
@@ -768,6 +781,7 @@ class SettingsManager {
     }
 
     _switchPage(pageId) {
+        const changed = this.currentPage !== pageId;
         this.currentPage = pageId;
         this.panel.querySelectorAll('.settings-nav-item').forEach((btn) => {
             const selected = btn.dataset.page === pageId;
@@ -779,7 +793,7 @@ class SettingsManager {
             page.classList.toggle('active', page.dataset.page === pageId);
         });
         const content = this.panel.querySelector('.settings-content');
-        if (content) content.scrollTop = 0;
+        if (content && changed) content.scrollTop = 0;
     }
 
     /**
@@ -1476,18 +1490,18 @@ class SettingsManager {
             const imageSelect = document.getElementById('select-image-model');
             const videoSelect = document.getElementById('select-video-model');
             const musicSelect = document.getElementById('select-music-model');
-            if (imageSelect) {
-                imageSelect.innerHTML = '';
-                GOOGLE_IMAGE_MODELS.forEach(m => imageSelect.appendChild(new Option(m, m)));
-            }
-            if (videoSelect) {
-                videoSelect.innerHTML = '';
-                GOOGLE_VIDEO_MODELS.forEach(m => videoSelect.appendChild(new Option(m, m)));
-            }
-            if (musicSelect) {
-                musicSelect.innerHTML = '';
-                GOOGLE_MUSIC_MODELS.forEach(m => musicSelect.appendChild(new Option(m, m)));
-            }
+            // B14: "Desactivado" siempre disponible; se conserva la elección actual.
+            const fillGenerative = (select, models) => {
+                if (!select) return;
+                const previous = select.value;
+                select.innerHTML = '';
+                select.appendChild(new Option('Desactivado', 'none'));
+                models.forEach((m) => select.appendChild(new Option(m, m)));
+                if (previous && Array.from(select.options).some((o) => o.value === previous)) select.value = previous;
+            };
+            fillGenerative(imageSelect, GOOGLE_IMAGE_MODELS);
+            fillGenerative(videoSelect, GOOGLE_VIDEO_MODELS);
+            fillGenerative(musicSelect, GOOGLE_MUSIC_MODELS);
 
             console.log('[Settings] Catálogo de modelos cargado desde backend:', Object.keys(catalog.llm || {}).length, 'proveedores');
         } catch (err) {
@@ -1495,7 +1509,20 @@ class SettingsManager {
         }
     }
 
-    async _syncFromBackend() {
+    /**
+     * Una sola sincronización a la vez: el temporizador de arranque y el evento
+     * "connected" comparten la misma en lugar de duplicar ~30 peticiones (B26).
+     */
+    _syncFromBackend() {
+        if (!this._syncInFlight) {
+            this._syncInFlight = this._syncFromBackendNow()
+                .catch((err) => console.warn('[Settings] Sincronización incompleta:', err))
+                .finally(() => { this._syncInFlight = null; });
+        }
+        return this._syncInFlight;
+    }
+
+    async _syncFromBackendNow() {
         // Sincronizar modelos generativos
         try {
             const respGenerative = await fetch(`${BACKEND_API}/config/generative_models`);
@@ -1545,9 +1572,9 @@ class SettingsManager {
         this._loadApiAuthStatus();
         this._renderAppBehaviorMeta();
         try {
+            // B28: si este bloque falla se salta, no aborta el resto de la sincronización.
             const resp = await fetch(`${BACKEND_API}/config/model_router`);
-            if (!resp.ok) return;
-            const data = await resp.json();
+            const data = resp.ok ? await resp.json() : null;
             const mr = data?.data?.model_router;
             if (mr) {
                 if (mr.default_provider) {
@@ -1906,11 +1933,21 @@ class SettingsManager {
         await this._syncVoiceMetadata({ preserveDraft: false, reason: 'syncFromBackend:final-refresh' });
         // Restore sidebar page selection
         if (this.currentPage) this._switchPage(this.currentPage);
-        // Sync model assignments + crews
-        await this._syncModelAssignments();
-        await this._loadComputerUseConfig();
-        await this._syncCrews();
-        await this._syncEmbeddingConfig();
+        // Cada bloque se sincroniza aislado: un fallo ya no deja sin cargar
+        // equipos ni embeddings (antes el error de asignaciones abortaba todo, B2).
+        const steps = [
+            ['asignaciones de modelos', () => this._syncModelAssignments()],
+            ['computer use', () => this._loadComputerUseConfig()],
+            ['equipos', () => this._syncCrews()],
+            ['embeddings', () => this._syncEmbeddingConfig()],
+        ];
+        for (const [name, step] of steps) {
+            try {
+                await step();
+            } catch (err) {
+                console.warn(`[Settings] Falló la sincronización de ${name}:`, err);
+            }
+        }
         this._toggleBudgetFields();
     }
 
@@ -3736,7 +3773,7 @@ class SettingsManager {
             { key: 'general', label: 'General' },
         ];
 
-        const providers = Object.keys(MODEL_OPTIONS).filter((p) => MODEL_OPTIONS[p].length > 0);
+        const providers = Object.keys(MODEL_OPTIONS).filter((p) => catalogModelIds(p).length > 0);
 
         for (const taskType of TASK_TYPES) {
             const currentValue = this.currentModelAssignments[taskType.key] || '';
@@ -3774,8 +3811,7 @@ class SettingsManager {
                 defOpt.value = '';
                 defOpt.textContent = '(auto)';
                 modelSelect.appendChild(defOpt);
-                const models = MODEL_OPTIONS[prov] || [];
-                for (const m of models) {
+                for (const m of catalogModelIds(prov)) {
                     const opt = document.createElement('option');
                     opt.value = m;
                     opt.textContent = m;

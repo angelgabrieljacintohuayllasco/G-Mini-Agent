@@ -61,6 +61,10 @@ class GminiWebSocket {
             console.log('WebSocket desconectado:', reason);
             this.connected = false;
             this._emit('disconnected', { reason });
+            // socket.io no reintenta solo cuando el servidor cierra la sesión (S8).
+            if (reason === 'io server disconnect') {
+                setTimeout(() => this.socket?.connect(), 2000);
+            }
         });
 
         this.socket.on('connect_error', (error) => {
@@ -69,137 +73,11 @@ class GminiWebSocket {
             this._emit('error', { message: error.message });
         });
 
-        // Agent events
-        this.socket.on('agent:message', (data) => {
-            this._emit('agent:message', data);
-        });
-
-        this.socket.on('agent:status', (data) => {
-            this._emit('agent:status', data);
-        });
-
-        this.socket.on('agent:screenshot', (data) => {
-            this._emit('agent:screenshot', data);
-        });
-
-        this.socket.on('agent:media', (data) => {
-            this._emit('agent:media', data);
-        });
-
-        this.socket.on('agent:audio', (data) => {
-            this._emit('agent:audio', data);
-        });
-
-        this.socket.on('agent:speak', (data) => {
-            this._emit('agent:speak', data);
-        });
-
-        this.socket.on('agent:audio_interrupt', (data) => {
-            this._emit('agent:audio_interrupt', data);
-        });
-
-        this.socket.on('agent:lipsync', (data) => {
-            this._emit('agent:lipsync', data);
-        });
-
-        this.socket.on('agent:emotion', (data) => {
-            this._emit('agent:emotion', data);
-        });
-
-        this.socket.on('agent:stt_result', (data) => {
-            this._emit('agent:stt_result', data);
-        });
-
-        this.socket.on('config:updated', (data) => {
-            this._emit('config:updated', data);
-        });
-
-        // Action visualization events
-        this.socket.on('agent:action', (data) => {
-            this._emit('agent:action', data);
-        });
-
-        this.socket.on('agent:action_result', (data) => {
-            this._emit('agent:action_result', data);
-        });
-
-        this.socket.on('agent:executing', (data) => {
-            this._emit('agent:executing', data);
-        });
-
-        this.socket.on('agent:approval', (data) => {
-            this._emit('agent:approval', data);
-        });
-
-        this.socket.on('agent:subagents', (data) => {
-            this._emit('agent:subagents', data);
-        });
-
-        this.socket.on('gateway:notification', (data) => {
-            this._emit('gateway:notification', data);
-        });
-
-        // Node management events (Phase 7)
-        this.socket.on('node:paired', (data) => {
-            this._emit('node:paired', data);
-        });
-        this.socket.on('node:pair_error', (data) => {
-            this._emit('node:pair_error', data);
-        });
-        this.socket.on('node:reconnected', (data) => {
-            this._emit('node:reconnected', data);
-        });
-        this.socket.on('node:removed', (data) => {
-            this._emit('node:removed', data);
-        });
-        this.socket.on('node:banned', (data) => {
-            this._emit('node:banned', data);
-        });
-        this.socket.on('agent:node_update', (data) => {
-            this._emit('agent:node_update', data);
-        });
-        this.socket.on('agent:node_removed', (data) => {
-            this._emit('agent:node_removed', data);
-        });
-
-        // Canvas events (Phase 8)
-        this.socket.on('canvas:snapshot', (data) => {
-            this._emit('canvas:snapshot', data);
-        });
-        this.socket.on('canvas:created', (data) => {
-            this._emit('canvas:created', data);
-        });
-        this.socket.on('canvas:updated', (data) => {
-            this._emit('canvas:updated', data);
-        });
-        this.socket.on('canvas:deleted', (data) => {
-            this._emit('canvas:deleted', data);
-        });
-
-        // Session restore on reconnect
-        this.socket.on('session:restored', (data) => {
-            this._emit('session:restored', data);
-        });
-
-        // Realtime voice availability
-        this.socket.on('agent:realtime_available', (data) => {
-            this._emit('agent:realtime_available', data);
-        });
-
-        // Realtime user speech transcription
-        this.socket.on('agent:realtime_user_text', (data) => {
-            this._emit('agent:realtime_user_text', data);
-        });
-
-        // Onboarding wizard
-        this.socket.on('onboarding:required', (data) => {
-            this._emit('onboarding:required', data);
-        });
-        this.socket.on('onboarding:step', (data) => {
-            this._emit('onboarding:step', data);
-        });
-        this.socket.on('onboarding:done', (data) => {
-            this._emit('onboarding:done', data);
+        // B8: se reenvía cualquier evento del backend. La lista fija de antes
+        // perdía agent:realtime_ready, agent:screen_stream_status, config:error
+        // y crew:update / crew:finished.
+        this.socket.onAny((event, data) => {
+            this._emit(event, data);
         });
     }
 
@@ -266,8 +144,14 @@ class GminiWebSocket {
 
     _emit(event, data = null) {
         const handlers = this.listeners[event];
-        if (handlers) {
-            handlers.forEach(cb => cb(data));
+        if (!handlers) return;
+        // Un manejador que falla no debe impedir que corran los demás.
+        for (const cb of handlers.slice()) {
+            try {
+                cb(data);
+            } catch (err) {
+                console.error(`[WS] Error en el manejador de ${event}:`, err);
+            }
         }
     }
 

@@ -2261,275 +2261,9 @@ function createActionOverlayWindow() {
         },
     });
 
-    // Cargar HTML inline para el overlay de acciones
-    actionOverlayWindow.loadURL(`data:text/html,
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { 
-                background: transparent; 
-                overflow: hidden;
-                font-family: 'Segoe UI', system-ui, sans-serif;
-            }
-
-            /* ── Click Indicator ── */
-            .click-point {
-                position: fixed;
-                pointer-events: none;
-                z-index: 10000;
-                transform: translate(-50%, -50%);
-            }
-            .click-point .dot {
-                width: 16px;
-                height: 16px;
-                border-radius: 50%;
-                background: #6366f1;
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                box-shadow: 0 0 12px rgba(99, 102, 241, 0.8), 0 0 24px rgba(99, 102, 241, 0.4);
-                animation: dot-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-            }
-            .click-point .ripple {
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%) scale(0);
-                border-radius: 50%;
-                border: 2.5px solid rgba(99, 102, 241, 0.7);
-                pointer-events: none;
-            }
-            .click-point .ripple-1 {
-                width: 50px;
-                height: 50px;
-                animation: ripple-out 0.7s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
-            }
-            .click-point .ripple-2 {
-                width: 80px;
-                height: 80px;
-                animation: ripple-out 0.7s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.1s forwards;
-            }
-            .click-point .ripple-3 {
-                width: 120px;
-                height: 120px;
-                animation: ripple-out 0.7s cubic-bezier(0.25, 0.46, 0.45, 0.94) 0.2s forwards;
-            }
-            .click-point .coord-label {
-                position: absolute;
-                top: -32px;
-                left: 50%;
-                transform: translateX(-50%);
-                background: rgba(30, 30, 40, 0.85);
-                color: #a5b4fc;
-                font-size: 11px;
-                font-weight: 600;
-                padding: 3px 10px;
-                border-radius: 6px;
-                white-space: nowrap;
-                backdrop-filter: blur(6px);
-                border: 1px solid rgba(99, 102, 241, 0.3);
-                animation: label-fade 0.8s ease forwards;
-                letter-spacing: 0.5px;
-            }
-
-            /* Double click — second ring */
-            .click-point.double_click .ripple-1 { animation-iteration-count: 2; }
-            .click-point.double_click .dot { background: #818cf8; }
-
-            /* Right click — orange tint */
-            .click-point.right_click .dot { background: #f59e0b; box-shadow: 0 0 12px rgba(245, 158, 11, 0.8); }
-            .click-point.right_click .ripple { border-color: rgba(245, 158, 11, 0.6); }
-            .click-point.right_click .coord-label { color: #fcd34d; border-color: rgba(245, 158, 11, 0.3); }
-
-            @keyframes dot-pop {
-                0% { transform: translate(-50%, -50%) scale(0); opacity: 1; }
-                40% { transform: translate(-50%, -50%) scale(1.4); opacity: 1; }
-                100% { transform: translate(-50%, -50%) scale(0); opacity: 0; }
-            }
-            @keyframes ripple-out {
-                0% { transform: translate(-50%, -50%) scale(0); opacity: 0.8; }
-                100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
-            }
-            @keyframes label-fade {
-                0% { opacity: 0; transform: translateX(-50%) translateY(6px); }
-                20% { opacity: 1; transform: translateX(-50%) translateY(0); }
-                70% { opacity: 1; }
-                100% { opacity: 0; }
-            }
-
-            /* ── Screenshot Overlay (phone-style) ── */
-            #screenshot-overlay {
-                position: fixed;
-                top: 0; left: 0; right: 0; bottom: 0;
-                pointer-events: none;
-                z-index: 9999;
-                display: none;
-            }
-            #screenshot-overlay.active {
-                display: block;
-            }
-            #screenshot-overlay .flash {
-                position: absolute;
-                top: 0; left: 0; right: 0; bottom: 0;
-                background: white;
-                animation: ss-flash 0.35s ease-out forwards;
-            }
-            #screenshot-overlay .border-frame {
-                position: absolute;
-                top: 0; left: 0; right: 0; bottom: 0;
-                border: 4px solid #6366f1;
-                border-radius: 0;
-                animation: ss-border 0.8s ease-out forwards;
-                box-shadow: inset 0 0 60px rgba(99, 102, 241, 0.15);
-            }
-            #screenshot-overlay .badge {
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%) scale(0.8);
-                background: rgba(20, 20, 30, 0.88);
-                backdrop-filter: blur(12px);
-                color: white;
-                padding: 14px 28px;
-                border-radius: 14px;
-                font-size: 16px;
-                font-weight: 600;
-                display: flex;
-                align-items: center;
-                gap: 10px;
-                box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px rgba(99, 102, 241, 0.3);
-                animation: ss-badge 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-                letter-spacing: 0.3px;
-            }
-            #screenshot-overlay .badge .icon {
-                font-size: 22px;
-                filter: drop-shadow(0 0 4px rgba(99, 102, 241, 0.5));
-            }
-            #screenshot-overlay .shutter-line {
-                position: absolute;
-                top: 0; left: 0; right: 0;
-                height: 3px;
-                background: linear-gradient(90deg, transparent, #6366f1, #818cf8, #6366f1, transparent);
-                animation: ss-shutter 0.5s ease-out forwards;
-            }
-            @keyframes ss-flash {
-                0% { opacity: 0.7; }
-                100% { opacity: 0; }
-            }
-            @keyframes ss-border {
-                0% { opacity: 1; border-width: 4px; }
-                40% { opacity: 1; }
-                100% { opacity: 0; border-width: 0; }
-            }
-            @keyframes ss-badge {
-                0% { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
-                30% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
-                50% { transform: translate(-50%, -50%) scale(1); }
-                80% { opacity: 1; }
-                100% { opacity: 0; transform: translate(-50%, -50%) scale(0.95); }
-            }
-            @keyframes ss-shutter {
-                0% { top: 0; opacity: 1; }
-                100% { top: 100%; opacity: 0; }
-            }
-
-            /* ── Mouse Cursor Bubble ── */
-            #cursor-bubble {
-                position: fixed;
-                width: 28px;
-                height: 28px;
-                border-radius: 50%;
-                background: radial-gradient(circle, rgba(99, 102, 241, 0.5) 0%, rgba(99, 102, 241, 0.15) 60%, transparent 70%);
-                border: 2px solid rgba(99, 102, 241, 0.6);
-                transform: translate(-50%, -50%);
-                pointer-events: none;
-                z-index: 10001;
-                display: none;
-                transition: left 0.08s ease-out, top 0.08s ease-out, opacity 0.3s ease;
-                box-shadow: 0 0 16px rgba(99, 102, 241, 0.3);
-            }
-            #cursor-bubble.visible {
-                display: block;
-                animation: bubble-appear 0.3s ease-out forwards;
-            }
-            #cursor-bubble .trail {
-                position: absolute;
-                width: 6px;
-                height: 6px;
-                border-radius: 50%;
-                background: rgba(99, 102, 241, 0.3);
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-            }
-            @keyframes bubble-appear {
-                0% { opacity: 0; transform: translate(-50%, -50%) scale(0.3); }
-                100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-            }
-        </style>
-    </head>
-    <body>
-        <div id="cursor-bubble"></div>
-        <div id="screenshot-overlay">
-            <div class="flash"></div>
-            <div class="border-frame"></div>
-            <div class="shutter-line"></div>
-            <div class="badge"><span class="icon">📸</span> Captura tomada</div>
-        </div>
-        <script>
-            const ssEl = document.getElementById('screenshot-overlay');
-            const cursorBubble = document.getElementById('cursor-bubble');
-            let hideTimer = null;
-            let bubbleHideTimer = null;
-
-            window.showClick = (x, y, type) => {
-                type = type || 'click';
-                // Create a click-point element at position
-                const el = document.createElement('div');
-                el.className = 'click-point ' + type;
-                el.style.left = x + 'px';
-                el.style.top = y + 'px';
-                el.innerHTML = 
-                    '<div class="dot"></div>' +
-                    '<div class="ripple ripple-1"></div>' +
-                    '<div class="ripple ripple-2"></div>' +
-                    '<div class="ripple ripple-3"></div>' +
-                    '<div class="coord-label">(' + x + ', ' + y + ')</div>';
-                document.body.appendChild(el);
-                setTimeout(function() { el.remove(); }, 1200);
-
-                // Also show/move cursor bubble
-                window.showCursorAt(x, y);
-            };
-            
-            window.showScreenshot = () => {
-                ssEl.classList.remove('active');
-                void ssEl.offsetWidth;
-                ssEl.classList.add('active');
-                if (hideTimer) clearTimeout(hideTimer);
-                hideTimer = setTimeout(function() { ssEl.classList.remove('active'); }, 900);
-            };
-
-            window.showCursorAt = (x, y) => {
-                cursorBubble.style.left = x + 'px';
-                cursorBubble.style.top = y + 'px';
-                cursorBubble.classList.add('visible');
-                if (bubbleHideTimer) clearTimeout(bubbleHideTimer);
-                bubbleHideTimer = setTimeout(function() {
-                    cursorBubble.classList.remove('visible');
-                }, 3000);
-            };
-
-            window.hideCursor = () => {
-                cursorBubble.classList.remove('visible');
-            };
-        </script>
-    </body>
-    </html>
-    `);
+    // B1: antes era una URL data: sin codificar que se cortaba en el primer '#'
+    // y dejaba la ventana sin script; ahora es un documento propio con CSP.
+    actionOverlayWindow.loadFile(path.join(__dirname, 'src', 'action-overlay.html'));
 
     // Sin forward: esta ventana nunca es interactiva y el hook global de mouse
     // que forward instala en Windows hace saltar otras ventanas al arrastrarlas
@@ -2582,55 +2316,59 @@ handleIpc('show-click-indicator', async (_, x, y, type) => {
     }
 });
 
-handleIpc('show-screenshot-overlay', async () => {
-    try {
-        // Ocultar ventana principal para que no salga en la captura
-        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
-            mainWindow.hide();
-        }
-        // Pequeña pausa para que el OS aplique el ocultamiento
-        await new Promise(resolve => setTimeout(resolve, 80));
+// B3/B4: durante la automatización la ventana principal se oculta. Al terminar
+// solo vuelve si estaba visible antes (no en modo avatar ni en bandeja), nunca
+// en medio de una ejecución y sin robar el foco.
+let executingActive = false;
+let mainVisibleBeforeExecuting = false;
 
+function hideMainForAutomation() {
+    if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) return false;
+    mainWindow.hide();
+    return true;
+}
+
+function restoreMainAfterAutomation(wasVisible) {
+    if (!wasVisible || executingActive || currentSkinMode === 'skin') return;
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.showInactive();
+}
+
+handleIpc('show-screenshot-overlay', async () => {
+    // Ocultar la ventana principal para que no salga en la captura.
+    const wasVisible = hideMainForAutomation();
+    try {
+        await new Promise((resolve) => setTimeout(resolve, 80));
         if (!actionOverlayWindow || actionOverlayWindow.isDestroyed()) {
             createActionOverlayWindow();
-            await new Promise(resolve => setTimeout(resolve, 200));
+            await new Promise((resolve) => actionOverlayWindow.webContents.once('did-finish-load', resolve));
         }
         if (actionOverlayWindow && !actionOverlayWindow.isDestroyed()) {
-            actionOverlayWindow.show();
-            await actionOverlayWindow.webContents.executeJavaScript(`window.showScreenshot && window.showScreenshot()`);
+            actionOverlayWindow.showInactive();
+            await actionOverlayWindow.webContents.executeJavaScript('window.showScreenshot && window.showScreenshot()');
             setTimeout(() => {
-                if (actionOverlayWindow && !actionOverlayWindow.isDestroyed()) {
-                    actionOverlayWindow.hide();
-                }
-                // Restaurar ventana principal después del overlay
-                if (mainWindow && !mainWindow.isDestroyed()) {
-                    mainWindow.show();
-                }
+                if (actionOverlayWindow && !actionOverlayWindow.isDestroyed()) actionOverlayWindow.hide();
+                restoreMainAfterAutomation(wasVisible);
             }, 1200);
-        } else {
-            // Si no hay overlay, restaurar la ventana
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.show();
-            }
+            return;
         }
     } catch (err) {
         console.error('[IPC] show-screenshot-overlay error:', err.message);
-        // Siempre restaurar la ventana en caso de error
-        if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.show();
-        }
     }
+    restoreMainAfterAutomation(wasVisible);
 });
 
 handleIpc('set-executing-mode', (_, active) => {
-    if (mainWindow) {
-        if (active) {
-            mainWindow.hide();
-        } else {
-            mainWindow.show();
-        }
+    const next = !!active;
+    if (next && !executingActive) {
+        mainVisibleBeforeExecuting = hideMainForAutomation();
     }
-    setOverlayInteractionLocked(active);
+    executingActive = next;
+    if (!next) {
+        const wasVisible = mainVisibleBeforeExecuting;
+        mainVisibleBeforeExecuting = false;
+        restoreMainAfterAutomation(wasVisible);
+    }
+    setOverlayInteractionLocked(next);
 });
 
 handleIpc('show-cursor-bubble', async (_, x, y) => {

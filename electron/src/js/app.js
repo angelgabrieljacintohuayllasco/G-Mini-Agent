@@ -365,6 +365,22 @@
         pendingActionCards.clear();
         updateAgentControls();
         pushOverlayCharacterRuntime({ status: 'idle', visemes: [], audioHintMs: 0 });
+        // Sin conexión no queda ninguna burbuja "escribiendo" colgada (S3).
+        chatManager.hideTyping();
+        if (chatManager.isStreaming) chatManager.finishStreaming();
+        // B23: la sesión de voz del backend murió con la conexión; soltar el micrófono.
+        if (typeof voiceRealtime !== 'undefined' && voiceRealtime.active) {
+            void voiceRealtime.stop();
+            _stopMouthPusher();
+            btnRealtime?.classList.remove('realtime-active', 'realtime-simulated');
+            _setButtonIcon(btnRealtime, _realtimeMode === 'simulated' ? SVG_MIC_SIMULATED : SVG_WAVEFORM);
+            _pushSkinVoiceState({ active: false, available: !!_realtimeMode });
+        }
+    });
+
+    // Errores al cambiar proveedor/modelo/temperatura por el socket (antes se perdían, B8).
+    ws.on('config:error', (data) => {
+        chatManager._toast(`No se pudo aplicar el cambio: ${data?.message || data?.error || 'error desconocido'}`, true);
     });
 
     ws.on('error', (data) => {
@@ -374,14 +390,39 @@
         pushOverlayCharacterRuntime({ status: 'idle', visemes: [], audioHintMs: 0 });
     });
 
+    // B10: el overlay muestra la respuesta acumulada (no el último fragmento) y
+    // como mucho ~8 veces por segundo; al terminar se envía el texto final.
+    let overlayBuffer = '';
+    let overlayTimer = null;
+
+    function flushOverlayText() {
+        overlayTimer = null;
+        const text = chatManager._stripActionLines(overlayBuffer);
+        if (text && window.gmini?.setOverlayText) {
+            void window.gmini.setOverlayText(text.slice(-800)).catch(() => {});
+        }
+    }
+
+    function trackOverlayText(data) {
+        if (!data || data.type === 'action' || data.type === 'system') return;
+        if (data.type === 'error' || data.type === 'warning') {
+            overlayBuffer = String(data.text || '');
+        } else if (!data.done) {
+            overlayBuffer += String(data.text || '');
+        }
+        if (data.done || data.type === 'error') {
+            clearTimeout(overlayTimer);
+            flushOverlayText();
+            overlayBuffer = '';
+            return;
+        }
+        if (!overlayTimer) overlayTimer = setTimeout(flushOverlayText, 120);
+    }
+
     ws.on('agent:message', (data) => {
         chatManager.handleAgentMessage(data);
         _relaySkinChat('agent:message', data);
-
-        // Update overlay
-        if (data.text && window.gmini) {
-            window.gmini.setOverlayText(data.text);
-        }
+        trackOverlayText(data);
 
         // Refresh history when message stream ends
         if (data.done) {
@@ -418,6 +459,8 @@
         const status = data?.status || 'idle';
         agentRuntimeState = status;
         _relaySkinChat('agent:status', data);
+        if (status === 'thinking') chatManager.showTyping();
+        else chatManager.hideTyping();
         pushOverlayCharacterRuntime(
             status === 'responding' || status === 'calling'
                 ? { status }
@@ -833,6 +876,7 @@
             : text;
         chatManager.addUserMessage(displayText);
         ws.sendMessage(text, attachments);
+        overlayBuffer = '';
 
         pendingAttachments = [];
         renderAttachmentChips();
@@ -932,6 +976,8 @@
     }
 
     async function refreshTerminals() {
+        // B29: sin conexión no se sondea el backend cada 5 s.
+        if (!ws.connected) return;
         try {
             const resp = await fetch('http://127.0.0.1:8765/api/terminals');
             if (!resp.ok) return;

@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>G-Mini Acciones</title>
+    <script src="js/theme-boot.js"></script>
+    <link rel="stylesheet" href="css/tokens.css">
+    <style>
+        /* Ventana transparente sobre el escritorio: sin lienzo por color-scheme. */
+        :root,
+        :root[data-theme] {
+            color-scheme: normal !important;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html,
+        body {
+            background: transparent;
+            overflow: hidden;
+            font-family: var(--font);
+        }
+
+        /* ── Indicador de click ── */
+        .click-point {
+            --tone: var(--acc-500);
+            position: fixed;
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+        }
+
+        .click-point.double_click { --tone: var(--acc-400); }
+        .click-point.right_click { --tone: #e8a33d; }
+
+        .click-point .dot {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--tone);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--tone) 35%, transparent),
+                0 0 18px color-mix(in srgb, var(--tone) 70%, transparent);
+            transform: translate(-50%, -50%);
+            animation: dot-pop 600ms var(--ease-spring) forwards;
+        }
+
+        .click-point .ripple {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            border: 2px solid color-mix(in srgb, var(--tone) 70%, transparent);
+            border-radius: 50%;
+            transform: translate(-50%, -50%) scale(0);
+        }
+
+        .click-point .ripple-1 {
+            width: 48px;
+            height: 48px;
+            animation: ripple-out 700ms var(--ease-out) forwards;
+        }
+
+        .click-point .ripple-2 {
+            width: 84px;
+            height: 84px;
+            animation: ripple-out 700ms var(--ease-out) 100ms forwards;
+        }
+
+        .click-point.double_click .ripple-1 {
+            animation-iteration-count: 2;
+        }
+
+        .click-point .coord-label {
+            position: absolute;
+            top: -34px;
+            left: 50%;
+            padding: 3px var(--space-2);
+            border: 1px solid color-mix(in srgb, var(--tone) 40%, var(--border));
+            border-radius: var(--radius-pill);
+            background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
+            backdrop-filter: blur(6px);
+            color: var(--text-primary);
+            font-family: var(--font-mono);
+            font-size: var(--fs-xs);
+            white-space: nowrap;
+            transform: translateX(-50%);
+            animation: label-fade 900ms ease forwards;
+        }
+
+        @keyframes dot-pop {
+            0% { transform: translate(-50%, -50%) scale(0); opacity: 1; }
+            40% { transform: translate(-50%, -50%) scale(1.4); opacity: 1; }
+            100% { transform: translate(-50%, -50%) scale(0); opacity: 0; }
+        }
+
+        @keyframes ripple-out {
+            0% { transform: translate(-50%, -50%) scale(0); opacity: 0.8; }
+            100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+        }
+
+        @keyframes label-fade {
+            0% { opacity: 0; transform: translateX(-50%) translateY(6px); }
+            20% { opacity: 1; transform: translateX(-50%) translateY(0); }
+            70% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+
+        /* ── Aviso de captura ── */
+        #screenshot-overlay {
+            position: fixed;
+            inset: 0;
+            display: none;
+            pointer-events: none;
+        }
+
+        #screenshot-overlay.active {
+            display: block;
+        }
+
+        #screenshot-overlay .flash {
+            position: absolute;
+            inset: 0;
+            background: #ffffff;
+            animation: ss-flash 350ms ease-out forwards;
+        }
+
+        #screenshot-overlay .border-frame {
+            position: absolute;
+            inset: 0;
+            border: 4px solid var(--acc-500);
+            animation: ss-border 800ms ease-out forwards;
+        }
+
+        #screenshot-overlay .badge {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            padding: var(--space-3) var(--space-5);
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius-lg);
+            background: color-mix(in srgb, var(--bg-elevated) 90%, transparent);
+            backdrop-filter: blur(12px);
+            color: var(--text-primary);
+            font-size: var(--fs-md);
+            font-weight: var(--fw-semibold);
+            box-shadow: var(--shadow-lg);
+            transform: translate(-50%, -50%) scale(0.8);
+            animation: ss-badge 800ms var(--ease-spring) forwards;
+        }
+
+        #screenshot-overlay .badge .icon {
+            width: 20px;
+            height: 20px;
+            color: var(--acc-500);
+        }
+
+        @keyframes ss-flash {
+            0% { opacity: 0.6; }
+            100% { opacity: 0; }
+        }
+
+        @keyframes ss-border {
+            0% { opacity: 1; }
+            40% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+
+        @keyframes ss-badge {
+            0% { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+            30% { opacity: 1; transform: translate(-50%, -50%) scale(1.04); }
+            50% { transform: translate(-50%, -50%) scale(1); }
+            80% { opacity: 1; }
+            100% { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
+        }
+
+        /* ── Burbuja del cursor del agente ── */
+        #cursor-bubble {
+            position: fixed;
+            display: none;
+            width: 28px;
+            height: 28px;
+            border: 2px solid color-mix(in srgb, var(--acc-500) 70%, transparent);
+            border-radius: 50%;
+            background: radial-gradient(circle,
+                    color-mix(in srgb, var(--acc-500) 50%, transparent) 0%,
+                    color-mix(in srgb, var(--acc-500) 15%, transparent) 60%,
+                    transparent 70%);
+            box-shadow: 0 0 16px color-mix(in srgb, var(--acc-500) 35%, transparent);
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            transition: left 80ms var(--ease-out), top 80ms var(--ease-out);
+        }
+
+        #cursor-bubble.visible {
+            display: block;
+        }
+
+        /* Con movimiento reducido se ve un punto fijo en lugar de la animación. */
+        :root[data-motion="reduced"] .click-point .dot {
+            animation: none !important;
+        }
+
+        :root[data-motion="reduced"] .click-point .ripple {
+            display: none;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            :root:not([data-motion="full"]) .click-point .dot {
+                animation: none !important;
+            }
+
+            :root:not([data-motion="full"]) .click-point .ripple {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="cursor-bubble"></div>
+    <div id="screenshot-overlay">
+        <div class="flash"></div>
+        <div class="border-frame"></div>
+        <div class="badge">
+            <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-camera"></use></svg>
+            Captura tomada
+        </div>
+    </div>
+
+    <script src="js/action-overlay.js"></script>
+</body>
+</html>

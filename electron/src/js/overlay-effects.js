@@ -100,38 +100,39 @@ class OverlayEffects {
     }
 
     /**
-     * Muestra una notificación de acción en el chat
+     * Aviso efímero de una acción. Flota sobre el chat en su propio contenedor:
+     * antes se insertaba en #messages y hacía saltar el scroll (B27).
      */
     _showActionNotification(text) {
+        const host = document.getElementById('action-notifications');
+        if (!host) return;
         const notification = document.createElement('div');
         notification.className = 'action-notification';
         notification.textContent = text;
-        
-        const container = document.getElementById('messages');
-        if (container) {
-            // Limitar a 5 notificaciones de acción visibles
-            const existing = container.querySelectorAll('.action-notification');
-            if (existing.length >= 5) {
-                existing[0].remove();
-            }
-            container.appendChild(notification);
-            setTimeout(() => notification.remove(), 3000);
-        }
+        while (host.children.length >= 3) host.firstElementChild.remove();
+        host.appendChild(notification);
+        setTimeout(() => notification.remove(), 2600);
+    }
+
+    /** Teclas como texto: el planner manda listas (["ctrl", "c"]) o un string (B9). */
+    static keysLabel(keys) {
+        return Array.isArray(keys) ? keys.map(String).join(' + ') : String(keys ?? '');
     }
 
     /**
      * Muestra el indicador de escritura
      */
     showTypingEffect(text) {
-        this._showActionNotification(`Escribiendo: "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`);
+        const value = String(text ?? '');
+        this._showActionNotification(`Escribiendo: "${value.substring(0, 30)}${value.length > 30 ? '...' : ''}"`);
     }
 
     showKeyPress(key) {
-        this._showActionNotification(`Tecla: ${key.toUpperCase()}`);
+        this._showActionNotification(`Tecla: ${OverlayEffects.keysLabel(key).toUpperCase()}`);
     }
 
     showHotkey(keys) {
-        this._showActionNotification(`Atajo: ${keys.toUpperCase()}`);
+        this._showActionNotification(`Atajo: ${OverlayEffects.keysLabel(keys).toUpperCase()}`);
     }
 
     showScroll(direction) {
