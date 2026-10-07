@@ -1,6 +1,6 @@
 # G-Mini Agent — Configuración por defecto
-# Este archivo se copia como config.user.yaml en el primer arranque.
-# Los cambios del usuario se guardan en config.user.yaml.
+# No lo edites: lo que cambias en la app se guarda en config.user.yaml (solo
+# las diferencias), así las actualizaciones pueden traer defaults nuevos.
 
 app:
   name: "G-Mini Agent"
@@ -200,12 +200,14 @@ mcp:
   protocol_version: "2024-11-05"
   request_timeout_seconds: 20
   servers:                   # Lista de servidores MCP configurados por el usuario
+    # Ejemplo: MCPControl (npm install -g mcp-control). Desactivado por defecto:
+    # G-Mini ya controla mouse y teclado por su cuenta.
     - id: "mcpcontrol"
       name: "MCPControl"
       command: "mcp-control"
       args: []
       transport: "stdio"
-      enabled: true
+      enabled: false
 
 skills:
   enabled: true

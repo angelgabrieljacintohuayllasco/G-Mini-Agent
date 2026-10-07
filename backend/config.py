@@ -23,6 +23,10 @@ _GMINI_HOME = os.environ.get("GMINI_HOME", "").strip()
 ROOT_DIR = Path(_GMINI_HOME).expanduser().resolve() if _GMINI_HOME else CODE_DIR
 DEFAULT_CONFIG = CODE_DIR / "config.default.yaml"
 USER_CONFIG = ROOT_DIR / "config.user.yaml"
+USER_CONFIG_HEADER = (
+    "# Tus ajustes de G-Mini: solo lo que difiere de config.default.yaml.\n"
+    "# La app lo escribe sola; si lo editas a mano, respeta el formato YAML.\n"
+)
 # Recursos que trae el programa dentro de data/ (se copian a GMINI_HOME al arrancar).
 SHIPPED_DATA = ("prompts", "skills", "agent_skills/bundled", "crews", "commands", "models.yaml", "realtime_models.yaml")
 
@@ -73,19 +77,28 @@ class Config:
         if ROOT_DIR != CODE_DIR:
             ROOT_DIR.mkdir(parents=True, exist_ok=True)
             sync_shipped_data()
-        # Cargar defaults
-        with open(DEFAULT_CONFIG, "r", encoding="utf-8") as f:
-            self._data = yaml.safe_load(f) or {}
+        default_text = DEFAULT_CONFIG.read_text(encoding="utf-8")
+        defaults = yaml.safe_load(default_text) or {}
 
-        # Crear config de usuario si no existe
+        # config.user.yaml guarda solo lo que el usuario cambió, así los
+        # defaults nuevos de una actualización le llegan.
         if not USER_CONFIG.exists():
-            shutil.copy(DEFAULT_CONFIG, USER_CONFIG)
+            USER_CONFIG.write_text(USER_CONFIG_HEADER, encoding="utf-8")
+        user_text = USER_CONFIG.read_text(encoding="utf-8")
+        user_data = yaml.safe_load(user_text) or {}
 
-        # Merge con config de usuario
-        with open(USER_CONFIG, "r", encoding="utf-8") as f:
-            user_data = yaml.safe_load(f) or {}
+        self._data = _deep_merge(defaults, user_data)
+        # La versión es la del programa, no un ajuste.
+        default_version = (defaults.get("app") or {}).get("version")
+        if default_version and isinstance(self._data.get("app"), dict):
+            self._data["app"]["version"] = default_version
 
-        self._data = _deep_merge(self._data, user_data)
+        # Las instalaciones viejas copiaban config.default.yaml entero (con su
+        # encabezado) y eso congelaba todos los defaults: se reduce a lo que
+        # difiere. Lo que el usuario cambió a mano se conserva.
+        first_line = default_text.split("\n", 1)[0].strip()
+        if first_line.startswith("#") and user_text.lstrip("\ufeff").startswith(first_line):
+            self._save_user_config()
 
     def reload(self) -> None:
         self._load()
