@@ -9,9 +9,10 @@ Proveedores soportados (selector provider + model en Settings → Computer Use):
   - anthropic : Claude computer-use beta (`computer_20250124`, coords en píxeles).
   - openai    : Responses API `computer_use_preview` (coords en píxeles).
 
-Solo `google` está verificado en este entorno; anthropic/openai se construyen
-según la especificación de cada API y fallan con un error claro si falta el SDK
-o la API key correspondiente.
+Si el proveedor nativo no está disponible (falta la API key, o el modelo de
+computer use no existe en ese proyecto de Vertex), el sub-agente pasa a modo
+"generic": el modelo de chat configurado mira cada captura y responde una
+acción en JSON con coordenadas 0-1000, que ejecuta el mismo ejecutor.
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
+import re
 import time
 import webbrowser
 from dataclasses import dataclass, field
@@ -87,6 +90,63 @@ _KEY_ALIASES = {
 }
 
 
+class _NativeUnavailable(Exception):
+    """El computer use nativo del proveedor no está disponible: se usa el modo genérico."""
+
+
+_UNAVAILABLE_MARKERS = ("404", "not_found", "not found", "not supported", "no soportado", "permission_denied")
+
+
+def _looks_unavailable(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(marker in text for marker in _UNAVAILABLE_MARKERS)
+
+
+def _parse_json_action(text: str) -> dict[str, Any] | None:
+    """Primer objeto JSON de la respuesta (tolera ```json y texto alrededor)."""
+    if not text:
+        return None
+    cleaned = re.sub(r"```(?:json)?", "", text, flags=re.IGNORECASE)
+    start = cleaned.find("{")
+    while start != -1:
+        depth = 0
+        for end in range(start, len(cleaned)):
+            if cleaned[end] == "{":
+                depth += 1
+            elif cleaned[end] == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        data = json.loads(cleaned[start:end + 1])
+                    except json.JSONDecodeError:
+                        break
+                    return data if isinstance(data, dict) else None
+        start = cleaned.find("{", start + 1)
+    return None
+
+
+def _describe_generic(action: str, data: dict[str, Any]) -> str:
+    keys = ("x", "y", "x2", "y2", "text", "keys", "direction", "amount", "clear", "enter")
+    args = ", ".join(f"{k}={data[k]!r}" if isinstance(data[k], str) else f"{k}={data[k]}" for k in keys if k in data)
+    return f"- {action}({args})"
+
+
+_GENERIC_SYSTEM_PROMPT = (
+    "Controlas el escritorio de Windows con el mouse y el teclado mirando capturas de pantalla. "
+    "Las coordenadas son normalizadas de 0 a 1000 sobre la captura: x de izquierda a derecha, "
+    "y de arriba abajo. Responde SOLO con un objeto JSON, sin texto alrededor, por ejemplo:\n"
+    '{"thought": "veo el botón Guardar abajo a la derecha", "action": "click", "x": 820, "y": 910}\n'
+    "Acciones: click, double_click, right_click y move (x, y); type (text; con x, y hace click antes; "
+    "clear: true borra el campo; enter: true pulsa Enter al final); key (keys, por ejemplo \"ctrl+s\", "
+    "\"enter\" o \"win\"); scroll (direction up o down, amount, x e y opcionales); drag (x, y, x2, y2); "
+    "wait (amount en segundos); done (summary con lo que quedó hecho, solo si la captura lo confirma); "
+    "fail (summary con el motivo, si es imposible).\n"
+    "Una sola acción por respuesta y apunta al centro del elemento. Para abrir un programa pulsa la "
+    "tecla win, escribe su nombre y pulsa enter. Si la pantalla no cambió tras tu última acción, "
+    "prueba de otra forma."
+)
+
+
 def _norm_key(token: str) -> str:
     t = str(token or "").strip().lower().replace(" ", "")
     return _KEY_ALIASES.get(t, t)
@@ -123,9 +183,10 @@ def _get_monitor_info(target_monitor: int) -> dict[str, int]:
 
 
 class ComputerUseAgent:
-    def __init__(self, vision: Any, automation: Any):
+    def __init__(self, vision: Any, automation: Any, router: Any = None):
         self._vision = vision
         self._auto = automation
+        self._router = router  # para el modo genérico (cualquier modelo con visión)
         self._client = None
         self._provider = ""
         self._cost_tracker = get_cost_tracker()
@@ -141,20 +202,29 @@ class ComputerUseAgent:
     # ── Init (provider-aware, re-inits si cambia el provider) ────────────
     async def initialize(self) -> None:
         provider = self._get_provider()
-        if self._initialized and provider == self._provider and self._client is not None:
+        if self._initialized and provider == self._provider and (self._client is not None or provider == "generic"):
             return
 
-        if provider == "google":
-            self._client = self._init_google()
-        elif provider == "anthropic":
-            self._client = self._init_anthropic()
-        elif provider == "openai":
-            self._client = self._init_openai()
-        else:
-            raise RuntimeError(
-                f"Provider de computer use no soportado: '{provider}'. "
-                "Usa google, anthropic u openai."
-            )
+        try:
+            if provider == "google":
+                self._client = self._init_google()
+            elif provider == "anthropic":
+                self._client = self._init_anthropic()
+            elif provider == "openai":
+                self._client = self._init_openai()
+            elif provider == "generic":
+                self._client = None
+            else:
+                raise RuntimeError(
+                    f"Provider de computer use no soportado: '{provider}'. "
+                    "Usa google, anthropic, openai o generic."
+                )
+        except RuntimeError as exc:
+            if self._router is None:
+                raise
+            logger.info(f"Computer use nativo no disponible ({exc}); uso el modelo de chat con capturas")
+            provider = "generic"
+            self._client = None
 
         self._provider = provider
         self._initialized = True
@@ -166,18 +236,26 @@ class ComputerUseAgent:
         except ImportError:
             raise RuntimeError("google-genai no instalado. Requerido para computer use (google).")
 
+        backend = config.get("providers", "google", "backend", default="ai_studio")
+        if backend == "vertex_ai" or str(config.get("model_router", "default_provider", default="")) == "vertex":
+            # Vertex usa la sesión de gcloud (ADC) o una cuenta de servicio: sin API key.
+            from backend.providers import gcp_auth
+
+            section = config.get("providers", "vertex", default={}) or config.get("providers", "google", default={}) or {}
+            settings = gcp_auth.resolve_vertex_settings(section)
+            location = str(config.get("computer_use", "location", default="") or "")
+            if location:
+                settings.location = location
+            try:
+                client = gcp_auth.make_genai_client(settings)
+            except ValueError as exc:
+                raise RuntimeError(str(exc)) from exc
+            logger.info(f"Computer Use (google): Vertex AI | project={settings.project} location={settings.location}")
+            return client
+
         api_key = config.get_api_key("google_api")
         if not api_key:
             raise RuntimeError("API key de Google no configurada (vault: google_api).")
-
-        backend = config.get("providers", "google", "backend", default="ai_studio")
-        if backend == "vertex_ai":
-            project = config.get("providers", "google", "project_id", default="")
-            location = config.get("providers", "google", "location", default="global")
-            if not project:
-                raise RuntimeError("computer_use con Vertex AI requiere project_id configurado.")
-            logger.info(f"Computer Use (google): Vertex AI | project={project} location={location}")
-            return genai.Client(vertexai=True, project=project, location=location)
         logger.info("Computer Use (google): AI Studio")
         return genai.Client(api_key=api_key)
 
@@ -420,7 +498,7 @@ class ComputerUseAgent:
                 target_monitor = int(config.get("vision", "target_monitor", default=0))
 
         provider = self._provider
-        model = self._get_model()
+        model = self._generic_model_label() if provider == "generic" else self._get_model()
         monitor_info = _get_monitor_info(target_monitor)
 
         result = ComputerUseResult(status="running", provider=provider, model=model)
@@ -445,12 +523,22 @@ class ComputerUseAgent:
         )
 
         try:
-            if provider == "google":
-                await self._run_google(result, ctx)
-            elif provider == "anthropic":
-                await self._run_anthropic(result, ctx)
-            elif provider == "openai":
-                await self._run_openai(result, ctx)
+            try:
+                if provider == "google":
+                    await self._run_google(result, ctx)
+                elif provider == "anthropic":
+                    await self._run_anthropic(result, ctx)
+                elif provider == "openai":
+                    await self._run_openai(result, ctx)
+                elif provider == "generic":
+                    await self._run_generic(result, ctx)
+            except _NativeUnavailable as exc:
+                if self._router is None:
+                    raise RuntimeError(f"Computer use nativo no disponible: {exc}") from exc
+                logger.warning(f"Computer use nativo no disponible ({str(exc)[:160]}); sigo con el modelo de chat")
+                self._provider = "generic"
+                result.provider, result.model = "generic", self._generic_model_label()
+                await self._run_generic(result, ctx)
         except BudgetLimitExceeded as exc:
             result.status = "failed"
             result.error = f"Presupuesto excedido: {exc}"
@@ -522,6 +610,8 @@ class ComputerUseAgent:
                     ),
                 )
             except Exception as exc:
+                if _looks_unavailable(exc):
+                    raise _NativeUnavailable(str(exc)) from exc
                 logger.error(f"Error llamando Gemini computer use: {exc}")
                 await asyncio.sleep(2)
                 continue
@@ -594,6 +684,148 @@ class ComputerUseAgent:
 
             await self._emit(ctx["on_progress"], iteration, ctx["max_iterations"], name, start_time)
             await asyncio.sleep(ctx["stab_delay"])
+
+    # ── GENÉRICO: cualquier modelo con visión, acciones en JSON (0-1000) ──
+    def _generic_target(self) -> tuple[str | None, str | None]:
+        provider = str(config.get("computer_use", "generic_provider", default="") or "") or None
+        model = str(config.get("computer_use", "generic_model", default="") or "") or None
+        return provider, model
+
+    def _generic_model_label(self) -> str:
+        provider, model = self._generic_target()
+        if model:
+            return f"{provider}:{model}" if provider else model
+        try:
+            return f"{self._router.get_current_provider_name()}:{self._router.get_current_model()}"
+        except Exception:
+            return "modelo de chat"
+
+    async def _run_generic(self, result: ComputerUseResult, ctx: dict) -> None:
+        from backend.providers.base import LLMMessage
+
+        if self._router is None:
+            raise RuntimeError("No hay un modelo disponible para controlar el escritorio")
+        provider_name, model = self._generic_target()
+        monitor_info = ctx["monitor_info"]
+        action_history = result.action_history
+        start_time = time.time()
+        last_hash = ""
+        stagnation = 0
+        bad_answers = 0
+        errors = 0
+
+        for iteration in range(1, ctx["max_iterations"] + 1):
+            if time.time() - start_time > ctx["timeout_seconds"]:
+                result.status = "timeout"
+                result.summary = f"Timeout tras {iteration - 1} iteraciones."
+                return
+            if ctx["cancel_event"] and ctx["cancel_event"].is_set():
+                result.status = "cancelled"
+                result.summary = f"Cancelado en iteración {iteration}"
+                return
+
+            image_b64, _ = await self._capture(ctx["target_monitor"])
+            if not image_b64:
+                await asyncio.sleep(1)
+                continue
+            digest = hashlib.md5(image_b64[:500].encode()).hexdigest()
+            stagnation = stagnation + 1 if digest == last_hash else 0
+            last_hash = digest
+
+            history = ("Acciones previas:\n" + "\n".join(action_history[-12:])) if action_history else "Primer paso."
+            step = "Responde la siguiente acción."
+            if stagnation >= 2:
+                step = "ATENCIÓN: la pantalla no cambió con tus últimas acciones. Prueba otra forma."
+            messages = [
+                LLMMessage(role="system", content=_GENERIC_SYSTEM_PROMPT),
+                LLMMessage(role="user", content=f"Objetivo: {ctx['task']}\n\n{history}\n\n{step}", images=[image_b64]),
+            ]
+            try:
+                response = await self._router.generate_complete(
+                    messages, model=model, provider_name=provider_name, temperature=0.2, max_tokens=800,
+                )
+            except Exception as exc:
+                errors += 1
+                logger.error(f"Computer use (genérico): error del modelo: {exc}")
+                if errors >= 3:
+                    result.status = "failed"
+                    result.error = f"El modelo no respondió: {exc}"
+                    return
+                await asyncio.sleep(2)
+                continue
+
+            await self._record_usage(
+                result, int(getattr(response, "input_tokens", 0) or 0), int(getattr(response, "output_tokens", 0) or 0),
+                provider=str(getattr(response, "provider", "") or provider_name or "generic"),
+                model=str(getattr(response, "model", "") or model or ""), iteration=iteration, task=ctx["task"],
+                session_id=ctx["session_id"], mode_key=ctx["mode_key"],
+                parent_task_limit_usd=ctx["parent_task_limit_usd"],
+            )
+            step_data = _parse_json_action(getattr(response, "text", "") or "")
+            if not step_data:
+                bad_answers += 1
+                action_history.append("- [respuesta sin JSON válido]")
+                if bad_answers >= 3:
+                    result.status = "failed"
+                    result.error = "El modelo no devolvió acciones en el formato esperado."
+                    return
+                continue
+            bad_answers = 0
+
+            action = str(step_data.get("action", "")).strip().lower()
+            thought = str(step_data.get("thought", "")).strip()
+            logger.info(f"Computer use (genérico) {action}: {json.dumps(step_data, ensure_ascii=False)[:200]}")
+            if action == "done":
+                result.status = "completed"
+                result.summary = str(step_data.get("summary") or thought or f"Tarea completada en {iteration} pasos.")[:300]
+                action_history.append("- done()")
+                return
+            if action == "fail":
+                result.status = "failed"
+                result.error = str(step_data.get("summary") or thought or "El modelo dijo que no se puede.")[:300]
+                action_history.append("- fail()")
+                return
+
+            note = await self._apply_generic_action(action, step_data, monitor_info)
+            # Historial en el espacio del modelo (0-1000): los píxeles del ejecutor lo
+            # confunden. Las notas de error del ejecutor ("[...]") sí se conservan.
+            entry = note if "[" in note else _describe_generic(action, step_data)
+            action_history.append(f"{entry}  # {thought[:80]}" if thought else entry)
+            await self._emit(ctx["on_progress"], iteration, ctx["max_iterations"], action, start_time)
+            await asyncio.sleep(ctx["stab_delay"])
+
+    async def _apply_generic_action(self, action: str, data: dict, monitor_info) -> str:
+        def num(key: str) -> float | None:
+            try:
+                return max(0.0, min(1000.0, float(data[key])))
+            except (KeyError, TypeError, ValueError):
+                return None
+
+        x, y = num("x"), num("y")
+        flag = lambda key: str(data.get(key, "")).strip().lower() in ("1", "true", "si", "sí", "yes")  # noqa: E731
+        if action in ("click", "double_click", "right_click", "move"):
+            if x is None or y is None:
+                return f"- {action}() [faltan x/y]"
+            return await self._apply_action(action, monitor_info, x=x, y=y, coord_space="normalized")
+        if action == "type":
+            text = str(data.get("text", ""))
+            if x is not None and y is not None:
+                return await self._apply_action("type_at", monitor_info, x=x, y=y, text=text,
+                                                clear=flag("clear"), press_enter=flag("enter"), coord_space="normalized")
+            return await self._apply_action("type", monitor_info, text=text, clear=flag("clear"), press_enter=flag("enter"))
+        if action == "key":
+            return await self._apply_action("key", monitor_info, key=str(data.get("keys", data.get("key", ""))))
+        if action == "scroll":
+            return await self._apply_action("scroll", monitor_info, x=x, y=y, scroll_dir=str(data.get("direction", "down")),
+                                            scroll_amount=_safe_int(data.get("amount", 3), 3), coord_space="normalized")
+        if action == "drag":
+            x2, y2 = num("x2"), num("y2")
+            if None in (x, y, x2, y2):
+                return "- drag() [faltan coordenadas]"
+            return await self._apply_action("drag", monitor_info, x=x, y=y, x2=x2, y2=y2, coord_space="normalized")
+        if action == "wait":
+            return await self._apply_action("wait", monitor_info, scroll_amount=min(_safe_int(data.get("amount", 1), 1), 10))
+        return f"- {action}() [acción desconocida]"
 
     async def _apply_google_action(self, name: str, args: dict, monitor_info) -> str:
         """Mapea las funciones predefinidas de Gemini computer use → ejecutor común."""

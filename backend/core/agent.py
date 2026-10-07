@@ -2652,6 +2652,7 @@ class AgentCore:
                 self._computer_use_agent = ComputerUseAgent(
                     vision=self._vision,
                     automation=self._automation,
+                    router=self._router,
                 )
                 await self._computer_use_agent.initialize()
                 logger.info("Phase 2b (Computer Use Sub-Agent) inicializado")
