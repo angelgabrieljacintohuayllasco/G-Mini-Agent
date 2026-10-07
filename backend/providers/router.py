@@ -47,6 +47,10 @@ def _build_provider(provider_id: str) -> LLMProvider | None:
         return GoogleProvider("vertex", force_backend="vertex_ai")
     if kind == registry.KIND_COHERE:
         return CohereProvider()
+    if kind == registry.KIND_CLI:
+        from backend.providers.cli_provider import CLIProvider
+
+        return CLIProvider(provider_id)
     return None
 
 

@@ -21,6 +21,7 @@ KIND_ANTHROPIC = "anthropic"
 KIND_GOOGLE = "google"
 KIND_VERTEX = "vertex"
 KIND_COHERE = "cohere"
+KIND_CLI = "cli"           # suscripción vía CLI oficial (Claude Code, Codex)
 
 
 @dataclass(frozen=True)
@@ -236,6 +237,27 @@ PROVIDERS: dict[str, ProviderSpec] = {
         reasoning_model_prefixes=_OPENAI_REASONING,
         description="Usa https://<recurso>.openai.azure.com/openai/v1/ y el nombre del deployment como modelo.",
     ),
+    # ── Suscripciones vía CLIs oficiales (sin API key) ─────────────────
+    "claude-cli": ProviderSpec(
+        id="claude-cli", label="Claude con tu suscripción (Claude Code)", kind=KIND_CLI,
+        category="subscription", local=True, supports_model_listing=False,
+        default_models=("sonnet", "opus", "haiku"),
+        docs_url="https://docs.anthropic.com/en/docs/claude-code", key_url="https://claude.ai/download",
+        description=(
+            "Usa tu plan Pro/Max a través de Claude Code (claude -p). Requiere tener Claude Code "
+            "instalado y con sesión iniciada. Solo texto; respuestas en streaming."
+        ),
+    ),
+    "codex-cli": ProviderSpec(
+        id="codex-cli", label="ChatGPT con tu suscripción (Codex CLI)", kind=KIND_CLI,
+        category="subscription", local=True, supports_model_listing=False,
+        default_models=("gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"),
+        docs_url="https://github.com/openai/codex", key_url="https://chatgpt.com/codex",
+        description=(
+            "Usa tu plan de ChatGPT a través de Codex CLI (codex exec). Requiere Codex instalado y con "
+            "sesión iniciada. Solo texto; la respuesta llega completa al final."
+        ),
+    ),
     # ── Locales ──────────────────────────────────────────────────────────
     "ollama": ProviderSpec(
         id="ollama", label="Ollama", kind=KIND_OPENAI_COMPAT, category="local", local=True,
@@ -260,6 +282,7 @@ CATEGORY_LABELS = {
     "cloud": "Nube",
     "aggregator": "Agregadores",
     "enterprise": "Empresarial",
+    "subscription": "Tu suscripción (vía CLI)",
     "local": "Local",
 }
 
