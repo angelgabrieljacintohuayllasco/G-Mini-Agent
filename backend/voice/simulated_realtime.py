@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import io
-import math
 import struct
 from typing import Any, Callable, Coroutine
 
+import numpy as np
 from loguru import logger
 
 from backend.config import config
@@ -40,6 +40,15 @@ class SimulatedRealtimeVoice:
     # Mínimo de audio acumulado (ms) antes de intentar transcribir (evitar fragmentos de <0.5s)
     _MIN_AUDIO_MS = 500
 
+    # Audio que se guarda antes de detectar voz (para no cortar la primera sílaba)
+    _PRE_ROLL_MS = 300
+
+    # Tope por frase: en una sala ruidosa el silencio puede no llegar nunca
+    _MAX_UTTERANCE_MS = 20000
+
+    # El umbral de voz sube con el ruido de fondo (piso * factor)
+    _NOISE_FACTOR = 2.5
+
     # Tamaño de chunk para enviar audio TTS al frontend (24kHz PCM16 mono, ~100ms)
     _TTS_CHUNK_SAMPLES = 6000  # 250ms a 24kHz — chunks mas grandes reducen gaps entre buffers
 
@@ -57,6 +66,7 @@ class SimulatedRealtimeVoice:
         # Tracking de silencio
         self._silence_frames = 0
         self._has_speech = False  # True si hemos detectado voz en el buffer actual
+        self._noise_floor = 0.0  # RMS del ruido de fondo (baja rápido, sube despacio)
 
         # Callbacks (misma interfaz que RealTimeVoice)
         self._on_audio: Callable | None = None
@@ -123,6 +133,7 @@ class SimulatedRealtimeVoice:
         self._audio_buffer.clear()
         self._silence_frames = 0
         self._has_speech = False
+        self._noise_floor = 0.0
 
         # System prompt: base del agente + instrucciones de voz (ambos configurables por el usuario)
         parts = [p for p in (system_prompt, voice_prompt) if p]
@@ -183,37 +194,45 @@ class SimulatedRealtimeVoice:
 
         # Calcular RMS del chunk para detección de voz/silencio
         rms = self._calculate_rms(audio_chunk)
+        is_speech = rms > max(self._SILENCE_RMS_THRESHOLD, self._noise_floor * self._NOISE_FACTOR)
+        # Piso de ruido: baja rápido y sube despacio, así el habla no lo arrastra
+        # pero un ventilador o la tele terminan contando como silencio.
+        alpha = 0.2 if rms < self._noise_floor else 0.01
+        self._noise_floor += alpha * (rms - self._noise_floor)
 
-        if rms > self._SILENCE_RMS_THRESHOLD:
-            # Hay voz
+        if not self._has_speech and not is_speech:
+            # Antes de que el usuario hable solo se guarda un poco de pre-roll.
+            keep = self._ms_to_bytes(self._PRE_ROLL_MS)
+            if len(self._audio_buffer) > keep:
+                del self._audio_buffer[:-keep]
+            return
+
+        if is_speech:
             self._has_speech = True
             self._silence_frames = 0
         else:
-            # Silencio
-            if self._has_speech:
-                # Calcular duración del chunk en ms (PCM16 = 2 bytes/sample, mono)
-                chunk_duration_ms = (len(audio_chunk) / 2) / self._INPUT_SAMPLE_RATE * 1000
-                self._silence_frames += 1
-                accumulated_silence_ms = self._silence_frames * chunk_duration_ms
+            # Calcular duración del chunk en ms (PCM16 = 2 bytes/sample, mono)
+            chunk_duration_ms = (len(audio_chunk) / 2) / self._INPUT_SAMPLE_RATE * 1000
+            self._silence_frames += 1
+            if self._silence_frames * chunk_duration_ms >= self._SILENCE_TRIGGER_MS:
+                self._dispatch_utterance()
+                return
 
-                if accumulated_silence_ms >= self._SILENCE_TRIGGER_MS:
-                    # Suficiente silencio — verificar que haya audio útil
-                    buffer_duration_ms = (len(self._audio_buffer) / 2) / self._INPUT_SAMPLE_RATE * 1000
+        if len(self._audio_buffer) >= self._ms_to_bytes(self._MAX_UTTERANCE_MS):
+            logger.info("SimulatedRT: frase larga o ruido constante, proceso lo acumulado")
+            self._dispatch_utterance()
 
-                    if buffer_duration_ms >= self._MIN_AUDIO_MS:
-                        # Lanzar procesamiento en background
-                        audio_data = bytes(self._audio_buffer)
-                        self._audio_buffer.clear()
-                        self._has_speech = False
-                        self._silence_frames = 0
-                        self._process_task = asyncio.create_task(
-                            self._process_utterance(audio_data)
-                        )
-                    else:
-                        # Muy poco audio, descartar (probablemente ruido)
-                        self._audio_buffer.clear()
-                        self._has_speech = False
-                        self._silence_frames = 0
+    def _ms_to_bytes(self, ms: int) -> int:
+        return int(self._INPUT_SAMPLE_RATE * ms / 1000) * 2
+
+    def _dispatch_utterance(self) -> None:
+        """Manda lo acumulado al pipeline (o lo descarta si es muy corto) y reinicia el VAD."""
+        audio_data = bytes(self._audio_buffer)
+        self._audio_buffer.clear()
+        self._has_speech = False
+        self._silence_frames = 0
+        if len(audio_data) >= self._ms_to_bytes(self._MIN_AUDIO_MS):
+            self._process_task = asyncio.create_task(self._process_utterance(audio_data))
 
     # ── Pipeline STT → LLM → TTS ─────────────────────────
 
@@ -937,13 +956,8 @@ class SimulatedRealtimeVoice:
         """Calcula el RMS de un chunk de audio PCM16."""
         if len(audio_chunk) < 2:
             return 0.0
-        num_samples = len(audio_chunk) // 2
-        try:
-            samples = struct.unpack(f"<{num_samples}h", audio_chunk[:num_samples * 2])
-            sum_sq = sum(s * s for s in samples)
-            return math.sqrt(sum_sq / num_samples) if num_samples > 0 else 0.0
-        except struct.error:
-            return 0.0
+        samples = np.frombuffer(audio_chunk[: len(audio_chunk) // 2 * 2], dtype="<i2").astype(np.float32)
+        return float(np.sqrt(np.mean(samples * samples)))
 
     @staticmethod
     def _pcm16_to_wav(pcm16_data: bytes, sample_rate: int) -> bytes:
