@@ -2,38 +2,84 @@
 # G-Mini Agent — Catálogo centralizado de modelos
 # Fuente única de verdad para el frontend y backend.
 # Edita este archivo para agregar/quitar modelos sin tocar código.
+#
+# IDs verificados el 2026-10-07: Vertex AI (listado real del proyecto),
+# documentación oficial de OpenAI, Anthropic, xAI, DeepSeek, Mistral y Groq,
+# y el catálogo público de OpenRouter. Los proveedores compatibles con OpenAI
+# además pueden listar sus modelos en vivo (GET /api/providers/{id}/models).
 # ============================================================
 
 # ── Etiquetas de proveedores para la UI ──
-# Solo proveedores LLM. VirusTotal es una herramienta de seguridad, no un proveedor LLM.
 provider_labels:
   openai: "OpenAI"
-  anthropic: "Anthropic"
-  google: "Google"
+  anthropic: "Anthropic (Claude)"
+  google: "Google AI Studio"
+  vertex: "Google Vertex AI"
   xai: "xAI (Grok)"
   deepseek: "DeepSeek"
   groq: "Groq"
-  mistral: "Mistral"
+  mistral: "Mistral AI"
   perplexity: "Perplexity"
   openrouter: "OpenRouter"
   cohere: "Cohere"
+  moonshot: "Moonshot (Kimi)"
+  dashscope: "Alibaba Qwen"
+  zai: "Z.ai (GLM)"
+  minimax: "MiniMax"
+  cerebras: "Cerebras"
+  sambanova: "SambaNova"
+  venice: "Venice AI"
+  together: "Together AI"
+  fireworks: "Fireworks AI"
+  deepinfra: "DeepInfra"
+  nvidia: "NVIDIA NIM"
+  huggingface: "Hugging Face"
+  github: "GitHub Models"
+  azure_openai: "Azure OpenAI"
+  ollama: "Ollama (local)"
+  lmstudio: "LM Studio (local)"
+  custom: "Servidor propio"
+
+# Proveedores que no usan API key (credenciales de Google Cloud o servidor local).
+keyless_providers: ["vertex", "ollama", "lmstudio"]
 
 # ── Modelos LLM / chat por proveedor ──
 llm:
   openai:
-    - "gpt-5.4"
-    - "gpt-5.4-pro"
-    - "gpt-5-mini"
-    - "gpt-5-nano"
-    - "gpt-4.1"
-    - "gpt-5.3-codex"
-    - "gpt-5.2-codex"
+    - "gpt-6.1-sol"          # Equilibrio inteligencia/costo (recomendado)
+    - "gpt-6-astra"          # El más capaz: razonamiento y código complejo
+    - "gpt-6-luna"           # El más eficiente para alto volumen
+    - "gpt-4.1"              # Sin razonamiento, rápido
   anthropic:
-    - "claude-opus-4-6"
-    - "claude-sonnet-4-6"
-    - "claude-haiku-4-5-20251001"
-  google:
-    # ── Gemini 3.5 (estable, latest) ───────────────────────────────
+    - "claude-opus-5-5"      # Agentes y código de larga duración
+    - "claude-sonnet-5-5"    # Mejor balance velocidad/inteligencia
+    - "claude-fable-5-1"     # Razonamiento más exigente (más caro)
+    - "claude-haiku-4-5"     # El más rápido
+  google: &gemini_models
+    gemini-3.8-flash:
+      display_name: "Gemini 3.8 Flash"
+      version_type: "stable"
+      inputs: ["text", "image", "video", "audio", "pdf"]
+      outputs: ["text"]
+      input_tokens: 1048576
+      output_tokens: 65536
+      features: {live_api: false, function_calling: true, thinking: true, structured_output: true, grounding_search: true, computer_use: true}
+    gemini-3.1-pro-preview:
+      display_name: "Gemini 3.1 Pro (preview)"
+      version_type: "preview"
+      inputs: ["text", "image", "video", "audio", "pdf"]
+      outputs: ["text"]
+      input_tokens: 1048576
+      output_tokens: 65536
+      features: {live_api: false, function_calling: true, thinking: true, structured_output: true, grounding_search: true, computer_use: true}
+    gemini-3.7-flash:
+      display_name: "Gemini 3.7 Flash"
+      version_type: "stable"
+      inputs: ["text", "image", "video", "audio", "pdf"]
+      outputs: ["text"]
+      input_tokens: 1048576
+      output_tokens: 65536
+      features: {live_api: false, function_calling: true, thinking: true, structured_output: true, grounding_search: true}
     gemini-3.5-flash:
       display_name: "Gemini 3.5 Flash"
       version_type: "stable"
@@ -41,137 +87,23 @@ llm:
       outputs: ["text"]
       input_tokens: 1048576
       output_tokens: 65536
-      cutoff_date: "2025-06"
-      updated_date: "2026-05"
-      features:
-        live_api: false
-        batch_api: true
-        caching: true
-        code_execution: true
-        file_search: true
-        function_calling: true
-        grounding_search: true
-        grounding_maps: true
-        image_generation: false
-        audio_generation: false
-        structured_output: true
-        thinking: true
-        computer_use: true
-        flex_inference: true
-        priority_inference: true
-        url_context: true
-
-    # ── Gemini 3.1 (estable + preview) ─────────────────────────────
-    gemini-3.1-flash-lite:
-      display_name: "Gemini 3.1 Flash Lite"
+      features: {live_api: false, function_calling: true, thinking: true, structured_output: true, grounding_search: true}
+    gemini-3.5-flash-lite:
+      display_name: "Gemini 3.5 Flash-Lite"
       version_type: "stable"
       inputs: ["text", "image", "video", "audio", "pdf"]
       outputs: ["text"]
       input_tokens: 1048576
       output_tokens: 65536
-      cutoff_date: "2025-01"
-      updated_date: "2026-04"
-      features:
-        live_api: false
-        batch_api: true
-        caching: true
-        code_execution: true
-        file_search: true
-        function_calling: true
-        grounding_search: true
-        grounding_maps: true
-        image_generation: false
-        audio_generation: false
-        structured_output: true
-        thinking: true
-        computer_use: false
-        flex_inference: true
-        priority_inference: true
-        url_context: true
-
-    # ── Gemini 3 (preview) ─────────────────────────────────────────
-    gemini-3.1-pro-preview:
-      display_name: "Gemini 3.1 Pro Preview"
-      version_type: "preview"
+      features: {live_api: false, function_calling: true, thinking: true, structured_output: true}
+    gemini-3.1-flash-lite:
+      display_name: "Gemini 3.1 Flash-Lite"
+      version_type: "stable"
       inputs: ["text", "image", "video", "audio", "pdf"]
       outputs: ["text"]
       input_tokens: 1048576
       output_tokens: 65536
-      cutoff_date: "2025-01"
-      updated_date: "2026-02"
-      features:
-        live_api: false
-        batch_api: true
-        caching: true
-        code_execution: true
-        file_search: true
-        function_calling: true
-        grounding_search: true
-        grounding_maps: true
-        image_generation: false
-        audio_generation: false
-        structured_output: true
-        thinking: true
-        computer_use: false
-        flex_inference: true
-        priority_inference: true
-        url_context: true
-
-    gemini-3-flash-preview:
-      display_name: "Gemini 3 Flash Preview"
-      version_type: "preview"
-      inputs: ["text", "image", "video", "audio", "pdf"]
-      outputs: ["text"]
-      input_tokens: 1048576
-      output_tokens: 65536
-      cutoff_date: "2025-01"
-      updated_date: "2025-12"
-      features:
-        live_api: false
-        batch_api: true
-        caching: true
-        code_execution: true
-        file_search: true
-        function_calling: true
-        grounding_search: true
-        grounding_maps: true
-        image_generation: false
-        audio_generation: false
-        structured_output: true
-        thinking: true
-        computer_use: true
-        flex_inference: true
-        priority_inference: true
-        url_context: true
-
-    gemini-3.1-flash-lite-preview:
-      display_name: "Gemini 3.1 Flash Lite Preview"
-      version_type: "preview"
-      inputs: ["text", "image", "video", "audio", "pdf"]
-      outputs: ["text"]
-      input_tokens: 1048576
-      output_tokens: 65536
-      cutoff_date: "2025-01"
-      updated_date: "2026-03"
-      features:
-        live_api: false
-        batch_api: true
-        caching: true
-        code_execution: true
-        file_search: true
-        function_calling: true
-        grounding_search: true
-        grounding_maps: true
-        image_generation: false
-        audio_generation: false
-        structured_output: true
-        thinking: true
-        computer_use: false
-        flex_inference: true
-        priority_inference: true
-        url_context: true
-
-    # ── Gemini 2.5 (estables) ──────────────────────────────────────
+      features: {live_api: false, function_calling: true, thinking: true, structured_output: true}
     gemini-2.5-pro:
       display_name: "Gemini 2.5 Pro"
       version_type: "stable"
@@ -179,231 +111,137 @@ llm:
       outputs: ["text"]
       input_tokens: 1048576
       output_tokens: 65536
-      cutoff_date: "2025-01"
-      updated_date: "2025-06"
-      features:
-        live_api: false
-        batch_api: true
-        caching: true
-        code_execution: true
-        file_search: true
-        function_calling: true
-        grounding_search: true
-        grounding_maps: true
-        image_generation: false
-        audio_generation: false
-        structured_output: true
-        thinking: true
-        computer_use: false
-        flex_inference: true
-        priority_inference: true
-        url_context: true
-
+      features: {live_api: false, function_calling: true, thinking: true, structured_output: true}
     gemini-2.5-flash:
       display_name: "Gemini 2.5 Flash"
-      version_type: "stable"
-      inputs: ["text", "image", "video", "audio"]
-      outputs: ["text"]
-      input_tokens: 1048576
-      output_tokens: 65536
-      cutoff_date: "2025-01"
-      updated_date: "2025-06"
-      features:
-        live_api: false
-        batch_api: true
-        caching: true
-        code_execution: true
-        file_search: true
-        function_calling: true
-        grounding_search: true
-        grounding_maps: true
-        image_generation: false
-        audio_generation: false
-        structured_output: true
-        thinking: true
-        computer_use: false
-        flex_inference: true
-        priority_inference: true
-        url_context: true
-
-    gemini-2.5-flash-lite:
-      display_name: "Gemini 2.5 Flash Lite"
       version_type: "stable"
       inputs: ["text", "image", "video", "audio", "pdf"]
       outputs: ["text"]
       input_tokens: 1048576
       output_tokens: 65536
-      cutoff_date: "2025-01"
-      updated_date: "2025-07"
-      features:
-        live_api: false
-        batch_api: true
-        caching: true
-        code_execution: true
-        file_search: true
-        function_calling: true
-        grounding_search: true
-        grounding_maps: true
-        image_generation: false
-        audio_generation: false
-        structured_output: true
-        thinking: true
-        computer_use: false
-        flex_inference: true
-        priority_inference: true
-        url_context: true
-
-    # ── Gemini 2.5 Computer Use (legacy preview) ───────────────────
-    # Nota: Gemini 3 Pro/Flash ya tienen computer_use nativo integrado.
+      features: {live_api: false, function_calling: true, thinking: true, structured_output: true}
     gemini-2.5-computer-use-preview-10-2025:
-      display_name: "Gemini 2.5 Computer Use (Preview)"
+      display_name: "Gemini 2.5 Computer Use (preview)"
       version_type: "preview"
       inputs: ["text", "image"]
       outputs: ["text"]
-      input_tokens: 128000
-      output_tokens: 64000
-      cutoff_date: null
-      updated_date: "2025-10"
-      features:
-        live_api: false
-        batch_api: false
-        caching: false
-        code_execution: false
-        file_search: false
-        function_calling: false
-        grounding_search: false
-        grounding_maps: false
-        image_generation: false
-        audio_generation: false
-        structured_output: false
-        thinking: false
-        computer_use: true
-        flex_inference: false
-        priority_inference: false
-        url_context: false
-
-    # ── Live API — audio/video en tiempo real nativo ───────────────
-    # Estos modelos SOLO funcionan con la Live API (live.connect),
-    # NO soportan generateContent ni streamGenerateContent.
-    # Aceptan texto como entrada. Salida: audio y texto (transcripción).
-    # response_modalities=["AUDIO"] obligatorio; el texto llega como transcripción.
-    gemini-2.5-flash-native-audio-preview-12-2025:
-      display_name: "Gemini 2.5 Flash Live (Native Audio)"
-      version_type: "preview"
-      api_method: "live"             # Solo funciona con Live API (live.connect)
-      output_constraint: "audio_primary" # response_modalities=["AUDIO"] obligatorio; texto viene como transcripción
-      inputs: ["text", "audio", "video"]
-      outputs: ["text", "audio"]     # Doc oficial: "Resultado: Audio y texto"
-      input_tokens: 131072
-      output_tokens: 8192
-      cutoff_date: "2025-01"
-      updated_date: "2025-09"
-      features:
-        live_api: true
-        batch_api: false
-        caching: false
-        code_execution: false
-        file_search: false
-        function_calling: true
-        grounding_search: true
-        grounding_maps: false
-        image_generation: false
-        audio_generation: true
-        structured_output: false
-        thinking: true
-        computer_use: false
-        flex_inference: false
-        priority_inference: false
-        url_context: false
-
-    gemini-3.1-flash-live-preview:
-      display_name: "Gemini 3.1 Flash Live Preview"
-      version_type: "preview"
-      api_method: "live"             # Solo funciona con Live API (live.connect)
-      output_constraint: "audio_primary" # response_modalities=["AUDIO"] obligatorio; texto viene como transcripción
-      inputs: ["text", "image", "audio", "video"]
-      outputs: ["text", "audio"]     # Doc oficial: "Resultado: Texto y audio"
       input_tokens: 131072
       output_tokens: 65536
-      cutoff_date: "2025-01"
-      updated_date: "2026-03"
-      features:
-        live_api: true
-        batch_api: false
-        caching: false
-        code_execution: false
-        file_search: false
-        function_calling: true
-        grounding_search: true
-        grounding_maps: false
-        image_generation: false
-        audio_generation: true
-        structured_output: false
-        thinking: true
-        computer_use: false
-        flex_inference: false
-        priority_inference: false
-        url_context: false
+      features: {live_api: false, function_calling: true, computer_use: true}
+
+    # ── Live API: audio/video en tiempo real (solo live.connect) ──
+    gemini-3.8-live:
+      display_name: "Gemini 3.8 Live"
+      version_type: "stable"
+      api_method: "live"
+      output_constraint: "audio_primary"
+      inputs: ["text", "image", "audio", "video"]
+      outputs: ["text", "audio"]
+      input_tokens: 131072
+      output_tokens: 65536
+      features: {live_api: true, function_calling: true, audio_generation: true, thinking: true}
+    gemini-live-2.5-flash-native-audio:
+      display_name: "Gemini 2.5 Flash Live (audio nativo, Vertex)"
+      version_type: "stable"
+      api_method: "live"
+      output_constraint: "audio_primary"
+      inputs: ["text", "audio", "video"]
+      outputs: ["text", "audio"]
+      input_tokens: 131072
+      output_tokens: 8192
+      features: {live_api: true, function_calling: true, audio_generation: true}
+    gemini-2.5-flash-native-audio-preview-12-2025:
+      display_name: "Gemini 2.5 Flash Live (audio nativo, AI Studio)"
+      version_type: "preview"
+      api_method: "live"
+      output_constraint: "audio_primary"
+      inputs: ["text", "audio", "video"]
+      outputs: ["text", "audio"]
+      input_tokens: 131072
+      output_tokens: 8192
+      features: {live_api: true, function_calling: true, audio_generation: true}
+  vertex: *gemini_models
   xai:
-    - "grok-4-1-fast-reasoning"
-    - "grok-4-1-fast-non-reasoning"
-    - "grok-4"
-    - "grok-code-fast-1"
+    - "grok-4.7"
+    - "grok-4.6"
+    - "grok-4.3"
+    - "grok-4.20-0309-non-reasoning"
   deepseek:
-    - "deepseek-chat"
-    - "deepseek-reasoner"
+    - "deepseek-flash"        # V4.1 Flash, 1M de contexto
+    - "deepseek-v4-pro"
   groq:
+    - "openai/gpt-oss-120b"
+    - "openai/gpt-oss-20b"
     - "llama-3.3-70b-versatile"
     - "llama-3.1-8b-instant"
-    - "mixtral-8x7b-32768"
-    - "gemma2-9b-it"
   mistral:
     - "mistral-large-latest"
     - "mistral-medium-latest"
     - "mistral-small-latest"
-    - "codestral-latest"
+    - "codestral-25-08"
   perplexity:
     - "sonar-pro"
     - "sonar"
+    - "sonar-reasoning-pro"
   openrouter:
-    - "openai/gpt-4o"
-    - "anthropic/claude-3.5-sonnet"
-    - "meta-llama/llama-3.1-405b-instruct"
+    - "openrouter/auto"
+    - "anthropic/claude-sonnet-5.5"
+    - "google/gemini-3.8-flash"
+    - "openai/gpt-6.1-sol"
+    - "x-ai/grok-4.7"
+    - "moonshotai/kimi-k3"
   cohere:
+    - "command-a-03-2025"
     - "command-r-plus"
     - "command-r"
-    - "command-light"
+  moonshot:
+    - "kimi-k3"
+  dashscope:
+    - "qwen-max"
+    - "qwen-plus"
+    - "qwen-flash"
+  zai:
+    - "glm-5.3"
+    - "glm-5.3-flash"
+  minimax: []
+  cerebras: []
+  sambanova: []
+  venice: []
+  together: []
+  fireworks: []
+  deepinfra: []
+  nvidia: []
+  huggingface:
+    - "openai/gpt-oss-120b"
+  github:
+    - "openai/gpt-4.1"
+    - "openai/gpt-4.1-mini"
+  azure_openai: []
   ollama: []
   lmstudio: []
+  custom: []
 
 # ── Modelos de generación de imágenes (Google) ──
 image:
+  - "gemini-3.1-flash-image"
+  - "gemini-3-pro-image"
   - "gemini-3.1-flash-image-preview"
-  - "gemini-3-pro-image-preview"
   - "gemini-2.5-flash-image"
   - "imagen-4.0-ultra-generate-001"
-  - "imagen-4.0-fast-generate-001"
   - "imagen-4.0-generate-001"
-  - "imagen-3.0-generate-002"
-  - "imagen-3.0-generate-001"
-  - "imagen-3.0-fast-generate-001"
-  - "imagen-3.0-capability-001"
+  - "imagen-4.0-fast-generate-001"
 
 # ── Modelos de generación de video (Google) ──
 video:
-  - "veo-3.1-generate-preview"
-  - "veo-3.1-fast-generate-preview"
   - "veo-3.1-generate-001"
   - "veo-3.1-fast-generate-001"
-  - "veo-3.0-generate-preview"
-  - "veo-3.0-fast-generate-preview"
+  - "veo-3.1-lite-generate-001"
   - "veo-3.0-generate-001"
   - "veo-3.0-fast-generate-001"
-  - "veo-2.0-generate-preview"
-  - "veo-2.0-generate-exp"
   - "veo-2.0-generate-001"
 
 # ── Modelos de generación de música (Google) ──
 music:
   - "lyria-3-pro-preview"
   - "lyria-3-clip-preview"
+  - "lyria-002"

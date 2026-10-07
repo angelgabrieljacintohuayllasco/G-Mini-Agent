@@ -1,12 +1,17 @@
 """
 G-Mini Agent — Clase base abstracta para proveedores LLM.
-Todos los providers implementan esta interfaz.
+
+Todos los providers implementan esta interfaz. Regla de oro: ante un fallo del
+proveedor (401, 404, 429, 5xx, timeout, conexión), el provider LANZA
+`ProviderError`; nunca devuelve el error como si fuera texto del modelo. Así el
+router puede hacer fallback/reintento y el agente no guarda el error en la
+memoria ni lo cobra como uso.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 from pydantic import BaseModel
 
@@ -24,7 +29,31 @@ class LLMResponse(BaseModel):
     provider: str
     input_tokens: int = 0
     output_tokens: int = 0
+    thinking_tokens: int = 0
     finish_reason: str = ""
+
+
+class ProviderError(RuntimeError):
+    """
+    Fallo de un proveedor LLM. `retriable=True` para errores transitorios
+    (429, 5xx, timeout, conexión) que conviene reintentar o derivar a otro
+    proveedor; `retriable=False` para errores de configuración (401, 404, 400).
+    """
+
+    def __init__(
+        self,
+        provider: str,
+        message: str,
+        *,
+        model: str = "",
+        status: int | None = None,
+        retriable: bool = False,
+    ):
+        self.provider = provider
+        self.model = model
+        self.status = status
+        self.retriable = retriable
+        super().__init__(f"[{provider}{':' + model if model else ''}] {message}")
 
 
 class LLMProviderUnavailableError(RuntimeError):
@@ -38,6 +67,14 @@ class LLMProviderUnavailableError(RuntimeError):
         if last_error:
             msg += f". Ultimo error: {last_error}"
         super().__init__(msg)
+
+
+# Códigos HTTP que conviene reintentar / derivar a otro proveedor.
+RETRIABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
+
+
+def classify_http_status(status: int | None) -> bool:
+    return status in RETRIABLE_STATUS if status is not None else False
 
 
 class LLMProvider(ABC):
@@ -55,10 +92,7 @@ class LLMProvider(ABC):
         stream: bool = True,
         **kwargs,
     ) -> AsyncGenerator[str, None]:
-        """
-        Genera una respuesta del LLM en modo streaming.
-        Yields chunks de texto conforme llegan.
-        """
+        """Genera en streaming. Yields chunks de texto. Lanza ProviderError si falla."""
         ...
 
     @abstractmethod
@@ -70,9 +104,7 @@ class LLMProvider(ABC):
         max_tokens: int = 4096,
         **kwargs,
     ) -> LLMResponse:
-        """
-        Genera una respuesta completa (sin streaming).
-        """
+        """Genera una respuesta completa. Lanza ProviderError si falla."""
         ...
 
     @abstractmethod
@@ -84,3 +116,11 @@ class LLMProvider(ABC):
     async def health_check(self) -> bool:
         """Verifica si el provider está disponible."""
         ...
+
+    def is_configured(self) -> bool:
+        """True si el provider tiene lo necesario para funcionar (key o endpoint local)."""
+        return True
+
+    def last_usage(self) -> dict[str, Any] | None:
+        """Último uso real reportado por el SDK (tokens), o None si no hay dato."""
+        return getattr(self, "_last_usage", None)

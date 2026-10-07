@@ -1,119 +1,164 @@
 """
-G-Mini Agent — Provider para Google (Gemini).
-Soporta dos backends:
-  - ai_studio: usa API key (generativelanguage.googleapis.com)
-  - vertex_ai: usa credenciales GCP (aiplatform.googleapis.com), consume créditos de Google Cloud
+G-Mini Agent — Provider para Google Gemini (AI Studio y Vertex AI).
+
+Un mismo provider sirve para dos ids:
+- "google": AI Studio con API key (generativelanguage.googleapis.com).
+- "vertex": Vertex AI con credenciales GCP (ADC o cuenta de servicio).
+
+Usa el cliente asíncrono de google-genai con timeout explícito (por defecto no
+tiene ninguno) para no colgar el loop.
 """
 
 from __future__ import annotations
 
-import os
-from typing import AsyncGenerator
+import base64
+from typing import Any, AsyncGenerator
 
 from loguru import logger
 
-from backend.providers.base import LLMProvider, LLMMessage, LLMResponse
 from backend.config import config
+from backend.providers import registry
+from backend.providers.base import LLMMessage, LLMProvider, LLMResponse, ProviderError, classify_http_status
+
+_DEFAULT_TIMEOUT_MS = 120_000
 
 
 class GoogleProvider(LLMProvider):
-    """Provider para modelos Gemini de Google."""
+    """Provider para modelos Gemini (AI Studio o Vertex AI)."""
 
-    name = "google"
-
-    def __init__(self):
+    def __init__(self, provider_name: str = "google", force_backend: str | None = None):
+        self.name = provider_name
         self._client = None
-        self._backend = "ai_studio"
-        self._configure()
+        self._backend = force_backend or ""
+        self._force_backend = force_backend
+        self._ready = False
+        self._last_usage: dict[str, Any] | None = None
+        # Se configura en el primer uso (detectar el proyecto por ADC tarda ~1 s).
+
+    # ── Configuración ──────────────────────────────────────────────────
+    def _config_section(self) -> str:
+        return "google" if self.name == "google" else self.name
+
+    def _resolve_backend(self) -> str:
+        if self._force_backend:
+            return self._force_backend
+        return config.get("providers", "google", "backend", default="ai_studio")
 
     def _configure(self) -> None:
-        try:
-            from google import genai
+        from google import genai
+        from google.genai import types
 
-            self._backend = config.get("providers", "google", "backend", default="ai_studio")
-
-            if self._backend == "vertex_ai":
-                self._configure_vertex(genai)
-            else:
-                self._configure_ai_studio(genai)
-
-        except Exception as e:
-            self._client = None
-            raise
-
-    def _configure_ai_studio(self, genai) -> None:
-        vault = config.get("providers", "google", "api_key_vault", default="google_api")
-        api_key = config.get_api_key(vault) or ""
-
-        if not api_key:
-            raise ValueError("No API key configured for Google AI Studio. Set it in Settings > API Keys.")
-
-        self._client = genai.Client(api_key=api_key)
-        logger.info("[google] Backend: AI Studio (API key)")
-
-    def _configure_vertex(self, genai) -> None:
-        project_id = config.get("providers", "google", "project_id", default="")
-        location = config.get("providers", "google", "location", default="us-central1")
-        credentials_file = config.get("providers", "google", "credentials_file", default="")
-
-        if not project_id:
-            raise ValueError(
-                "Vertex AI requires a GCP project_id. "
-                "Set it in Settings > Google > Project ID."
-            )
-
-        if credentials_file:
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_file
-
-        self._client = genai.Client(
-            vertexai=True,
-            project=project_id,
-            location=location,
+        self._http_options = types.HttpOptions(
+            timeout=int(config.get("providers", self._config_section(), "timeout_ms", default=_DEFAULT_TIMEOUT_MS)),
         )
-        logger.info(f"[google] Backend: Vertex AI (project={project_id}, location={location})")
+        self._backend = self._resolve_backend()
+        if self.name == "vertex" or self._backend == "vertex_ai":
+            from backend.providers import gcp_auth
+
+            settings = gcp_auth.resolve_vertex_settings(
+                config.get("providers", self._config_section(), default={}) or {}
+            )
+            if not settings.project:
+                raise ValueError("Vertex AI necesita un proyecto GCP (ADC o cuenta de servicio).")
+            credentials = gcp_auth.load_credentials(settings.credentials_file)
+            kwargs: dict[str, Any] = {
+                "vertexai": True, "project": settings.project, "location": settings.location,
+                "http_options": self._http_options,
+            }
+            if credentials is not None:
+                kwargs["credentials"] = credentials
+            self._client = genai.Client(**kwargs)
+            logger.info(f"[{self.name}] Vertex AI (project={settings.project}, location={settings.location})")
+        else:
+            vault = config.get("providers", "google", "api_key_vault", default="google_api")
+            api_key = config.get_api_key(vault) or ""
+            if not api_key:
+                raise ValueError("Falta la API key de Google AI Studio.")
+            self._client = genai.Client(api_key=api_key, http_options=self._http_options)
+            logger.info(f"[{self.name}] AI Studio (API key)")
+        self._ready = True
+
+    def _ensure_client(self):
+        if not self._ready or self._client is None:
+            self._configure()
+        return self._client
+
+    def is_configured(self) -> bool:
+        try:
+            if self.name == "vertex" or self._resolve_backend() == "vertex_ai":
+                from backend.providers import gcp_auth
+
+                settings = gcp_auth.resolve_vertex_settings(
+                    config.get("providers", self._config_section(), default={}) or {}
+                )
+                return bool(settings.project)
+            vault = config.get("providers", "google", "api_key_vault", default="google_api")
+            return bool(config.get_api_key(vault))
+        except Exception:
+            return False
 
     def get_backend(self) -> str:
         return self._backend
 
+    # ── Construcción de contenidos ─────────────────────────────────────
     def _build_contents(self, messages: list[LLMMessage]) -> tuple[str | None, list]:
-        """
-        Convierte LLMMessage al formato Google genai.
-        Retorna (system_instruction, contents).
-        """
         from google.genai import types
 
-        system_instruction = None
+        system_parts: list[str] = []
         contents = []
-
         for msg in messages:
             if msg.role == "system":
-                system_instruction = msg.content
+                if msg.content:
+                    system_parts.append(msg.content)
                 continue
-
             role = "user" if msg.role == "user" else "model"
-
             if msg.images or msg.files:
-                import base64
-                parts = [types.Part.from_text(text=msg.content)]
+                parts = [types.Part.from_text(text=msg.content)] if msg.content else []
                 for img_b64 in msg.images:
-                    img_bytes = base64.b64decode(img_b64)
-                    parts.append(types.Part.from_bytes(data=img_bytes, mime_type="image/png"))
-                # Adjuntos no-imagen (video/audio/pdf/doc): bytes inline con su mime real.
-                # Part.from_bytes soporta video/mp4, audio/*, application/pdf en Vertex y AI Studio.
+                    parts.append(types.Part.from_bytes(data=base64.b64decode(img_b64), mime_type="image/png"))
                 for f in msg.files:
                     data_b64 = f.get("data") if isinstance(f, dict) else None
                     mime = f.get("mime_type") if isinstance(f, dict) else None
-                    if not data_b64 or not mime:
-                        continue
-                    parts.append(types.Part.from_bytes(data=base64.b64decode(data_b64), mime_type=mime))
-                contents.append(types.Content(role=role, parts=parts))
+                    if data_b64 and mime:
+                        parts.append(types.Part.from_bytes(data=base64.b64decode(data_b64), mime_type=mime))
+                contents.append(types.Content(role=role, parts=parts or [types.Part.from_text(text="(sin contenido)")]))
             else:
-                contents.append(types.Content(
-                    role=role,
-                    parts=[types.Part.from_text(text=msg.content)],
-                ))
-
+                contents.append(types.Content(role=role, parts=[types.Part.from_text(text=msg.content or "")]))
+        system_instruction = "\n\n".join(system_parts) if system_parts else None
         return system_instruction, contents
+
+    def _gen_config(self, system_instruction, temperature, max_tokens):
+        from google.genai import types
+
+        return types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            system_instruction=system_instruction,
+        )
+
+    def _wrap_error(self, exc: Exception, model: str) -> ProviderError:
+        try:
+            from google.genai import errors as genai_errors
+        except Exception:
+            genai_errors = None
+        status = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+        if genai_errors is not None and isinstance(exc, genai_errors.APIError):
+            status = getattr(exc, "code", None)
+        if isinstance(status, int):
+            retriable = classify_http_status(status)
+        else:
+            status = None
+            retriable = isinstance(exc, (TimeoutError, ConnectionError))
+        return ProviderError(self.name, str(exc)[:300], model=model, status=status, retriable=retriable)
+
+    def _record_usage(self, response) -> None:
+        meta = getattr(response, "usage_metadata", None)
+        if meta:
+            self._last_usage = {
+                "input_tokens": getattr(meta, "prompt_token_count", 0) or 0,
+                "output_tokens": getattr(meta, "candidates_token_count", 0) or 0,
+                "thinking_tokens": getattr(meta, "thoughts_token_count", 0) or 0,
+            }
 
     async def generate(
         self,
@@ -124,77 +169,30 @@ class GoogleProvider(LLMProvider):
         stream: bool = True,
         **kwargs,
     ) -> AsyncGenerator[str, None]:
-        """Streaming generation con Gemini."""
-        if not self._client:
-            self._configure()
-
-        from google.genai import types
-        import asyncio
-
+        client = self._ensure_client()
         system_instruction, contents = self._build_contents(messages)
-
-        gen_config = types.GenerateContentConfig(
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-            system_instruction=system_instruction,
-        )
-
+        gen_config = self._gen_config(system_instruction, temperature, max_tokens)
+        self._last_usage = None
         try:
-            loop = asyncio.get_running_loop()
-            queue: asyncio.Queue[str | None] = asyncio.Queue()
-
-            def _sync_stream():
-                last_finish = None
+            stream_iter = await client.aio.models.generate_content_stream(
+                model=model, contents=contents, config=gen_config,
+            )
+            last_finish = None
+            async for chunk in stream_iter:
                 try:
-                    response = self._client.models.generate_content_stream(
-                        model=model,
-                        contents=contents,
-                        config=gen_config,
-                    )
-                    for chunk in response:
-                        try:
-                            if chunk.candidates and chunk.candidates[0].finish_reason is not None:
-                                last_finish = chunk.candidates[0].finish_reason
-                        except Exception:
-                            pass
-                        if chunk.text:
-                            loop.call_soon_threadsafe(queue.put_nowait, chunk.text)
-                    # Avisar si la generacion se trunco por limite de tokens.
-                    # Critico con modelos thinking: los tokens de pensamiento consumen
-                    # max_output_tokens y truncan la salida visible (incluidos [ACTION:...]).
-                    if last_finish is not None and "MAX_TOKENS" in str(last_finish):
-                        logger.warning(
-                            f"[google] Generacion TRUNCADA por MAX_TOKENS "
-                            f"(model={model}, max_output_tokens={max_tokens}). "
-                            f"Si es un modelo de razonamiento, sube max_tokens — el pensamiento "
-                            f"consume el presupuesto y corta la respuesta visible."
-                        )
-                except Exception as exc:
-                    loop.call_soon_threadsafe(queue.put_nowait, exc)
-                finally:
-                    loop.call_soon_threadsafe(queue.put_nowait, None)  # sentinel
-
-            loop.run_in_executor(None, _sync_stream)
-
-            while True:
-                item = await queue.get()
-                if item is None:
-                    break
-                if isinstance(item, Exception):
-                    raise item
-                yield item
-
-        except Exception as e:
-            logger.error(f"[google] Error en streaming: {e}")
-            error_msg = str(e)
-            if "RESOURCE_EXHAUSTED" in error_msg and self._backend == "ai_studio":
-                yield (
-                    f"\n\n[Error del provider Google: 429 RESOURCE_EXHAUSTED. "
-                    f"Los créditos de AI Studio se agotaron. "
-                    f"Cambia el backend a 'Vertex AI' en Settings para usar tus créditos de Google Cloud ($300 Free Trial).]"
-                )
-            else:
-                yield f"\n\n[Error del provider Google: {error_msg}]"
+                    if chunk.candidates and chunk.candidates[0].finish_reason is not None:
+                        last_finish = chunk.candidates[0].finish_reason
+                except Exception:
+                    pass
+                if getattr(chunk, "usage_metadata", None):
+                    self._record_usage(chunk)
+                if chunk.text:
+                    yield chunk.text
+            if last_finish is not None and "MAX_TOKENS" in str(last_finish):
+                logger.warning(f"[{self.name}] generación truncada por MAX_TOKENS (model={model})")
+        except Exception as exc:
+            logger.warning(f"[{self.name}] generate error: {exc}")
+            raise self._wrap_error(exc, model) from exc
 
     async def generate_complete(
         self,
@@ -204,83 +202,33 @@ class GoogleProvider(LLMProvider):
         max_tokens: int = 4096,
         **kwargs,
     ) -> LLMResponse:
-        """Non-streaming generation."""
-        if not self._client:
-            self._configure()
-
-        from google.genai import types
-
+        client = self._ensure_client()
         system_instruction, contents = self._build_contents(messages)
-
-        gen_config = types.GenerateContentConfig(
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-            system_instruction=system_instruction,
-        )
-
+        gen_config = self._gen_config(system_instruction, temperature, max_tokens)
         try:
-            import asyncio as _asyncio
-            _loop = _asyncio.get_running_loop()
-
-            def _sync_complete():
-                return self._client.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=gen_config,
-                )
-
-            response = await _loop.run_in_executor(None, _sync_complete)
-
-            text = response.text or ""
-            input_tokens = 0
-            output_tokens = 0
-
-            try:
-                if response.candidates and response.candidates[0].finish_reason is not None:
-                    fr = response.candidates[0].finish_reason
-                    if "MAX_TOKENS" in str(fr):
-                        logger.warning(
-                            f"[google] Generacion TRUNCADA por MAX_TOKENS "
-                            f"(model={model}, max_output_tokens={max_tokens}). "
-                            f"Si es un modelo de razonamiento, sube max_tokens."
-                        )
-            except Exception:
-                pass
-
-            if hasattr(response, "usage_metadata") and response.usage_metadata:
-                input_tokens = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
-                output_tokens = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
-
-            return LLMResponse(
-                text=text,
-                model=model,
-                provider="google",
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
+            response = await client.aio.models.generate_content(
+                model=model, contents=contents, config=gen_config,
             )
-
-        except Exception as e:
-            logger.error(f"[google] Error en generate_complete: {e}")
-            return LLMResponse(text=f"Error: {str(e)}", model=model, provider="google")
+            self._record_usage(response)
+            usage = self._last_usage or {}
+            return LLMResponse(
+                text=response.text or "",
+                model=model,
+                provider=self.name,
+                input_tokens=usage.get("input_tokens", 0),
+                output_tokens=usage.get("output_tokens", 0),
+                thinking_tokens=usage.get("thinking_tokens", 0),
+            )
+        except Exception as exc:
+            logger.warning(f"[{self.name}] generate_complete error: {exc}")
+            raise self._wrap_error(exc, model) from exc
 
     async def list_models(self) -> list[str]:
-        return config.get("providers", "google", "models", default=[])
+        configured = config.get("providers", self._config_section(), "models", default=None)
+        if configured:
+            return configured
+        spec = registry.get_spec(self.name)
+        return list(spec.default_models) if spec else []
 
     async def health_check(self) -> bool:
-        try:
-            if not self._client:
-                self._configure()
-            import asyncio as _asyncio
-            _loop = _asyncio.get_running_loop()
-            client = self._client
-
-            def _sync_ping():
-                client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents="ping",
-                )
-
-            await _loop.run_in_executor(None, _sync_ping)
-            return True
-        except Exception:
-            return False
+        return self.is_configured()

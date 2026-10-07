@@ -30,116 +30,49 @@ server:
 model_router:
   mode: "manual"            # auto | manual
   default_provider: "google"
-  default_model: "gemini-3.1-pro-preview"   # Agente principal (coordinador). Cambiable desde el selector.
+  default_model: "gemini-3.8-flash"   # Agente principal (coordinador). Cambiable desde el selector.
   policy:
     interactive_chat: "fast"
     critical_actions: "high_reasoning"
     private_data: "local_first"
     batch_tasks: "low_cost"
+  # Se prueban en orden si el proveedor elegido falla antes de responder.
+  # Los que no tienen credenciales se saltan solos.
   fallback_order:
     - "local:ollama"
-    - "openai:gpt-5-mini"
-    - "anthropic:claude-sonnet-4-6"
+    - "vertex:gemini-3.5-flash-lite"
+    - "google:gemini-3.5-flash-lite"
+    - "openai:gpt-6-luna"
+    - "anthropic:claude-haiku-4-5"
   temperature: 0.7
-  max_tokens: 4096
+  max_tokens: 8192          # Incluye los tokens de "pensamiento" en modelos con razonamiento
   hard_limits:
     max_cost_per_task_usd: 5.0
     max_latency_ms_interactive: 2500
 
 providers:
-  openai:
-    api_key_vault: "openai_api"
-    base_url: "https://api.openai.com/v1"
-    models:
-      - "gpt-5.4"              # Frontier: más capaz, razonamiento profesional (1.05M ctx)
-      - "gpt-5.4-pro"          # Versión pro de GPT-5.4, respuestas más precisas
-      - "gpt-5-mini"           # Rápido y eficiente en costo (1M ctx)
-      - "gpt-5-nano"           # El más rápido y barato de la serie GPT-5
-      - "gpt-4.1"              # Mejor modelo no-razonamiento (1M ctx)
-      - "gpt-5.3-codex"        # Más capaz para coding agéntico
-      - "gpt-5.2-codex"        # Coding optimizado para tareas largas
-  anthropic:
-    api_key_vault: "anthropic_api"
-    base_url: "https://api.anthropic.com/v1/messages"
-    models:
-      - "claude-opus-4-6"             # Más inteligente: agentes y coding (200K/1M ctx)
-      - "claude-sonnet-4-6"           # Mejor equilibrio velocidad/inteligencia (200K/1M ctx)
-      - "claude-haiku-4-5-20251001"   # El más rápido, inteligencia near-frontier (200K ctx)
+  # La lista completa de proveedores, URLs y modelos sugeridos vive en
+  # backend/providers/registry.py. Aquí solo van ajustes o reemplazos:
+  #   providers.<id>.base_url / api_key_vault / models / timeout_ms
+  # Las API keys NUNCA van aquí: se guardan en el keyring del sistema.
   google:
     api_key_vault: "google_api"
-    base_url: "https://generativelanguage.googleapis.com/v1beta"
-    backend: "ai_studio"        # ai_studio | vertex_ai — AI Studio usa API key; Vertex AI usa credenciales GCP y consume los créditos de Google Cloud
-    project_id: ""              # Solo para vertex_ai: ID del proyecto GCP (ej: "my-project-12345")
-    location: "global"          # Solo para vertex_ai: región GCP. Usa "global" para acceder a Gemini 3.x preview; "us-central1" solo tiene Gemini 2.5
-    credentials_file: ""        # Solo para vertex_ai: ruta opcional a service account JSON key (si vacío, usa Application Default Credentials)
-    models:
-      - "gemini-3.5-flash"                                      # NUEVO: Latest estable, Pro-level coding, ejecución agéntica paralela
-      - "gemini-3.1-pro-preview"                               # Inteligencia avanzada, coding agéntico (1M ctx)
-      - "gemini-3-flash-preview"                                # Rendimiento frontier a fracción del costo (1M ctx)
-      - "gemini-3.1-flash-lite"                                 # Flash-Lite estable: ultra rápido y económico (1M ctx)
-      - "gemini-3.1-flash-lite-preview"                         # Flash-Lite preview (1M ctx)
-      - "gemini-2.5-pro"                                        # Pro estable (1M ctx)
-      - "gemini-2.5-flash"                                      # Flash estable
-      - "gemini-2.5-flash-lite"                                 # Flash-Lite estable
-      - "gemini-2.5-computer-use-preview-10-2025"               # Computer use (legacy; Gemini 3 ya lo incluye)
-      - "gemini-2.5-flash-native-audio-preview-12-2025"         # Live API — audio nativo 2.5
-      - "gemini-3.1-flash-live-preview"                         # Live API — audio/video en tiempo real 3.1
-  xai:
-    api_key_vault: "xai_api"
-    base_url: "https://api.x.ai/v1"
-    models:
-      - "grok-4-1-fast-reasoning"      # Razonamiento rápido, multimodal (2M ctx)
-      - "grok-4-1-fast-non-reasoning"  # Sin razonamiento, rápido (2M ctx)
-      - "grok-4"                        # Razonamiento completo (256K ctx)
-      - "grok-code-fast-1"              # Optimizado para código (256K ctx)
-  deepseek:
-    api_key_vault: "deepseek_api"
-    base_url: "https://api.deepseek.com"
-    models:
-      - "deepseek-chat"       # DeepSeek V3.2 modo no-thinking (128K ctx)
-      - "deepseek-reasoner"   # DeepSeek V3.2 modo thinking (128K ctx)
-  groq:
-    api_key_vault: "groq_api"
-    base_url: "https://api.groq.com/openai/v1"
-    models:
-      - "llama-3.3-70b-versatile"   # Llama 3.3 70B (128K ctx)
-      - "llama-3.1-8b-instant"      # Llama 3.1 8B ultrarrápido
-      - "mixtral-8x7b-32768"        # Mixtral 8x7B (32K ctx)
-      - "gemma2-9b-it"              # Gemma 2 9B
-  mistral:
-    api_key_vault: "mistral_api"
-    base_url: "https://api.mistral.ai/v1"
-    models:
-      - "mistral-large-latest"      # Mistral Large (128K ctx)
-      - "mistral-medium-latest"     # Mistral Medium
-      - "mistral-small-latest"      # Mistral Small, rápido y económico
-      - "codestral-latest"          # Codestral, optimizado para código
-  perplexity:
-    api_key_vault: "perplexity_api"
-    base_url: "https://api.perplexity.ai"
-    models:
-      - "sonar-pro"                 # Sonar Pro: búsqueda avanzada
-      - "sonar"                     # Sonar: búsqueda rápida
-  openrouter:
-    api_key_vault: "openrouter_api"
-    base_url: "https://openrouter.ai/api/v1"
-    models:
-      - "openai/gpt-4o"             # Acceso federado a múltiples modelos
-      - "anthropic/claude-3.5-sonnet"
-      - "meta-llama/llama-3.1-405b-instruct"
-  cohere:
-    api_key_vault: "cohere_api"
-    base_url: "https://api.cohere.ai/v1"
-    models:
-      - "command-r-plus"            # Command R+: RAG y herramientas (128K ctx)
-      - "command-r"                 # Command R: rápido y eficiente
-      - "command-light"             # Command Light: el más rápido
+    backend: "ai_studio"        # ai_studio | vertex_ai (para Vertex usa mejor el proveedor "vertex")
+    project_id: ""
+    location: "global"
+    credentials_file: ""
+  vertex:
+    project_id: ""              # Vacío = se detecta con gcloud / Application Default Credentials
+    location: "global"          # Gemini 3.x vive en "global"
+    credentials_file: ""        # Opcional: JSON de cuenta de servicio
+  azure_openai:
+    base_url: ""                # https://<recurso>.openai.azure.com/openai/v1/
+  custom:
+    base_url: "http://localhost:8000/v1"
   ollama:
     base_url: "http://localhost:11434/v1"
-    models: []              # Se detectan automáticamente
   lmstudio:
     base_url: "http://localhost:1234/v1"
-    models: []              # Se detectan automáticamente
 
 vision:
   enabled: true             # Vision activa para el agente

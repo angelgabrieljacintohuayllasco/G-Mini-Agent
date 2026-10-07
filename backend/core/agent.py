@@ -1002,7 +1002,12 @@ class AgentCore:
         if is_analytical and not any(marker in text_lower for marker in split_markers):
             return False
 
-        plan = await self._build_delegation_plan(text)
+        try:
+            plan = await self._build_delegation_plan(text)
+        except Exception as exc:
+            # Sin plan de delegación el mensaje sigue por el loop principal.
+            logger.warning(f"Plan de delegación no disponible, se continúa sin delegar: {exc}")
+            return False
         subtasks = plan.get("subtasks", [])
         if len(subtasks) < 1:
             return False
@@ -2091,13 +2096,23 @@ class AgentCore:
                     metadata["original_model"] = opt_info.original_model
                     metadata["optimization_reason"] = opt_info.reason
 
+                real_usage = self._router.get_last_usage() or {}
+                has_real_usage = bool(real_usage.get("input_tokens") or real_usage.get("output_tokens"))
+                if real_usage.get("thinking_tokens"):
+                    metadata["thinking_tokens"] = real_usage["thinking_tokens"]
                 usage_event = await self._record_llm_usage(
                     provider=actual_provider,
                     model=actual_model,
                     source="agent_loop_stream",
-                    input_tokens=self._estimate_llm_messages_tokens(messages_to_send),
-                    output_tokens=count_tokens(full_response),
-                    estimated=True,
+                    input_tokens=(
+                        int(real_usage.get("input_tokens") or 0)
+                        if has_real_usage else self._estimate_llm_messages_tokens(messages_to_send)
+                    ),
+                    output_tokens=(
+                        int(real_usage.get("output_tokens") or 0) + int(real_usage.get("thinking_tokens") or 0)
+                        if has_real_usage else count_tokens(full_response)
+                    ),
+                    estimated=not has_real_usage,
                     mode_key=self._current_mode,
                     worker_id="main",
                     worker_kind="agent",

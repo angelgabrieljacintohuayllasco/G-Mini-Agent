@@ -1,7 +1,11 @@
 """
 G-Mini Agent - Router de proveedores LLM.
-Selecciona el provider correcto segun config, con fallback automatico.
-Integra cost-aware routing via CostOptimizer (Fase 9.4).
+
+Selecciona el provider según config, con fallback real: si el proveedor pedido
+falla ANTES de emitir el primer fragmento, se prueba el siguiente de
+`model_router.fallback_order`; si falla a mitad de un stream se propaga el error
+(no se puede "continuar" una respuesta con otro modelo sin duplicar texto).
+Integra cost-aware routing vía CostOptimizer.
 """
 
 from __future__ import annotations
@@ -13,26 +17,41 @@ import yaml
 from loguru import logger
 
 from backend.config import config
-from backend.providers.base import LLMProvider, LLMMessage, LLMResponse, LLMProviderUnavailableError
-from backend.providers.openai_compat import OpenAICompatibleProvider
+from backend.providers import registry
 from backend.providers.anthropic_provider import AnthropicProvider
-from backend.providers.google_provider import GoogleProvider
+from backend.providers.base import (
+    LLMMessage,
+    LLMProvider,
+    LLMProviderUnavailableError,
+    LLMResponse,
+    ProviderError,
+)
 from backend.providers.cohere_provider import CohereProvider
+from backend.providers.google_provider import GoogleProvider
+from backend.providers.openai_compat import OpenAICompatibleProvider
+
+# Compatibilidad: algunos módulos importaban este conjunto.
+OPENAI_COMPAT_PROVIDERS = set(registry.openai_compat_ids())
 
 
-# Providers que usan la API compatible OpenAI
-OPENAI_COMPAT_PROVIDERS = {
-    "openai", "xai", "deepseek", "ollama", "lmstudio",
-    "groq", "mistral", "perplexity", "openrouter",
-}
+def _build_provider(provider_id: str) -> LLMProvider | None:
+    spec = registry.get_spec(provider_id)
+    kind = spec.kind if spec else registry.KIND_OPENAI_COMPAT
+    if kind == registry.KIND_OPENAI_COMPAT:
+        return OpenAICompatibleProvider(provider_id)
+    if kind == registry.KIND_ANTHROPIC:
+        return AnthropicProvider()
+    if kind == registry.KIND_GOOGLE:
+        return GoogleProvider("google")
+    if kind == registry.KIND_VERTEX:
+        return GoogleProvider("vertex", force_backend="vertex_ai")
+    if kind == registry.KIND_COHERE:
+        return CohereProvider()
+    return None
 
 
 class ModelRouter:
-    """
-    Selector inteligente de proveedor LLM.
-    - Instancia el provider correcto segun el modelo seleccionado.
-    - Implementa fallback automatico si un provider falla.
-    """
+    """Selector de proveedor LLM con fallback automático."""
 
     def __init__(self):
         self._providers: dict[str, LLMProvider] = {}
@@ -49,7 +68,6 @@ class ModelRouter:
 
     # ── Catálogo models.yaml ──────────────────────────────────────
     def _get_models_catalog(self) -> dict:
-        """Lee y cachea data/models.yaml."""
         if self._models_catalog is not None:
             return self._models_catalog
         try:
@@ -61,71 +79,79 @@ class ModelRouter:
             self._models_catalog = {}
         return self._models_catalog
 
+    def invalidate_catalog(self) -> None:
+        self._models_catalog = None
+
     def _get_model_meta(self, provider_name: str, model: str) -> dict:
-        """Devuelve metadatos de un modelo desde el catálogo. Dict vacío si no existe."""
         catalog = self._get_models_catalog()
         provider_models = catalog.get("llm", {}).get(provider_name, {})
         if isinstance(provider_models, dict):
-            return provider_models.get(model, {}) if isinstance(provider_models.get(model), dict) else {}
+            meta = provider_models.get(model)
+            return meta if isinstance(meta, dict) else {}
         return {}
 
     def _validate_model_for_text_chat(self, provider_name: str, model: str) -> None:
-        """
-        Valida que el modelo sea compatible con generateContent (chat de texto).
-        Lanza ValueError si el modelo es live-only (api_method: 'live').
-        """
+        """Lanza ValueError si el modelo es solo de Live API (voz en tiempo real)."""
         meta = self._get_model_meta(provider_name, model)
-        if not meta:
-            return  # Modelo no está en catálogo con metadata → permitir (providers simples)
-        api_method = meta.get("api_method", "")
-        if api_method == "live":
+        if meta.get("api_method") == "live":
             display = meta.get("display_name", model)
             raise ValueError(
                 f"El modelo '{display}' solo funciona con la Live API (voz en tiempo real). "
-                f"No soporta chat de texto (generateContent). "
-                f"Cambia a otro modelo en Settings o usa el modo de voz."
+                f"No soporta chat de texto. Cambia a otro modelo en Ajustes o usa el modo de voz."
             )
 
+    # ── Registro de providers ─────────────────────────────────────
+    def _provider_ids(self) -> list[str]:
+        ids = list(registry.PROVIDERS)
+        # Secciones extra en config.providers con base_url (endpoints propios del usuario).
+        for name, section in (config.get("providers", default={}) or {}).items():
+            if name not in ids and isinstance(section, dict) and section.get("base_url"):
+                ids.append(name)
+        return ids
+
     def _initialize_providers(self) -> None:
-        """Crea instancias de todos los providers configurados."""
-        for name in OPENAI_COMPAT_PROVIDERS:
-            try:
-                self._providers[name] = OpenAICompatibleProvider(name)
-                logger.debug(f"Provider inicializado: {name}")
-            except Exception as exc:
-                logger.warning(f"No se pudo inicializar provider {name}: {exc}")
+        for name in self._provider_ids():
+            self._register(name)
 
+    def _register(self, name: str) -> None:
         try:
-            self._providers["anthropic"] = AnthropicProvider()
-            logger.debug("Provider inicializado: anthropic")
+            provider = _build_provider(name)
         except Exception as exc:
-            logger.warning(f"No se pudo inicializar provider anthropic: {exc}")
+            logger.warning(f"No se pudo inicializar provider {name}: {exc}")
+            self._providers.pop(name, None)
+            return
+        if provider is not None:
+            self._providers[name] = provider
+            logger.debug(f"Provider inicializado: {name}")
 
-        try:
-            self._providers["google"] = GoogleProvider()
-            logger.debug("Provider inicializado: google")
-        except Exception as exc:
-            logger.warning(f"No se pudo inicializar provider google: {exc}")
+    def reload_provider(self, name: str) -> bool:
+        """(Re)crea un provider tras guardar su key o cambiar su config."""
+        self._register(name)
+        return name in self._providers
 
-        try:
-            self._providers["cohere"] = CohereProvider()
-            logger.debug("Provider inicializado: cohere")
-        except Exception as exc:
-            logger.warning(f"No se pudo inicializar provider cohere: {exc}")
+    def reload_all(self) -> None:
+        self._providers.clear()
+        self._initialize_providers()
 
     def get_provider(self, provider_name: str | None = None) -> LLMProvider | None:
-        """Obtiene un provider por nombre. Si no se especifica, usa el default."""
         if provider_name is None:
-            provider_name = config.get("model_router", "default_provider", default="openai")
+            provider_name = self.get_current_provider_name()
         return self._providers.get(provider_name)
 
+    def is_available(self, provider_name: str) -> bool:
+        provider = self._providers.get(provider_name)
+        if provider is None:
+            return False
+        try:
+            return provider.is_configured()
+        except Exception:
+            return False
+
     def get_current_model(self) -> str:
-        """Retorna el modelo activo actual."""
-        return config.get("model_router", "default_model", default="gpt-5.4")
+        return config.get("model_router", "default_model", default="gemini-3.8-flash")
 
     def get_current_provider_name(self) -> str:
-        """Retorna el nombre del provider activo."""
-        return config.get("model_router", "default_provider", default="openai")
+        return config.get("model_router", "default_provider", default="google")
 
     def _set_last_generation_meta(
         self,
@@ -147,6 +173,11 @@ class ModelRouter:
     def get_last_generation_meta(self) -> dict[str, str | bool]:
         return dict(self._last_generation_meta)
 
+    def get_last_usage(self) -> dict[str, Any] | None:
+        provider = self._providers.get(str(self._last_generation_meta.get("provider") or ""))
+        return provider.last_usage() if provider else None
+
+    # ── Fallback ──────────────────────────────────────────────────
     async def _resolve_fallback_candidates(
         self,
         requested_provider: str,
@@ -154,21 +185,20 @@ class ModelRouter:
     ) -> list[tuple[str, str]]:
         candidates: list[tuple[str, str]] = []
         seen: set[tuple[str, str]] = {(requested_provider, requested_model)}
-        fallback_order = config.get("model_router", "fallback_order", default=[])
-        for fallback_entry in fallback_order:
-            parts = str(fallback_entry or "").split(":", 1)
+        for entry in config.get("model_router", "fallback_order", default=[]) or []:
+            parts = str(entry or "").split(":", 1)
             if not parts or not parts[0]:
                 continue
             if parts[0] == "local" and len(parts) > 1:
                 fb_provider = parts[1]
                 fb_model = await self._get_local_model(fb_provider)
                 if not fb_model:
-                    logger.debug(f"No hay modelos disponibles en {fb_provider}")
                     continue
             else:
                 fb_provider = parts[0]
                 fb_model = parts[1] if len(parts) > 1 else requested_model
-
+            if not self.is_available(fb_provider):
+                continue
             candidate = (fb_provider, fb_model)
             if candidate in seen:
                 continue
@@ -176,6 +206,18 @@ class ModelRouter:
             candidates.append(candidate)
         return candidates
 
+    async def _get_local_model(self, provider_name: str) -> str | None:
+        """Primer modelo de un provider local; None si no responde (nunca adivina)."""
+        provider = self.get_provider(provider_name)
+        if not provider:
+            return None
+        try:
+            models = await provider.list_models()
+            return models[0] if models else None
+        except Exception:
+            return None
+
+    # ── Generación ────────────────────────────────────────────────
     async def generate(
         self,
         messages: list[LLMMessage],
@@ -186,78 +228,51 @@ class ModelRouter:
         stream: bool = True,
         **kwargs,
     ) -> AsyncGenerator[str, None]:
-        """
-        Genera una respuesta con fallback automatico.
-        Si el provider principal falla, intenta con los del fallback_order.
-        """
-        if model is None:
-            model = self.get_current_model()
-        if provider_name is None:
-            provider_name = self.get_current_provider_name()
-
-        # Validar que el modelo soporte generateContent (no sea live-only)
+        """Streaming con fallback (solo si el fallo ocurre antes del primer fragmento)."""
+        model = model or self.get_current_model()
+        provider_name = provider_name or self.get_current_provider_name()
         self._validate_model_for_text_chat(provider_name, model)
 
-        provider = self.get_provider(provider_name)
-        if provider:
-            try:
-                self._set_last_generation_meta(
-                    provider=provider_name,
-                    model=model,
-                    requested_provider=provider_name,
-                    requested_model=model,
-                    fallback=False,
-                )
-                async for chunk in provider.generate(
-                    messages, model, temperature, max_tokens, stream, **kwargs
-                ):
-                    yield chunk
-                return
-            except Exception as exc:
-                logger.warning(f"Provider {provider_name} fallo: {exc}")
+        attempts: list[tuple[str, str]] = [(provider_name, model)]
+        attempts += await self._resolve_fallback_candidates(provider_name, model)
+        tried: list[str] = []
+        last_error = ""
 
-        for fb_provider, fb_model in await self._resolve_fallback_candidates(provider_name, model):
-            fb = self.get_provider(fb_provider)
-            if not fb:
+        for index, (prov_name, prov_model) in enumerate(attempts):
+            provider = self.get_provider(prov_name)
+            if provider is None:
+                last_error = f"provider '{prov_name}' no registrado"
                 continue
+            tried.append(prov_name)
+            self._set_last_generation_meta(
+                provider=prov_name,
+                model=prov_model,
+                requested_provider=provider_name,
+                requested_model=model,
+                fallback=index > 0,
+            )
+            yielded_any = False
             try:
-                logger.info(f"Fallback a {fb_provider}:{fb_model}")
-                self._set_last_generation_meta(
-                    provider=fb_provider,
-                    model=fb_model,
-                    requested_provider=provider_name,
-                    requested_model=model,
-                    fallback=True,
-                )
-                async for chunk in fb.generate(
-                    messages, fb_model, temperature, max_tokens, stream, **kwargs
+                if index > 0:
+                    logger.info(f"Fallback a {prov_name}:{prov_model}")
+                async for chunk in provider.generate(
+                    messages, prov_model, temperature, max_tokens, stream, **kwargs
                 ):
+                    yielded_any = True
                     yield chunk
                 return
-            except Exception as exc:
-                logger.warning(f"Fallback {fb_provider} tambien fallo: {exc}")
+            except ProviderError as exc:
+                if yielded_any:
+                    raise
+                last_error = str(exc)
+                logger.warning(f"Provider {prov_name} falló antes de responder: {exc}")
+            except Exception as exc:  # error inesperado del SDK: tratar como fallo del provider
+                if yielded_any:
+                    raise
+                last_error = str(exc)
+                logger.warning(f"Provider {prov_name} falló: {exc}")
 
-        providers_tried = [provider_name] + [
-            fb_p for fb_p, _ in await self._resolve_fallback_candidates(provider_name, model)
-        ]
-        raise LLMProviderUnavailableError(
-            providers_tried=providers_tried,
-            last_error="Verifica tus API keys en Settings.",
-        )
-
-    async def _get_local_model(self, provider_name: str) -> str | None:
-        """Obtiene el primer modelo disponible de un provider local."""
-        provider = self.get_provider(provider_name)
-        if not provider:
-            return None
-        try:
-            models = await provider.list_models()
-            if models:
-                return models[0]
-        except Exception:
-            pass
-        defaults = {"ollama": "llama3", "lmstudio": "default"}
-        return defaults.get(provider_name)
+        raise LLMProviderUnavailableError(providers_tried=tried, last_error=last_error)
 
     async def generate_complete(
         self,
@@ -266,59 +281,40 @@ class ModelRouter:
         provider_name: str | None = None,
         **kwargs,
     ) -> LLMResponse:
-        """Non-streaming con fallback."""
-        if model is None:
-            model = self.get_current_model()
-        if provider_name is None:
-            provider_name = self.get_current_provider_name()
-
-        # Validar que el modelo soporte generateContent (no sea live-only)
+        """Sin streaming, con fallback."""
+        model = model or self.get_current_model()
+        provider_name = provider_name or self.get_current_provider_name()
         self._validate_model_for_text_chat(provider_name, model)
 
-        provider = self.get_provider(provider_name)
-        if provider:
-            try:
-                response = await provider.generate_complete(messages, model, **kwargs)
-                self._set_last_generation_meta(
-                    provider=response.provider or provider_name,
-                    model=response.model or model,
-                    requested_provider=provider_name,
-                    requested_model=model,
-                    fallback=False,
-                )
-                return response
-            except Exception as exc:
-                logger.warning(f"Provider {provider_name} fallo: {exc}")
+        attempts: list[tuple[str, str]] = [(provider_name, model)]
+        attempts += await self._resolve_fallback_candidates(provider_name, model)
+        tried: list[str] = []
+        last_error = ""
 
-        for fb_provider, fb_model in await self._resolve_fallback_candidates(provider_name, model):
-            fb = self.get_provider(fb_provider)
-            if not fb:
+        for index, (prov_name, prov_model) in enumerate(attempts):
+            provider = self.get_provider(prov_name)
+            if provider is None:
+                last_error = f"provider '{prov_name}' no registrado"
                 continue
+            tried.append(prov_name)
             try:
-                logger.info(f"Fallback complete a {fb_provider}:{fb_model}")
-                response = await fb.generate_complete(messages, fb_model, **kwargs)
+                response = await provider.generate_complete(messages, prov_model, **kwargs)
                 self._set_last_generation_meta(
-                    provider=response.provider or fb_provider,
-                    model=response.model or fb_model,
+                    provider=response.provider or prov_name,
+                    model=response.model or prov_model,
                     requested_provider=provider_name,
                     requested_model=model,
-                    fallback=True,
+                    fallback=index > 0,
                 )
                 return response
             except Exception as exc:
-                logger.warning(f"Fallback complete {fb_provider} tambien fallo: {exc}")
+                last_error = str(exc)
+                logger.warning(f"Provider {prov_name} falló (complete): {exc}")
 
-        providers_tried = [provider_name or "none"] + [
-            fb_p for fb_p, _ in await self._resolve_fallback_candidates(provider_name or "none", model)
-        ]
-        raise LLMProviderUnavailableError(
-            providers_tried=providers_tried,
-            last_error="Ningun provider respondio tras fallback.",
-        )
+        raise LLMProviderUnavailableError(providers_tried=tried, last_error=last_error)
 
     async def list_all_models(self) -> dict[str, list[str]]:
-        """Lista todos los modelos de todos los providers."""
-        result = {}
+        result: dict[str, list[str]] = {}
         for name, provider in self._providers.items():
             try:
                 models = await provider.list_models()
@@ -328,10 +324,13 @@ class ModelRouter:
                 pass
         return result
 
-    # ------------------------------------------------------------------
-    # Cost-aware routing (Fase 9.4)
-    # ------------------------------------------------------------------
+    async def list_models(self, provider_name: str) -> list[str]:
+        provider = self.get_provider(provider_name)
+        if provider is None:
+            return []
+        return await provider.list_models()
 
+    # ── Cost-aware routing ────────────────────────────────────────
     async def generate_cost_aware(
         self,
         messages: list[LLMMessage],
@@ -347,24 +346,14 @@ class ModelRouter:
         estimated_input_tokens: int = 0,
         **kwargs,
     ) -> AsyncGenerator[str, None]:
-        """
-        Genera una respuesta aplicando optimizacion de costos automatica.
-        Evalua presion presupuestaria y decide si conviene cambiar de modelo.
-        Retorna el mismo flujo que generate(), pero puede usar un modelo distinto.
-        """
-        if model is None:
-            model = self.get_current_model()
-        if provider_name is None:
-            provider_name = self.get_current_provider_name()
-
-        final_provider = provider_name
-        final_model = model
+        model = model or self.get_current_model()
+        provider_name = provider_name or self.get_current_provider_name()
+        final_provider, final_model = provider_name, model
         optimization: Any = None
-
         try:
             from backend.core.cost_optimizer import get_cost_optimizer
-            optimizer = get_cost_optimizer()
-            optimization = await optimizer.resolve_model(
+
+            optimization = await get_cost_optimizer().resolve_model(
                 requested_provider=provider_name,
                 requested_model=model,
                 session_id=session_id,
@@ -372,17 +361,14 @@ class ModelRouter:
                 source=source,
                 estimated_input_tokens=estimated_input_tokens,
             )
-            if optimization.switched:
-                final_provider = optimization.provider
-                final_model = optimization.model
+            if optimization.switched and self.is_available(optimization.provider):
+                final_provider, final_model = optimization.provider, optimization.model
                 logger.info(
                     f"CostOptimizer switch: {provider_name}:{model} → "
                     f"{final_provider}:{final_model} ({optimization.reason})"
                 )
         except Exception as exc:
             logger.debug(f"CostOptimizer no disponible, usando modelo original: {exc}")
-
-        # Almacenar la info de optimizacion en los metadatos de la generacion
         self._last_optimization = optimization
 
         async for chunk in self.generate(
@@ -408,19 +394,13 @@ class ModelRouter:
         estimated_input_tokens: int = 0,
         **kwargs,
     ) -> LLMResponse:
-        """Non-streaming cost-aware generation."""
-        if model is None:
-            model = self.get_current_model()
-        if provider_name is None:
-            provider_name = self.get_current_provider_name()
-
-        final_provider = provider_name
-        final_model = model
-
+        model = model or self.get_current_model()
+        provider_name = provider_name or self.get_current_provider_name()
+        final_provider, final_model = provider_name, model
         try:
             from backend.core.cost_optimizer import get_cost_optimizer
-            optimizer = get_cost_optimizer()
-            optimization = await optimizer.resolve_model(
+
+            optimization = await get_cost_optimizer().resolve_model(
                 requested_provider=provider_name,
                 requested_model=model,
                 session_id=session_id,
@@ -428,13 +408,8 @@ class ModelRouter:
                 source=source,
                 estimated_input_tokens=estimated_input_tokens,
             )
-            if optimization.switched:
-                final_provider = optimization.provider
-                final_model = optimization.model
-                logger.info(
-                    f"CostOptimizer switch (complete): {provider_name}:{model} → "
-                    f"{final_provider}:{final_model} ({optimization.reason})"
-                )
+            if optimization.switched and self.is_available(optimization.provider):
+                final_provider, final_model = optimization.provider, optimization.model
             self._last_optimization = optimization
         except Exception as exc:
             logger.debug(f"CostOptimizer (complete) no disponible: {exc}")
@@ -444,5 +419,4 @@ class ModelRouter:
         )
 
     def get_last_optimization(self) -> Any:
-        """Retorna la ultima decision de optimizacion, o None."""
         return getattr(self, "_last_optimization", None)

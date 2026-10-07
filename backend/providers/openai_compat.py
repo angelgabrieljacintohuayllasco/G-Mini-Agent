@@ -1,67 +1,124 @@
 """
 G-Mini Agent — Provider compatible con API OpenAI.
-Un solo adaptador para: OpenAI, xAI (Grok), DeepSeek, Ollama, LM Studio.
-Todos usan el mismo protocolo de API.
+
+Un solo adaptador para todos los servicios con API compatible OpenAI (OpenAI,
+xAI, DeepSeek, Groq, Mistral, Perplexity, OpenRouter, Together, Fireworks,
+Cerebras, SambaNova, Moonshot, DashScope, Zhipu, MiniMax, NVIDIA, Hugging Face,
+GitHub Models, Azure OpenAI, Ollama, LM Studio, servidores propios…).
 """
 
 from __future__ import annotations
 
-from typing import AsyncGenerator
+import base64
+from typing import Any, AsyncGenerator
 
+import openai
 from loguru import logger
 from openai import AsyncOpenAI
 
-from backend.providers.base import LLMProvider, LLMMessage, LLMResponse
 from backend.config import config
+from backend.providers import registry
+from backend.providers.base import LLMMessage, LLMProvider, LLMResponse, ProviderError, classify_http_status
+
+# mime por magic bytes (OpenAI rechaza data URLs con el tipo equivocado).
+_IMAGE_SIGNATURES = (
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
+
+def _sniff_image_mime(b64: str) -> str:
+    try:
+        head = base64.b64decode(b64[:64] + "==", validate=False)
+    except Exception:
+        return "image/png"
+    for sig, mime in _IMAGE_SIGNATURES:
+        if head.startswith(sig):
+            return mime
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/png"
 
 
 class OpenAICompatibleProvider(LLMProvider):
-    """
-    Provider unificado para todos los servicios con API compatible OpenAI.
-    Cubre 5 de 7 proveedores con un solo adaptador.
-    """
+    """Provider unificado para servicios con API compatible OpenAI."""
 
     def __init__(self, provider_name: str):
         self.name = provider_name
         self._client: AsyncOpenAI | None = None
         self._base_url: str = ""
-        self._configure()
+        self._has_key: bool = False
+        self._local: bool = False
+        self._last_usage: dict[str, Any] | None = None
+        spec = registry.get_spec(provider_name)
+        self._local = bool(spec and spec.local)
+        # El cliente se crea en el primer uso: construir ~25 clientes HTTP y leer
+        # el keyring de cada uno al arrancar costaba más de 10 s.
 
     def _configure(self) -> None:
-        """Lee la configuración del provider desde config.yaml."""
-        pconf = config.get("providers", self.name, default={})
-        self._base_url = pconf.get("base_url", "")
+        spec = registry.get_spec(self.name)
+        overrides = config.get("providers", self.name, default={}) or {}
+        settings = registry.resolve_provider_settings(self.name, overrides)
+        self._base_url = settings["base_url"]
+        self._local = bool(spec and spec.local)
 
-        # Obtener API key del keyring (solo para providers cloud)
-        api_key = "not-needed"  # Para locales (Ollama/LM Studio)
-        vault = pconf.get("api_key_vault", "")
+        api_key = "not-needed"
+        vault = settings.get("api_key_vault", "")
         if vault:
-            stored_key = config.get_api_key(vault)
-            if stored_key:
-                api_key = stored_key
+            stored = config.get_api_key(vault)
+            if stored:
+                api_key = stored
+        self._has_key = api_key != "not-needed"
 
         self._client = AsyncOpenAI(
             api_key=api_key,
-            base_url=self._base_url,
-            timeout=60.0,
+            base_url=self._base_url or None,
+            timeout=90.0,
+            max_retries=0 if self._local else 2,
         )
 
+    def _ensure_client(self) -> AsyncOpenAI:
+        if self._client is None:
+            self._configure()
+        return self._client
+
+    def is_configured(self) -> bool:
+        if self._local:
+            return True
+        if self._client is None:
+            overrides = config.get("providers", self.name, default={}) or {}
+            vault = registry.resolve_provider_settings(self.name, overrides).get("api_key_vault", "")
+            return bool(vault and config.get_api_key(vault))
+        return self._has_key
+
     def _build_messages(self, messages: list[LLMMessage]) -> list[dict]:
-        """Convierte LLMMessage a formato OpenAI API."""
         result = []
         for msg in messages:
             if msg.images:
-                # Multimodal: content es una lista de partes
-                content = [{"type": "text", "text": msg.content}]
+                content: list[dict[str, Any]] = []
+                if msg.content:
+                    content.append({"type": "text", "text": msg.content})
                 for img_b64 in msg.images:
+                    mime = _sniff_image_mime(img_b64)
                     content.append({
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                        "image_url": {"url": f"data:{mime};base64,{img_b64}"},
                     })
-                result.append({"role": msg.role, "content": content})
+                result.append({"role": msg.role, "content": content or msg.content})
             else:
                 result.append({"role": msg.role, "content": msg.content})
         return result
+
+    def _wrap_error(self, exc: Exception, model: str) -> ProviderError:
+        if isinstance(exc, openai.APIStatusError):
+            status = getattr(exc, "status_code", None)
+            return ProviderError(self.name, str(exc)[:300], model=model, status=status,
+                                 retriable=classify_http_status(status))
+        if isinstance(exc, (openai.APITimeoutError, openai.APIConnectionError)):
+            return ProviderError(self.name, str(exc)[:300], model=model, retriable=True)
+        return ProviderError(self.name, str(exc)[:300], model=model, retriable=False)
 
     async def generate(
         self,
@@ -72,29 +129,27 @@ class OpenAICompatibleProvider(LLMProvider):
         stream: bool = True,
         **kwargs,
     ) -> AsyncGenerator[str, None]:
-        """Streaming generation."""
-        if not self._client:
-            self._configure()
-
+        self._ensure_client()
         api_messages = self._build_messages(messages)
-
+        params = registry.openai_chat_params(self.name, model, temperature=temperature, max_tokens=max_tokens, stream=True)
+        params.update(kwargs)
+        self._last_usage = None
         try:
             response = await self._client.chat.completions.create(
-                model=model,
-                messages=api_messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=True,
-                **kwargs,
+                model=model, messages=api_messages, stream=True,
+                stream_options={"include_usage": True}, **params,
             )
-
             async for chunk in response:
-                if chunk.choices and chunk.choices[0].delta.content:
+                if getattr(chunk, "usage", None):
+                    self._last_usage = {
+                        "input_tokens": chunk.usage.prompt_tokens or 0,
+                        "output_tokens": chunk.usage.completion_tokens or 0,
+                    }
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
-
-        except Exception as e:
-            logger.error(f"[{self.name}] Error en streaming: {e}")
-            yield f"\n\n[Error del provider {self.name}: {str(e)}]"
+        except Exception as exc:
+            logger.warning(f"[{self.name}] generate error: {exc}")
+            raise self._wrap_error(exc, model) from exc
 
     async def generate_complete(
         self,
@@ -104,25 +159,20 @@ class OpenAICompatibleProvider(LLMProvider):
         max_tokens: int = 4096,
         **kwargs,
     ) -> LLMResponse:
-        """Non-streaming generation."""
-        if not self._client:
-            self._configure()
-
+        self._ensure_client()
         api_messages = self._build_messages(messages)
-
+        params = registry.openai_chat_params(self.name, model, temperature=temperature, max_tokens=max_tokens, stream=False)
+        params.update(kwargs)
         try:
             response = await self._client.chat.completions.create(
-                model=model,
-                messages=api_messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=False,
-                **kwargs,
+                model=model, messages=api_messages, stream=False, **params,
             )
-
             choice = response.choices[0]
             usage = response.usage
-
+            self._last_usage = {
+                "input_tokens": usage.prompt_tokens if usage else 0,
+                "output_tokens": usage.completion_tokens if usage else 0,
+            }
             return LLMResponse(
                 text=choice.message.content or "",
                 model=model,
@@ -131,41 +181,29 @@ class OpenAICompatibleProvider(LLMProvider):
                 output_tokens=usage.completion_tokens if usage else 0,
                 finish_reason=choice.finish_reason or "",
             )
-
-        except Exception as e:
-            logger.error(f"[{self.name}] Error en generate_complete: {e}")
-            return LLMResponse(
-                text=f"Error: {str(e)}",
-                model=model,
-                provider=self.name,
-            )
+        except Exception as exc:
+            logger.warning(f"[{self.name}] generate_complete error: {exc}")
+            raise self._wrap_error(exc, model) from exc
 
     async def list_models(self) -> list[str]:
-        """Lista los modelos del provider."""
-        # Para cloud: usar los de la config
-        configured = config.get("providers", self.name, "models", default=[])
+        configured = config.get("providers", self.name, "models", default=None)
+        if configured is None:
+            spec = registry.get_spec(self.name)
+            configured = list(spec.default_models) if spec else []
         if configured:
             return configured
-
-        # Para locales: intentar descubrir via API
-        if self.name in ("ollama", "lmstudio"):
+        spec = registry.get_spec(self.name)
+        if self._local or (spec and spec.supports_model_listing):
             try:
-                if not self._client:
-                    self._configure()
-                models = await self._client.models.list()
+                models = await self._ensure_client().models.list()
                 return [m.id for m in models.data]
-            except Exception as e:
-                logger.debug(f"[{self.name}] No se pudieron listar modelos: {e}")
-                return []
-
-        return configured
+            except Exception as exc:
+                logger.debug(f"[{self.name}] no se pudieron listar modelos: {exc}")
+        return []
 
     async def health_check(self) -> bool:
-        """Verifica si el provider está disponible."""
         try:
-            if not self._client:
-                self._configure()
-            models = await self._client.models.list()
+            await self._ensure_client().models.list()
             return True
         except Exception:
             return False

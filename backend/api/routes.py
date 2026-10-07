@@ -1198,77 +1198,76 @@ async def reset_prompt(prompt_key: str):
 
 # ── API Keys ─────────────────────────────────────────────────────
 
+# Claves que no son de proveedores LLM pero se guardan por la misma ruta.
+_EXTRA_KEY_VAULTS = {
+    "elevenlabs": "elevenlabs_api",
+    "virustotal": "virustotal_api",
+}
+
+
+def _vault_for(provider: str) -> str:
+    """Nombre de la credencial en el keyring para un proveedor (registry + config)."""
+    from backend.providers import registry
+
+    if provider in _EXTRA_KEY_VAULTS:
+        return _EXTRA_KEY_VAULTS[provider]
+    overrides = config.get("providers", provider, default={}) or {}
+    if registry.get_spec(provider) is None and not overrides:
+        return ""
+    return registry.resolve_provider_settings(provider, overrides).get("api_key_vault", "")
+
+
+def _agent_router():
+    from backend.api.websocket_handler import _agent_core
+
+    return _agent_core._router if _agent_core and _agent_core._router else None
+
+
 @router.post("/api-keys")
 async def set_api_key(req: APIKeySetRequest):
-    """Guarda una API key en el OS keyring y reinicializa el provider."""
-    vault_map = {
-        "openai": "openai_api",
-        "anthropic": "anthropic_api",
-        "google": "google_api",
-        "xai": "xai_api",
-        "deepseek": "deepseek_api",
-        "elevenlabs": "elevenlabs_api",
-        "virustotal": "virustotal_api",
-    }
-    vault = vault_map.get(req.provider)
+    """Guarda (o borra, si viene vacía) una API key en el keyring y recrea el provider."""
+    vault = _vault_for(req.provider)
     if not vault:
-        raise HTTPException(status_code=400, detail=f"Provider '{req.provider}' no reconocido")
+        raise HTTPException(status_code=400, detail=f"Provider '{req.provider}' no reconocido o no usa API key")
 
-    config.set_api_key(vault, req.api_key)
-    logger.info(
-        "API key saved: "
-        f"provider={req.provider}, "
-        f"vault={vault}, "
-        f"configured={bool(str(req.api_key or '').strip())}, "
-        f"voice_tts_primary_before_reload={config.get('voice', 'tts_primary', default=DEFAULT_TTS_ENGINE)}"
-    )
+    value = str(req.api_key or "").strip()
+    if value:
+        config.set_api_key(vault, value)
+    else:
+        config.delete_api_key(vault)
+    logger.info(f"API key {'guardada' if value else 'eliminada'}: provider={req.provider}, vault={vault}")
 
-    # Reinicializar el provider con la nueva key
     try:
+        router_obj = _agent_router()
+        if router_obj is not None and req.provider not in _EXTRA_KEY_VAULTS:
+            router_obj.reload_provider(req.provider)
         from backend.api.websocket_handler import _agent_core
-        if _agent_core and _agent_core._router:
-            provider_obj = _agent_core._router.get_provider(req.provider)
-            if provider_obj and hasattr(provider_obj, '_configure'):
-                provider_obj._configure()
-        if _agent_core and req.provider in {"google", "elevenlabs"}:
-            logger.info(
-                "Voice reload requested after API key save: "
-                f"provider={req.provider}, "
-                f"voice_tts_primary_before_reload={config.get('voice', 'tts_primary', default=DEFAULT_TTS_ENGINE)}"
-            )
+
+        if _agent_core and req.provider in {"google", "elevenlabs", "openai"}:
             runtime = await _agent_core.reload_voice_configuration(
                 reload_stt=False,
                 origin=f"api-key:{req.provider}",
             )
-            logger.info(
-                "Voice reload completed after API key save: "
-                f"provider={req.provider}, "
-                f"runtime={_summarize_voice_runtime(runtime)}"
-            )
-    except Exception:
-        pass  # Non-blocking: el provider se reconfigurará en el siguiente uso
+            logger.info(f"Voz recargada tras guardar key: {_summarize_voice_runtime(runtime)}")
+    except Exception as exc:
+        logger.warning(f"No se pudo recargar el provider {req.provider}: {exc}")
 
-    return {"success": True, "provider": req.provider}
+    return {"success": True, "provider": req.provider, "configured": bool(value)}
 
 
 @router.get("/api-keys/status")
 async def api_keys_status():
-    """Verifica qué API keys están configuradas (sin revelar valores)."""
-    vaults = {
-        "openai": "openai_api",
-        "anthropic": "anthropic_api",
-        "google": "google_api",
-        "xai": "xai_api",
-        "deepseek": "deepseek_api",
-        "elevenlabs": "elevenlabs_api",
-        "virustotal": "virustotal_api",
-    }
+    """Qué API keys están configuradas (sin revelar valores)."""
+    from backend.providers import registry
+
+    providers = [pid for pid, spec in registry.PROVIDERS.items() if spec.api_key_vault and not spec.local]
     status = {}
-    for provider, vault in vaults.items():
-        key = config.get_api_key(vault)
+    for provider in [*providers, *_EXTRA_KEY_VAULTS]:
+        vault = _vault_for(provider)
+        key = config.get_api_key(vault) if vault else None
         status[provider] = {
-            "configured": key is not None and len(key) > 0,
-            "masked": f"...{key[-4:]}" if key and len(key) > 4 else None,
+            "configured": bool(key),
+            "masked": f"...{key[-4:]}" if key and len(key) > 8 else ("***" if key else None),
         }
     return status
 
@@ -1290,53 +1289,102 @@ async def set_active_model(data: dict):
         "model": config.get("model_router", "default_model"),
     }
 
+
+@router.get("/providers")
+async def list_providers():
+    """Todos los proveedores conocidos, con su estado de configuración."""
+    from backend.providers import registry
+
+    router_obj = _agent_router()
+    items = []
+    for spec in registry.PROVIDERS.values():
+        data = spec.to_dict()
+        data["configured"] = bool(router_obj.is_available(spec.id)) if router_obj else False
+        data["registered"] = bool(router_obj and router_obj.get_provider(spec.id))
+        items.append(data)
+    return {"providers": items, "categories": registry.CATEGORY_LABELS}
+
+
+@router.get("/providers/vertex/status")
+async def vertex_status():
+    """Diagnóstico de credenciales de Google Cloud para Vertex AI (no expone secretos)."""
+    from backend.providers import gcp_auth
+
+    section = config.get("providers", "vertex", default={}) or {}
+    return await asyncio.to_thread(gcp_auth.auth_status, section)
+
+
+@router.put("/providers/vertex/config")
+async def set_vertex_config(data: dict):
+    """Proyecto, ubicación y archivo de credenciales para el proveedor Vertex AI."""
+    for key in ("project_id", "location", "credentials_file"):
+        if key in data and data[key] is not None:
+            config.set("providers", "vertex", key, value=str(data[key]).strip())
+    router_obj = _agent_router()
+    if router_obj is not None:
+        router_obj.reload_provider("vertex")
+    from backend.providers import gcp_auth
+
+    return await asyncio.to_thread(gcp_auth.auth_status, config.get("providers", "vertex", default={}) or {})
+
+
+@router.get("/providers/{provider_id}/models")
+async def list_provider_models(provider_id: str):
+    """Modelos de un proveedor: catálogo/config o listado en vivo (GET /models) si lo soporta."""
+    router_obj = _agent_router()
+    if router_obj is None or router_obj.get_provider(provider_id) is None:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' no disponible")
+    try:
+        models = await asyncio.wait_for(router_obj.list_models(provider_id), timeout=20)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="El proveedor tardó demasiado en listar modelos")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"No se pudieron listar modelos: {exc}")
+    return {"provider": provider_id, "models": models}
+
+
+@router.post("/providers/{provider_id}/reload")
+async def reload_provider(provider_id: str):
+    router_obj = _agent_router()
+    if router_obj is None:
+        raise HTTPException(status_code=503, detail="Agente no inicializado")
+    ok = router_obj.reload_provider(provider_id)
+    return {"success": ok, "configured": router_obj.is_available(provider_id)}
+
+
 @router.get("/providers/google/backend")
 async def get_google_backend_config():
-    """Devuelve la configuración del backend de Google (AI Studio vs Vertex AI)."""
+    """Configuración del backend de Google (AI Studio vs Vertex AI)."""
     return {
         "backend": config.get("providers", "google", "backend", default="ai_studio"),
         "project_id": config.get("providers", "google", "project_id", default=""),
-        "location": config.get("providers", "google", "location", default="us-central1"),
+        "location": config.get("providers", "google", "location", default="global"),
         "credentials_file": config.get("providers", "google", "credentials_file", default=""),
     }
 
 
 @router.put("/providers/google/backend")
 async def set_google_backend_config(data: dict):
-    """Cambia el backend de Google y reconfigura el provider."""
-    from backend.api.websocket_handler import _agent_core
-
+    """Cambia el backend de Google y recrea el provider."""
     backend = data.get("backend")
-    project_id = data.get("project_id")
-    location = data.get("location")
-    credentials_file = data.get("credentials_file")
-
     if backend is not None:
         if backend not in ("ai_studio", "vertex_ai"):
             raise HTTPException(status_code=400, detail="backend debe ser 'ai_studio' o 'vertex_ai'")
         config.set("providers", "google", "backend", value=backend)
-    if project_id is not None:
-        config.set("providers", "google", "project_id", value=project_id)
-    if location is not None:
-        config.set("providers", "google", "location", value=location)
-    if credentials_file is not None:
-        config.set("providers", "google", "credentials_file", value=credentials_file)
+    for key in ("project_id", "location", "credentials_file"):
+        if data.get(key) is not None:
+            config.set("providers", "google", key, value=str(data[key]).strip())
 
     reconfigure_error = None
-    try:
-        if _agent_core and _agent_core._router:
-            provider_obj = _agent_core._router.get_provider("google")
-            if provider_obj and hasattr(provider_obj, '_configure'):
-                provider_obj._configure()
-    except Exception as exc:
-        reconfigure_error = str(exc)
-        logger.warning(f"Error reconfigurando Google provider: {exc}")
+    router_obj = _agent_router()
+    if router_obj is not None and not router_obj.reload_provider("google"):
+        reconfigure_error = "No se pudo crear el provider de Google"
 
     return {
         "success": reconfigure_error is None,
         "backend": config.get("providers", "google", "backend", default="ai_studio"),
         "project_id": config.get("providers", "google", "project_id", default=""),
-        "location": config.get("providers", "google", "location", default="us-central1"),
+        "location": config.get("providers", "google", "location", default="global"),
         "credentials_file": config.get("providers", "google", "credentials_file", default=""),
         "error": reconfigure_error,
     }
