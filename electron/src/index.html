@@ -530,6 +530,7 @@
                 <button class="settings-nav-item active" type="button" role="tab" id="settings-tab-general" aria-controls="settings-page-general" aria-selected="true" data-page="general"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-sliders-horizontal"></use></svg>General</button>
                 <button class="settings-nav-item" type="button" role="tab" id="settings-tab-personality" aria-controls="settings-page-personality" aria-selected="false" tabindex="-1" data-page="personality"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-bot"></use></svg>Personalidad</button>
                 <button class="settings-nav-item" type="button" role="tab" id="settings-tab-memory" aria-controls="settings-page-memory" aria-selected="false" tabindex="-1" data-page="memory"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-brain"></use></svg>Memoria</button>
+                <button class="settings-nav-item" type="button" role="tab" id="settings-tab-skills" aria-controls="settings-page-skills" aria-selected="false" tabindex="-1" data-page="skills"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-wrench"></use></svg>Skills</button>
                 <button class="settings-nav-item" type="button" role="tab" id="settings-tab-model" aria-controls="settings-page-model" aria-selected="false" tabindex="-1" data-page="model"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-cpu"></use></svg>Modelo IA</button>
                 <button class="settings-nav-item" type="button" role="tab" id="settings-tab-voice" aria-controls="settings-page-voice" aria-selected="false" tabindex="-1" data-page="voice"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-mic"></use></svg>Voz</button>
                 <button class="settings-nav-item" type="button" role="tab" id="settings-tab-prompts" aria-controls="settings-page-prompts" aria-selected="false" tabindex="-1" data-page="prompts"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-file-text"></use></svg>Prompts</button>
@@ -799,6 +800,42 @@
                             <button id="btn-memory-forget-all" class="btn-secondary btn-danger" type="button" disabled><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-trash-2"></use></svg>Olvidar todo</button>
                         </div>
                         <div id="memory-forget-meta" class="setting-help-text" role="status"></div>
+                    </div>
+                </div>
+
+                <!-- ═══ SKILLS ═══ -->
+                <div class="settings-page" data-page="skills" id="settings-page-skills" role="tabpanel" aria-labelledby="settings-tab-skills">
+                    <h3 class="settings-page-title">Skills</h3>
+                    <p class="settings-page-lead">Instrucciones especializadas que el agente carga cuando la tarea lo pide: incluidas con la app, instaladas desde GitHub o escritas por él mismo.</p>
+
+                    <div class="setting-group">
+                        <label for="skills-install-source">Instalar skills</label>
+                        <div class="skills-install-row">
+                            <input id="skills-install-source" class="setting-input" type="text" placeholder="owner/repo, URL de GitHub o carpeta local" autocomplete="off" spellcheck="false" aria-describedby="skills-install-status">
+                            <button id="btn-skills-install" class="btn-primary-accent" type="button"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-download"></use></svg>Instalar</button>
+                        </div>
+                        <div id="skills-install-status" class="setting-help-text" role="status"></div>
+                        <span class="setting-subhead">Fuentes sugeridas</span>
+                        <div id="skills-suggested" class="skill-sources"></div>
+                    </div>
+
+                    <div class="setting-group">
+                        <div class="skills-head-row">
+                            <span class="setting-group-title">Skills disponibles</span>
+                            <button id="btn-skills-curator" class="btn-secondary btn-panel-action" type="button" title="Archiva las skills aprendidas que no se usan y une las duplicadas"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-refresh-cw"></use></svg>Pasar el curador</button>
+                        </div>
+                        <div class="sidebar-search skills-search" role="search">
+                            <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-search"></use></svg>
+                            <input id="skills-search" type="text" placeholder="Filtrar por nombre o descripción" aria-label="Filtrar skills" autocomplete="off" spellcheck="false">
+                        </div>
+                        <div id="skills-tabs" class="mcp-tabs" role="tablist" aria-label="Origen de las skills"></div>
+                        <div id="skills-list" class="skills-list" role="tabpanel"></div>
+                    </div>
+
+                    <div class="setting-group">
+                        <label>Variables de las herramientas</label>
+                        <div class="setting-help-text">Algunas skills con tools necesitan claves o rutas. Se guardan en el keyring del sistema y solo se pasan a la tool que las declara.</div>
+                        <div id="skills-env-list" class="skills-env-list"></div>
                     </div>
                 </div>
 
@@ -1522,6 +1559,7 @@
     <script src="js/onboarding.js"></script>
     <script src="js/identity.js"></script>
     <script src="js/memory.js"></script>
+    <script src="js/skills.js"></script>
     <script src="js/palette.js"></script>
     <script src="js/app.js"></script>
 </body>
