@@ -537,8 +537,8 @@ async def handle_check_realtime(sid: str, data: dict) -> None:
 
     Lógica:
     - Si el modelo tiene live_api=true en models.yaml (Google) O está en realtime_models.yaml
-      (OpenAI, xAI) → mode='native' (botón 📞)
-    - Si no, pero hay STT disponible → mode='simulated' STT→LLM→TTS (botón 🎙️)
+      (OpenAI, xAI) → mode='native' (botón de llamada)
+    - Si no, pero hay STT disponible → mode='simulated' STT→LLM→TTS (botón de micrófono)
     - Si nada está disponible → available=False (botón oculto)
     """
     from pathlib import Path as _Path

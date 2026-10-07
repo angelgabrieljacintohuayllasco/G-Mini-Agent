@@ -1161,7 +1161,7 @@ class CostTracker:
             return {"sent": 0, "targets": [], "report": report}
 
         highlights = report.get("highlights", [])
-        text = "📊 *Reporte Semanal de Costos*\n\n" + "\n".join(highlights)
+        text = "*Reporte semanal de costos*\n\n" + "\n".join(highlights)
         totals = report.get("totals", {})
         text += f"\n\nTotal: ${float(totals.get('total_cost_usd', 0)):.4f} USD"
         text += f" | Eventos: {int(totals.get('event_count', 0))}"

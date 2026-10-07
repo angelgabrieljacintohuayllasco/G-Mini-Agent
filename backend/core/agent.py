@@ -1605,7 +1605,7 @@ class AgentCore:
 
         if download_click_detected:
             feedback_text += (
-                "\n\n⚠️ ALERTA: hiciste click en una descarga. "
+                "\n\nALERTA: hiciste click en una descarga. "
                 "Antes de declarar éxito, verifica archivos reales en disco con browser_check_downloads o downloads_check."
             )
         else:
@@ -2298,7 +2298,7 @@ class AgentCore:
             await self._set_agent_status(sid, AgentStatus.IDLE)
             await emit_message(
                 sid,
-                "⚠️ Ocurrió un error operativo al ejecutar las acciones aprobadas. "
+                "Ocurrió un error operativo al ejecutar las acciones aprobadas. "
                 "La tarea se reanudará solo si vuelves a intentarlo.",
                 "warning",
                 done=True,
@@ -2314,7 +2314,7 @@ class AgentCore:
 
         if task_completed or from_voice:
             await self._set_agent_status(sid, AgentStatus.IDLE)
-            await self._emit_activity(sid, "✅ **Tarea completada**", "system")
+            await self._emit_activity(sid, "**Tarea completada**", "system")
             return
 
         max_iterations = config.get("automation", "max_loop_iterations", default=25)
@@ -2834,7 +2834,7 @@ class AgentCore:
             logger.warning(f"Presupuesto operativo excedido: {exc}")
             await self._emit_activity(
                 sid,
-                f"⚠️ Presupuesto excedido. {exc}",
+                f"Presupuesto excedido. {exc}",
                 "warning",
             )
         except LLMProviderUnavailableError as exc:
@@ -2843,9 +2843,9 @@ class AgentCore:
             tried = ", ".join(exc.providers_tried) if exc.providers_tried else "ninguno"
             await self._emit_activity(
                 sid,
-                f"⚠️ No se pudo conectar con ningún proveedor de IA. "
-                f"Providers intentados: {tried}. "
-                "Verifica tus API keys en Settings o cambia de modelo/proveedor.",
+                f"No se pudo conectar con ningún proveedor de IA. "
+                f"Proveedores intentados: {tried}. "
+                "Revisa las API keys en Ajustes o elige otro modelo.",
                 "error",
             )
         except ValueError as exc:
@@ -2853,7 +2853,7 @@ class AgentCore:
             if "Live API" in err_msg or "live-only" in err_msg.lower():
                 logger.warning(f"Modelo live-only usado en chat texto: {exc}")
                 await self._set_agent_status(sid, AgentStatus.ERROR)
-                await self._emit_activity(sid, f"⚠️ {err_msg}", "error")
+                await self._emit_activity(sid, f"{err_msg}", "error")
             else:
                 logger.error(f"Error procesando mensaje: {exc}")
                 await self._emit_activity(sid, f"Error: {err_msg}", "error")
@@ -2931,7 +2931,7 @@ class AgentCore:
 
             if elapsed > timeout_seconds:
                 logger.warning(f"Loop timeout alcanzado ({timeout_seconds}s)")
-                await emit_message(sid, f"⚠️ Timeout: La tarea tomó más de {timeout_seconds}s", "warning", done=True)
+                await emit_message(sid, f"Timeout: La tarea tomó más de {timeout_seconds}s", "warning", done=True)
                 break
 
             if self._cancel_event.is_set():
@@ -2981,7 +2981,7 @@ class AgentCore:
                         if cheaper and cheaper != model:
                             await emit_message(
                                 sid,
-                                f"⚠️ Presupuesto excedido. Auto-switch: {model} → {cheaper}",
+                                f"Presupuesto excedido. Auto-switch: {model} → {cheaper}",
                                 "warning",
                                 done=False,
                             )
@@ -2998,7 +2998,7 @@ class AgentCore:
                 if not budget_warning_emitted and isinstance(pre_budget, dict):
                     pre_alerts = pre_budget.get("alerts", [])
                     if pre_alerts and not pre_budget.get("stop_required"):
-                        alert_text = "⚠️ Presupuesto: " + "; ".join(
+                        alert_text = "Presupuesto: " + "; ".join(
                             str(a) for a in pre_alerts if str(a).strip()
                         )
                         await emit_message(sid, alert_text, "warning", done=False)
@@ -3298,7 +3298,7 @@ class AgentCore:
                                 self._memory.add_user_message(stagnation_feedback, origin="tool")
                                 await emit_message(
                                     sid,
-                                    "⚠️ Detecté que la pantalla no cambió tras varias acciones. "
+                                    "Detecté que la pantalla no cambió tras varias acciones. "
                                     "Forzando replanificación con otra estrategia.",
                                     "warning",
                                     done=False,
@@ -3315,7 +3315,7 @@ class AgentCore:
                     self._memory.add_user_message(stagnation_feedback, origin="tool")
                     await emit_message(
                         sid,
-                        "⚠️ Detecté que la tarea no está progresando. Voy a forzar una replanificación con otra estrategia.",
+                        "Detecté que la tarea no está progresando. Voy a forzar una replanificación con otra estrategia.",
                         "warning",
                         done=False,
                     )
@@ -3337,14 +3337,14 @@ class AgentCore:
                 )
                 await emit_message(
                     sid,
-                    f"⚠️ El modelo no respondió correctamente ({internal_failures}/{internal_error_limit}). Reintentando.",
+                    f"El modelo no respondió correctamente ({internal_failures}/{internal_error_limit}). Reintentando.",
                     "warning",
                     done=False,
                 )
                 if internal_failures >= internal_error_limit:
                     await emit_message(
                         sid,
-                        "⚠️ El modelo sigue devolviendo respuestas vacías o inválidas. "
+                        "El modelo sigue devolviendo respuestas vacías o inválidas. "
                         "Cambia de modelo/proveedor o reintenta la tarea.",
                         "warning",
                         done=True,
@@ -3356,7 +3356,7 @@ class AgentCore:
                 logger.warning(f"Loop detenido por presupuesto: {exc}")
                 await emit_message(
                     sid,
-                    f"⚠️ Presupuesto operativo excedido. {exc}",
+                    f"Presupuesto operativo excedido. {exc}",
                     "warning",
                     done=True,
                 )
@@ -3371,14 +3371,14 @@ class AgentCore:
                 )
                 await emit_message(
                     sid,
-                    f"⚠️ Recuperando de un error operativo interno ({internal_failures}/{internal_error_limit}).",
+                    f"Recuperando de un error operativo interno ({internal_failures}/{internal_error_limit}).",
                     "warning",
                     done=False,
                 )
                 if internal_failures >= internal_error_limit:
                     await emit_message(
                         sid,
-                        "⚠️ Se alcanzó el límite de recuperación automática del loop. "
+                        "Se alcanzó el límite de recuperación automática del loop. "
                         "Revisa el estado actual antes de reintentar.",
                         "warning",
                         done=True,
@@ -3388,9 +3388,9 @@ class AgentCore:
                 continue
 
         if task_completed:
-            await self._emit_activity(sid, "✅ **Tarea completada**", "system")
+            await self._emit_activity(sid, "**Tarea completada**", "system")
         elif iteration >= max_iterations:
-            await self._emit_activity(sid, f"⚠️ Límite de {max_iterations} iteraciones alcanzado", "warning")
+            await self._emit_activity(sid, f"Límite de {max_iterations} iteraciones alcanzado", "warning")
 
         await self._set_agent_status(sid, AgentStatus.IDLE)
         await self._maybe_synthesize_tts(sid, self._memory.get_last_assistant_message())
@@ -3848,23 +3848,23 @@ class AgentCore:
             raw = error_msg.lower()
             if "quota" in raw or "exceeded" in raw or "billing" in raw:
                 friendly = (
-                    "⚠️ Cuota de Google Gemini Live agotada. "
+                    "Cuota de Google Gemini Live agotada. "
                     "Revisa tu plan y facturación en https://aistudio.google.com. "
                     "También puedes usar Vertex AI (voice.vertex_live_model) "
                     "o cambiar a modo de voz simulado."
                 )
             elif "permission" in raw or "unauthorized" in raw or "api key" in raw:
                 friendly = (
-                    "⚠️ Error de autenticación con Google Live API. "
+                    "Error de autenticación con Google Live API. "
                     "Verifica tu API key de Google en Configuración."
                 )
             elif "not found" in raw or "does not exist" in raw or "invalid_argument" in raw:
                 friendly = (
-                    "⚠️ El modelo de voz en tiempo real no está disponible. "
+                    "El modelo de voz en tiempo real no está disponible. "
                     "Intenta con gemini-3.8-live en Configuración o usa el modo de voz simulado."
                 )
             else:
-                friendly = f"⚠️ Error en la sesión de voz en tiempo real: {error_msg}"
+                friendly = f"Error en la sesión de voz en tiempo real: {error_msg}"
             logger.warning(f"RT fatal error notificado al frontend: {error_msg}")
             await emit_message(sid, friendly, "error", done=True)
             await sio.emit("agent:status", {"status": "realtime_stopped"}, to=sid)
@@ -4185,7 +4185,7 @@ class AgentCore:
             if not success:
                 await emit_message_chunk(
                     sid,
-                    "⚠️ No se pudo iniciar la sesión con el modelo Live. "
+                    "No se pudo iniciar la sesión con el modelo Live. "
                     "Verifica tu API key de Google en Settings.",
                 )
                 await emit_message_done(sid)

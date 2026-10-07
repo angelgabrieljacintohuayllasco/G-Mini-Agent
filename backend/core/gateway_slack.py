@@ -308,8 +308,9 @@ class SlackGatewayConnector:
         body = str(item.get("body") or "").strip()
         level = str(item.get("level") or "info").strip()
 
-        icon = {"info": "ℹ️", "warning": "⚠️", "error": "❌", "success": "✅"}.get(level, "📨")
-        parts = [f"{icon} *{title}*"] if title else []
+        label = {"warning": "Aviso", "error": "Error", "success": "Listo"}.get(level, "")
+        heading = f"{label}: {title}" if label and title else title
+        parts = [f"*{heading}*"] if heading else []
         if body:
             parts.append(body)
         return "\n".join(parts)
