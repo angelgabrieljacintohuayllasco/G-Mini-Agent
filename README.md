@@ -12,6 +12,13 @@ ChatGPT, o modelos locales.
 - Servidor: el mismo núcleo sin pantalla para un VPS o una Raspberry Pi.
 - Licencia MIT.
 
+## Descargar
+
+Instalador para Windows 10 y 11 y AppImage para Linux en
+[Releases](https://github.com/angelgabrieljacintohuayllasco/G-Mini-Agent/releases/latest).
+La primera vez que la abres, la app prepara su propio Python con los
+componentes del núcleo (unos 500 MB) y no toca el que ya tengas.
+
 ## Qué hace
 
 | Área | Qué incluye |
@@ -38,7 +45,7 @@ El catálogo de modelos está en [`data/models.yaml`](data/models.yaml). Las key
 guardan en el almacén de credenciales del sistema (en Windows, el Administrador
 de credenciales), nunca en la config.
 
-## Instalación (Windows)
+## Desde el código (Windows)
 
 Requisitos: Python 3.11 o superior (probado con 3.13) y Node.js 20 o superior.
 
@@ -145,6 +152,10 @@ python -m pytest
 Para correr los tests sin visión, automatización ni modelos locales basta con
 `backend\requirements-ci.txt`; es lo que usa la integración continua en
 Windows y Linux con Python 3.11 y 3.13.
+
+El instalador se arma con `npm run dist:win` (o `dist:linux`) dentro de
+`electron/`; al subir un tag `vX.Y.Z`, GitHub Actions publica ambos en
+Releases.
 
 | Carpeta | Contenido |
 |---|---|
