@@ -117,8 +117,8 @@ async def test_terminal_full_output_is_returned(tmp_path):
 def test_only_recent_images_are_sent():
     from backend.core.memory import Memory
 
-    memory = Memory.__new__(Memory)
-    memory._system_prompt = "sys"
+    memory = Memory()
+    memory.set_system_prompt("sys")
     memory._messages = [
         {"role": "user", "content": f"captura {i}", "images": [f"img{i}"]} for i in range(6)
     ]

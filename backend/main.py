@@ -33,6 +33,32 @@ from backend.core.scheduler import get_scheduler
 from backend.security import local_auth
 from backend.utils.logger import logger  # noqa: F811 - configura loguru
 
+# Jobs internos que se crean una vez si faltan (el usuario puede pausarlos).
+BUILTIN_JOBS: tuple[dict, ...] = (
+    # Reporte semanal de presupuesto: lunes 9:00 UTC.
+    {"name": "budget_weekly_report", "task_type": "budget_weekly_report",
+     "trigger_type": "cron", "cron_expression": "0 9 * * 1"},
+    # Consolidación de memoria: solo actúa si el agente lleva un rato inactivo.
+    {"name": "learning_consolidate", "task_type": "learning_consolidate",
+     "trigger_type": "interval", "interval_seconds": 900},
+)
+
+
+async def _ensure_builtin_jobs(scheduler) -> None:
+    try:
+        existing = {job.get("name") for job in await scheduler.list_jobs()}
+    except Exception as exc:
+        logger.warning(f"No se pudieron listar los jobs: {exc}")
+        return
+    for spec in BUILTIN_JOBS:
+        if spec["name"] in existing:
+            continue
+        try:
+            await scheduler.create_job(payload={}, enabled=True, **spec)
+            logger.info(f"Job interno creado: {spec['name']}")
+        except Exception as exc:
+            logger.warning(f"No se pudo crear el job {spec['name']}: {exc}")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -57,26 +83,7 @@ async def lifespan(app: FastAPI):
     await scheduler.initialize()
     logger.info("SchedulerService inicializado")
 
-    # Auto-create weekly budget report cron job if not exists
-    try:
-        existing_jobs = await scheduler.list_jobs()
-        has_report_job = any(
-            j.get("name") == "budget_weekly_report" for j in existing_jobs
-        )
-        if not has_report_job:
-            await scheduler.create_job(
-                name="budget_weekly_report",
-                task_type="budget_weekly_report",
-                payload={},
-                trigger_type="cron",
-                cron_expression="0 9 * * 1",  # Every Monday 9am UTC
-                enabled=True,
-            )
-            logger.info("Job cron budget_weekly_report creado automáticamente")
-        else:
-            logger.debug("Job budget_weekly_report ya existe, saltando creación")
-    except Exception as exc:
-        logger.warning(f"No se pudo crear job budget_weekly_report: {exc}")
+    await _ensure_builtin_jobs(scheduler)
 
     try:
         yield

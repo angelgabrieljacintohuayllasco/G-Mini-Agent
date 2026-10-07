@@ -582,6 +582,40 @@ memory:
   compression_trigger_tokens: 80000
   compression_target_tokens: 20000
   knowledge_graph_db_path: "data/memory_ltm.db"
+  # Recuerdo: perfil fijo en el system prompt + memorias relacionadas con cada mensaje.
+  recall_enabled: true
+  recall_top_k: 6
+  recall_max_tokens: 800
+  recall_timeout_s: 12
+  recall_min_similarity: null     # null = umbral según el modelo de embeddings
+  profile_max_items: 12
+  profile_max_tokens: 600
+  # Embeddings: auto = misma familia que el chat (Vertex/Google/OpenAI); hash = local, sin red.
+  embedding_provider: "auto"      # auto | vertex | google | openai | hash
+  embedding_model: ""             # vacío = gemini-embedding-001 / text-embedding-3-small
+  embedding_dim: 768
+  embedding_location: ""          # Vertex: vacío = la ubicación del proveedor vertex
+  embedding_timeout_s: 10
+  embedding_cooldown_s: 300       # tras un fallo, modo local durante este tiempo
+  allow_cloud_when_local: false   # con chat local (Ollama/LM Studio) no mandar textos a la nube
+
+# ═══ Aprendizaje continuo (modo aprendiz) ═══
+learning:
+  enabled: true
+  reflect_after_turn: true
+  reflect_min_interval_s: 30
+  reflect_timeout_s: 45
+  reflect_max_tokens: 2048
+  dedup_similarity: 0.9
+  merge_similarity: 0.97
+  consolidate_on_idle: true
+  min_idle_minutes: 10
+
+# Modelos para tareas de fondo. Vacío = modelo económico del proveedor del chat.
+auxiliary:
+  learning:
+    provider: ""
+    model: ""
 
 # ═══ Phase 12: RPA + Macros + Rollback ═══
 macros:

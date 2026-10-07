@@ -2387,54 +2387,146 @@ async def scan_for_injection(request: Request):
 # ═══════════════════════════════════════════════════════════════════════════
 
 # ── Long-Term Memory ─────────────────────────────────────────────────────
+# Las operaciones de memoria tocan SQLite y la API de embeddings: corren en
+# un hilo para no congelar el event loop.
+
+_LTM_CATEGORIES = ("fact", "preference", "task", "learning", "entity", "relationship", "skill_memory")
+
+
+def _refresh_agent_profile() -> None:
+    """El perfil de memoria va en el system prompt: reaplicarlo tras cambios."""
+    from backend.api.websocket_handler import _agent_core
+
+    if _agent_core is not None:
+        try:
+            _agent_core._apply_system_prompt()
+        except Exception as exc:
+            logger.debug(f"No se pudo reaplicar el system prompt: {exc}")
+
 
 @router.get("/memory/ltm")
-async def list_ltm(category: str | None = None, limit: int = 50):
+async def list_ltm(category: str | None = None, limit: int = Query(default=50, ge=1, le=500), offset: int = Query(default=0, ge=0)):
     from backend.core.memory_ltm import get_ltm
-    return {"ok": True, "memories": get_ltm().list_memories(category=category, limit=limit)}
+
+    memories = await asyncio.to_thread(get_ltm().list_memories, category=category, limit=limit, offset=offset)
+    return {"ok": True, "memories": memories}
+
+
+@router.get("/memory/ltm/stats")
+async def ltm_stats():
+    from backend.core.embeddings import get_embedder
+    from backend.core.memory_ltm import get_ltm
+
+    def _collect() -> dict[str, Any]:
+        stats = get_ltm().stats()
+        stats["embedding_model"] = get_embedder().model_id
+        return stats
+
+    return {
+        "ok": True,
+        **(await asyncio.to_thread(_collect)),
+        "learning_enabled": bool(config.get("learning", "enabled", default=True)),
+    }
 
 
 @router.post("/memory/ltm")
 async def store_ltm(request: Request):
     from backend.core.memory_ltm import get_ltm
+
     body = await request.json()
-    memory_id = get_ltm().store(
-        content=body["content"],
-        category=body.get("category", "fact"),
-        importance=body.get("importance", 0.5),
-        metadata=body.get("metadata"),
+    content = " ".join(str(body.get("content") or "").split())
+    category = str(body.get("category") or "fact")
+    if not content or len(content) > 2000:
+        raise HTTPException(status_code=400, detail="content vacío o demasiado largo (máx. 2000)")
+    if category not in _LTM_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"category debe ser una de: {', '.join(_LTM_CATEGORIES)}")
+    try:
+        importance = float(body.get("importance", 0.5))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="importance debe ser un número entre 0 y 1")
+    metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
+    memory_id = await asyncio.to_thread(
+        get_ltm().store,
+        content,
+        category,
+        importance,
+        {**metadata, "source": metadata.get("source", "manual")},
     )
+    _refresh_agent_profile()
     return {"ok": True, "memory_id": memory_id}
 
 
 @router.post("/memory/ltm/search")
 async def search_ltm(request: Request):
     from backend.core.memory_ltm import get_ltm
+
     body = await request.json()
-    results = get_ltm().search(
-        query=body["query"],
-        top_k=body.get("top_k", 5),
-        category=body.get("category"),
+    query = str(body.get("query") or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="query vacío")
+    results = await asyncio.to_thread(
+        get_ltm().search,
+        query,
+        int(body.get("top_k", 5) or 5),
+        body.get("category"),
+        touch=False,
     )
     return {"ok": True, "results": results}
+
+
+@router.get("/memory/ltm/export")
+async def export_ltm():
+    from backend.core.memory_ltm import get_ltm
+
+    rows = await asyncio.to_thread(get_ltm().list_memories, None, 100000, 0)
+    keys = ("memory_id", "category", "content", "importance", "created_at", "last_accessed")
+    return {"ok": True, "memories": [{k: row.get(k) for k in keys} for row in rows]}
+
+
+@router.post("/memory/ltm/consolidate")
+async def consolidate_ltm():
+    from backend.core.learning import get_learning
+
+    result = await asyncio.to_thread(get_learning().consolidate, force=True)
+    _refresh_agent_profile()
+    return {"ok": True, "result": result}
+
+
+@router.delete("/memory/ltm")
+async def delete_all_ltm(confirm: bool = Query(default=False)):
+    from backend.core.memory_ltm import get_ltm
+
+    if not confirm:
+        raise HTTPException(status_code=400, detail="Para borrar toda la memoria envía confirm=true")
+    removed = await asyncio.to_thread(get_ltm().delete_all)
+    _refresh_agent_profile()
+    return {"ok": True, "deleted": removed}
 
 
 @router.delete("/memory/ltm/{memory_id}")
 async def delete_ltm(memory_id: str):
     from backend.core.memory_ltm import get_ltm
-    ok = get_ltm().delete(memory_id)
+
+    ok = await asyncio.to_thread(get_ltm().delete, memory_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Memoria no encontrada")
+    _refresh_agent_profile()
     return {"ok": True}
 
 
 @router.put("/memory/ltm/{memory_id}/importance")
 async def update_ltm_importance(memory_id: str, request: Request):
     from backend.core.memory_ltm import get_ltm
+
     body = await request.json()
-    ok = get_ltm().update_importance(memory_id, body["importance"])
+    try:
+        importance = float(body["importance"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="importance debe ser un número entre 0 y 1")
+    ok = await asyncio.to_thread(get_ltm().update_importance, memory_id, importance)
     if not ok:
         raise HTTPException(status_code=404, detail="Memoria no encontrada")
+    _refresh_agent_profile()
     return {"ok": True}
 
 

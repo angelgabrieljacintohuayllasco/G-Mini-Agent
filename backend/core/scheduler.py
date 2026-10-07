@@ -1253,6 +1253,9 @@ class SchedulerService:
                 session_id=payload.get("session_id"),
                 current_mode=str(payload.get("mode", "")).strip(),
             )
+        if job["task_type"] == "learning_consolidate":
+            from backend.core.learning import get_learning
+            return await asyncio.to_thread(get_learning().consolidate)
         raise RuntimeError(f"Task type no soportado por el scheduler: {job['task_type']}")
 
     async def _ensure_job_columns(self, db: aiosqlite.Connection) -> None:
@@ -1329,8 +1332,9 @@ class SchedulerService:
         heartbeat_key: str,
         heartbeat_interval_seconds: int | None,
     ) -> None:
-        if task_type not in {"skill", "mcp_tool", "budget_weekly_report"}:
-            raise ValueError("task_type debe ser 'skill', 'mcp_tool' o 'budget_weekly_report'.")
+        supported = ("skill", "mcp_tool", "budget_weekly_report", "learning_consolidate")
+        if task_type not in supported:
+            raise ValueError(f"task_type debe ser uno de: {', '.join(supported)}.")
         if not isinstance(payload, dict):
             raise ValueError("payload debe ser un objeto JSON.")
         if trigger_type not in {"interval", "cron", "heartbeat", "event", "webhook"}:
@@ -1344,8 +1348,6 @@ class SchedulerService:
         elif task_type == "mcp_tool":
             if not str(payload.get("server_id", "")).strip() or not str(payload.get("tool", "")).strip():
                 raise ValueError("Los jobs mcp_tool requieren payload.server_id y payload.tool.")
-        elif task_type == "budget_weekly_report":
-            pass  # No payload requirements
 
         if trigger_type == "interval":
             try:

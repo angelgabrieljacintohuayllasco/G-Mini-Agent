@@ -21,6 +21,7 @@ from backend.config import config, ROOT_DIR
 from backend.core.action_output import build_results_block
 from backend.core.memory import Memory
 from backend.core.ide_manager import IDEManager
+from backend.core.memory_context import build_profile_context, build_recall_context_async
 from backend.core.modes import DEFAULT_MODE_KEY, build_autonomy_context, build_mode_system_prompt, get_mode, get_mode_behavior_prompt, list_modes
 from backend.core.policy import PolicyEngine, is_approval_text, is_rejection_text
 from backend.core.prompt_manager import get_prompt_text, render_prompt_text
@@ -560,6 +561,7 @@ class AgentCore:
         self._pause_event: asyncio.Event = asyncio.Event()
         self._pause_event.set()  # Starts unpaused
         self._current_task: asyncio.Task | None = None
+        self._profile_memory_ids: set[str] = set()
         # Lote de acciones en curso: stop() lo cancela (y la terminal mata su árbol de procesos).
         self._current_action_task: asyncio.Task | None = None
         # Refs vivas de tasks fire-and-forget (evita GC mid-run; asyncio docs).
@@ -1349,6 +1351,7 @@ class AgentCore:
                         self._memory.add_user_message(
                             "Screenshot de verificación post-delegación adjunto.",
                             images=[verify_b64],
+                            origin="tool",
                         )
                 except Exception as exc:
                     logger.debug(f"Screenshot de verificación falló: {exc}")
@@ -1852,7 +1855,8 @@ class AgentCore:
             logger.info("Screenshot re-inyectado al contexto del LLM")
         elif action_feedback_parts and not task_completed:
             self._memory.add_user_message(
-                self._build_action_feedback_prompt(llm_feedback_parts, results)
+                self._build_action_feedback_prompt(llm_feedback_parts, results),
+                origin="tool",
             )
 
         return task_completed
@@ -2266,6 +2270,12 @@ class AgentCore:
         autonomy = config.get("agent", "autonomy", default="media")
         prompt = prompt + "\n\n" + build_autonomy_context()
 
+        # Perfil del usuario: lo más importante de la memoria (sin red).
+        profile = build_profile_context()
+        self._profile_memory_ids = profile.ids
+        if profile.text:
+            prompt = prompt + "\n\n" + profile.text
+
         prompt = prompt + "\n\n" + build_avatar_context()
 
         if config.get("character", "emotions_enabled", default=False):
@@ -2469,8 +2479,11 @@ class AgentCore:
         """Inicializa todos los subsistemas."""
         logger.info("Inicializando AgentCore...")
 
-        # Router de proveedores LLM
+        # Router de proveedores LLM (compartido con las tareas de fondo)
         self._router = ModelRouter()
+        from backend.core import learning_llm
+
+        learning_llm.set_router(self._router)
 
         # Memoria
         await self._memory.initialize()
@@ -2592,6 +2605,9 @@ class AgentCore:
         # Reset cancel
         self._cancel_event.clear()
         self._active_sid = sid
+        from backend.core.learning import mark_activity
+
+        mark_activity()
 
         if await self._handle_pending_approval(sid, text):
             return
@@ -2646,6 +2662,14 @@ class AgentCore:
             else:
                 enhanced_text = text
 
+            # Recuerdos del turno: van como contexto efímero del system
+            # prompt, no dentro del mensaje (no se acumulan en el historial).
+            turn_notes: list[str] = []
+            recall_block = await build_recall_context_async(text, exclude_ids=self._profile_memory_ids)
+            if recall_block:
+                turn_notes.append(recall_block)
+            self._memory.set_turn_context("\n\n".join(turn_notes))
+
             # Rutas a archivos media que el usuario escribio directamente en el chat
             # (sin adjuntarlos por la UI): mandar los bytes reales al modelo, no la ruta.
             effective_attachments = list(attachments or [])
@@ -2668,9 +2692,10 @@ class AgentCore:
                     memory_text,
                     images=attachment_images or None,
                     files=attachment_files or None,
+                    raw_text=text,
                 )
             else:
-                self._memory.add_user_message(memory_text)
+                self._memory.add_user_message(memory_text, raw_text=text)
             await self._memory.persist_message("user", persisted_text)
 
             if await self._handle_subagent_request(sid, text):
@@ -2681,6 +2706,8 @@ class AgentCore:
 
             # 3. Loop autónomo
             await self._run_agent_loop(sid, max_iterations, loop_timeout, is_task_request=is_task_request)
+
+            self._schedule_reflection()
 
         except asyncio.CancelledError:
             logger.info("Tarea de procesamiento cancelada")
@@ -2715,9 +2742,29 @@ class AgentCore:
             logger.error(f"Error procesando mensaje: {e}")
             await self._emit_activity(sid, f"Error: {str(e)}", "error")
         finally:
+            self._memory.clear_turn_context()
             await self._set_agent_status(sid, AgentStatus.IDLE)
             if self._active_sid == sid:
                 self._active_sid = ""
+
+    def _schedule_reflection(self) -> None:
+        """Reflexión de memoria del turno en segundo plano (modo aprendiz)."""
+        if not config.get("learning", "enabled", default=True):
+            return
+        if not config.get("learning", "reflect_after_turn", default=True):
+            return
+        snapshot = [dict(message) for message in self._memory.messages[-12:]]
+        session_id = self._memory.session_id
+
+        async def _reflect() -> None:
+            from backend.core.learning import get_learning
+
+            if await get_learning().reflect_on_turn(snapshot, session_id=session_id):
+                self._apply_system_prompt()  # el perfil incluye lo nuevo
+
+        task = asyncio.create_task(_reflect())
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._on_bg_task_done)
 
     async def _run_agent_loop(
         self,
@@ -2862,7 +2909,8 @@ class AgentCore:
                     self._memory.add_user_message(
                         f"No puedes ejecutar acciones de escritorio directamente ({blocked_names}). "
                         "Usa [ACTION:delegate_computer_use(task=descripcion de la tarea)] "
-                        "para delegar interacciones de UI al sub-agente de computer use."
+                        "para delegar interacciones de UI al sub-agente de computer use.",
+                        origin="tool",
                     )
                     actions = [a for a in actions if a.type not in _BLOCKED_DESKTOP_ACTIONS]
 
@@ -2883,7 +2931,8 @@ class AgentCore:
                                 f"Resumen: {cu_result.summary}\n"
                                 f"Iteraciones: {cu_result.iterations_used}\n"
                                 f"Acciones: {', '.join(cu_result.action_history[-5:]) if cu_result.action_history else 'ninguna'}"
-                                + (f"\nError: {cu_result.error}" if cu_result.error else "")
+                                + (f"\nError: {cu_result.error}" if cu_result.error else ""),
+                                origin="tool",
                             )
                 actions = other_actions
 
@@ -2898,7 +2947,7 @@ class AgentCore:
                             ),
                         )
                         logger.warning("Primera iteración sin acciones en tarea operativa - inyectando refuerzo")
-                        self._memory.add_user_message(reinforcement)
+                        self._memory.add_user_message(reinforcement, origin="tool")
                         await asyncio.sleep(0.2)
                         continue
 
@@ -3107,7 +3156,7 @@ class AgentCore:
                             effective_stagnation = max(stagnation_count, same_ocr_count)
                             if effective_stagnation >= stagnation_threshold:
                                 stagnation_feedback = self._build_stagnation_feedback(results)
-                                self._memory.add_user_message(stagnation_feedback)
+                                self._memory.add_user_message(stagnation_feedback, origin="tool")
                                 await emit_message(
                                     sid,
                                     "⚠️ Detecté que la pantalla no cambió tras varias acciones. "
@@ -3124,7 +3173,7 @@ class AgentCore:
 
                 if not task_completed and stagnation_count >= stagnation_threshold:
                     stagnation_feedback = self._build_stagnation_feedback(results)
-                    self._memory.add_user_message(stagnation_feedback)
+                    self._memory.add_user_message(stagnation_feedback, origin="tool")
                     await emit_message(
                         sid,
                         "⚠️ Detecté que la tarea no está progresando. Voy a forzar una replanificación con otra estrategia.",
@@ -3178,7 +3227,8 @@ class AgentCore:
                 logger.exception(f"Fallo operativo en el loop autónomo: {exc}")
                 self._memory.add_user_message(
                     "Se produjo un error operativo interno en la iteración anterior. "
-                    "Replanifica con una estrategia distinta, verifica el estado actual y evita repetir la misma acción."
+                    "Replanifica con una estrategia distinta, verifica el estado actual y evita repetir la misma acción.",
+                    origin="tool",
                 )
                 await emit_message(
                     sid,
@@ -3590,6 +3640,7 @@ class AgentCore:
             async def sim_on_turn_complete():
                 await emit_message_done(sid)
                 sim_text_buffer.clear()
+                self._schedule_reflection()
 
             # Pasar el system prompt real del agente (con modo aplicado) + MCP context + autonomía + prompt de voz
             agent_prompt = build_mode_system_prompt(self._base_system_prompt, self._current_mode)
@@ -3721,6 +3772,7 @@ class AgentCore:
                     await self._memory.persist_message("assistant", full_response)
                 except Exception as exc:
                     logger.warning(f"RT: no se pudo persistir respuesta del agente: {exc}")
+                self._schedule_reflection()
 
         async def on_tool_call(tool_call: dict):
             """Ejecuta herramientas agénticas invocadas por el modelo RT."""
@@ -3999,6 +4051,7 @@ class AgentCore:
         # La respuesta llega de forma asíncrona vía callbacks:
         #   audio chunk  → on_audio → sio.emit("agent:audio")
         #   transcripción → on_text → emit_message_chunk / emit_message_done
+        # La reflexión de memoria corre en on_turn_complete, ya con la respuesta.
 
     async def send_realtime_audio(self, audio_chunk: bytes) -> None:
         """Reenvía un chunk de audio del micrófono al proveedor RT o simulado."""

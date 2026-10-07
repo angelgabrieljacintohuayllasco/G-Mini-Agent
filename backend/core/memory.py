@@ -44,6 +44,7 @@ class Memory:
         self._messages: list[dict[str, Any]] = []       # LLM context (user/assistant)
         self._all_messages: list[dict[str, Any]] = []   # Full display history
         self._system_prompt: str = ""
+        self._turn_context: str = ""
         self._session_mode: str = "normal"
         self._db_initialized = False
         self._session_registered = False  # Solo se registra al primer mensaje
@@ -135,6 +136,14 @@ class Memory:
         """Establece el system prompt."""
         self._system_prompt = prompt
 
+    def set_turn_context(self, text: str) -> None:
+        """Contexto efímero del turno (recuerdos, avisos del sistema): se suma al
+        system prompt de las llamadas de este turno y no queda en el historial."""
+        self._turn_context = (text or "").strip()
+
+    def clear_turn_context(self) -> None:
+        self._turn_context = ""
+
     def set_session_mode(self, mode_key: str) -> None:
         self._session_mode = (mode_key or "normal").strip().lower() or "normal"
 
@@ -151,14 +160,30 @@ class Memory:
         except Exception as e:
             logger.error(f"Error al persistir modo de sesión: {e}")
 
-    def add_user_message(self, content: str, images: list | None = None, files: list | None = None) -> None:
-        """Añade un mensaje del usuario al historial. `images`/`files` opcionales (base64) para mensajes multimodales."""
+    def add_user_message(
+        self,
+        content: str,
+        images: list | None = None,
+        files: list | None = None,
+        *,
+        raw_text: str | None = None,
+        origin: str = "user",
+    ) -> None:
+        """Añade un mensaje con rol user al historial.
+
+        `origin="tool"` marca lo que inyecta el agente (resultados de acciones,
+        capturas): no es algo que el usuario dijo. `raw_text` guarda lo que el
+        usuario escribió antes de sumarle pistas del sistema.
+        """
         entry = {
             "role": "user",
             "content": content,
             "timestamp": datetime.now().isoformat(),
             "message_type": "text",
+            "origin": origin,
         }
+        if raw_text is not None:
+            entry["raw_text"] = raw_text
         if images:
             entry["images"] = images
         if files:
@@ -184,6 +209,7 @@ class Memory:
             "content": content,
             "images": images,
             "timestamp": datetime.now().isoformat(),
+            "origin": "tool",
         })
 
     def get_last_assistant_message(self) -> str | None:
@@ -219,8 +245,11 @@ class Memory:
                 keep_files.add(index)
 
         result = []
-        if self._system_prompt:
-            result.append(LLMMessage(role="system", content=self._system_prompt))
+        system_prompt = self._system_prompt
+        if self._turn_context:
+            system_prompt = f"{system_prompt}\n\n{self._turn_context}" if system_prompt else self._turn_context
+        if system_prompt:
+            result.append(LLMMessage(role="system", content=system_prompt))
 
         for index, msg in enumerate(self._messages):
             content = msg["content"]
@@ -337,6 +366,7 @@ class Memory:
         """Limpia el historial en memoria."""
         self._messages = []
         self._all_messages = []
+        self._turn_context = ""
 
     @property
     def message_count(self) -> int:
