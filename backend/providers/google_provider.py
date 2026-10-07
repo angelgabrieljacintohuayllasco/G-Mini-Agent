@@ -134,6 +134,8 @@ class GoogleProvider(LLMProvider):
             temperature=temperature,
             max_output_tokens=max_tokens,
             system_instruction=system_instruction,
+            # Sin herramientas declaradas: el AFC solo agrega avisos en google-genai 2.x.
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
     def _wrap_error(self, exc: Exception, model: str) -> ProviderError:

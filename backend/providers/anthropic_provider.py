@@ -42,6 +42,9 @@ def _sniff_image_mime(b64: str) -> str:
     return "image/png"
 
 
+_SAMPLING_KEYS = ("temperature", "top_p", "top_k")
+
+
 class AnthropicProvider(LLMProvider):
     """Provider para modelos Claude de Anthropic."""
 
@@ -108,14 +111,18 @@ class AnthropicProvider(LLMProvider):
         return system_prompt.strip(), api_messages
 
     def _request_kwargs(self, model: str, temperature: float, max_tokens: int, kwargs: dict) -> dict:
-        params: dict[str, Any] = {"max_tokens": max_tokens}
+        # temperature/top_p/top_k y thinking van en extra_body: el SDK 1.x ya no
+        # acepta los kwargs de sampling y el 0.76 no conoce thinking "adaptive";
+        # así la misma petición sirve con las dos versiones.
+        kwargs = dict(kwargs)
+        sampling = {key: kwargs.pop(key) for key in _SAMPLING_KEYS if key in kwargs}
+        extra_body = dict(kwargs.pop("extra_body", None) or {})
         if registry.anthropic_uses_sampling(model):
-            params["temperature"] = temperature
+            extra_body.update({"temperature": temperature, **sampling})
         else:
-            # Modelos nuevos: sin sampling; thinking adaptativo vía extra_body
-            # (el SDK 0.76 no tiene aún el kwarg tipado).
-            params["extra_body"] = {"thinking": {"type": "adaptive"}}
-        params.update(kwargs)
+            # Opus 4.7+, Sonnet 5.x y Fable rechazan sampling: thinking adaptativo.
+            extra_body.setdefault("thinking", {"type": "adaptive"})
+        params: dict[str, Any] = {"max_tokens": max_tokens, **kwargs, "extra_body": extra_body}
         return params
 
     def _wrap_error(self, exc: Exception, model: str) -> ProviderError:

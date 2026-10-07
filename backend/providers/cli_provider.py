@@ -18,10 +18,12 @@ Solo texto: las imágenes y archivos adjuntos no se envían por esta vía.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 from typing import Any, AsyncIterator
@@ -135,6 +137,8 @@ class CLIProvider(LLMProvider):
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             limit=16 * 1024 * 1024,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+            # Grupo propio en Linux/macOS: al cortar se cierran también los hijos del CLI.
+            start_new_session=os.name != "nt",
         )
         stderr_task = asyncio.create_task(process.stderr.read())
         try:
@@ -166,7 +170,9 @@ class CLIProvider(LLMProvider):
                                 retriable=True) from None
         finally:
             if process.returncode is None:
-                _kill_tree(process.pid)
+                await asyncio.to_thread(_kill_tree, process.pid)
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(process.wait(), 5)
             if not stderr_task.done():
                 stderr_task.cancel()
             shutil.rmtree(workdir, ignore_errors=True)
@@ -259,6 +265,6 @@ def _kill_tree(pid: int) -> None:
             subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, timeout=10,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         else:
-            os.kill(pid, 9)
+            os.killpg(pid, signal.SIGKILL)
     except Exception as exc:
         logger.debug(f"cli provider: no se pudo cerrar {pid}: {exc}")

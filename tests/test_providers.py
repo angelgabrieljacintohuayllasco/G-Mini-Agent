@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 
 import httpx
@@ -12,6 +13,15 @@ from backend.providers import registry
 from backend.providers.base import LLMMessage, LLMProvider, LLMProviderUnavailableError, LLMResponse, ProviderError
 
 JPEG_B64 = base64.b64encode(b"\xff\xd8\xff\xe0" + b"\x00" * 64).decode()
+
+
+def _sdk_httpx(package: str):
+    """El cliente HTTP del SDK: anthropic>=1.0 usa httpx2 y rechaza objetos de httpx."""
+    base = importlib.import_module(f"{package}._base_client")
+    return getattr(base, "httpx2", None) or base.httpx
+
+
+ahttpx = _sdk_httpx("anthropic")
 
 
 # ── Parámetros por modelo ──────────────────────────────────────────────
@@ -105,7 +115,7 @@ def _anthropic_provider(handler):
     provider = AnthropicProvider()
     provider._client = AsyncAnthropic(
         api_key="k", base_url="https://mock.test", max_retries=0,
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        http_client=ahttpx.AsyncClient(transport=ahttpx.MockTransport(handler)),
     )
     return provider
 
@@ -113,7 +123,7 @@ def _anthropic_provider(handler):
 def _anthropic_ok(seen):
     def handler(request):
         seen.update(json.loads(request.content))
-        return httpx.Response(200, json={
+        return ahttpx.Response(200, json={
             "id": "msg_1", "type": "message", "role": "assistant", "model": seen.get("model", "x"),
             "content": [{"type": "text", "text": "hola"}], "stop_reason": "end_turn", "stop_sequence": None,
             "usage": {"input_tokens": 5, "output_tokens": 1},
@@ -143,12 +153,39 @@ async def test_anthropic_haiku_keeps_temperature_and_labels_jpeg():
 
 async def test_anthropic_errors_are_typed():
     def handler(request):
-        return httpx.Response(429, json={"type": "error", "error": {"type": "rate_limit_error", "message": "slow"}})
+        return ahttpx.Response(429, json={"type": "error", "error": {"type": "rate_limit_error", "message": "slow"}})
 
     provider = _anthropic_provider(handler)
     with pytest.raises(ProviderError) as exc:
         await provider.generate_complete([LLMMessage(role="user", content="hola")], "claude-sonnet-5-5")
     assert exc.value.retriable is True
+
+
+def _sse(*events: dict) -> bytes:
+    return "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events).encode()
+
+
+async def test_anthropic_streaming_yields_text_and_usage():
+    body = _sse(
+        {"type": "message_start", "message": {
+            "id": "msg_1", "type": "message", "role": "assistant", "model": "claude-sonnet-5-5", "content": [],
+            "stop_reason": None, "stop_sequence": None, "usage": {"input_tokens": 7, "output_tokens": 0}}},
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "ho"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "la"}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+         "usage": {"output_tokens": 2}},
+        {"type": "message_stop"},
+    )
+
+    def handler(request):
+        return ahttpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    provider = _anthropic_provider(handler)
+    chunks = [c async for c in provider.generate([LLMMessage(role="user", content="hola")], "claude-sonnet-5-5")]
+    assert "".join(chunks) == "hola"
+    assert provider._last_usage == {"input_tokens": 7, "output_tokens": 2}
 
 
 # ── Google: varios mensajes de sistema se concatenan ──────────────────

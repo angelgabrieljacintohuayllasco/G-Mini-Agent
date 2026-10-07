@@ -346,7 +346,7 @@ class TerminalManager:
         rest = str(candidate).replace("\\", "/")
         if drive:
             rest = rest[len(candidate.drive):].lstrip("/\\")
-            return f"/mnt/{drive}/{rest.replace('\\', '/')}"
+            return f"/mnt/{drive}/{rest}"
         return str(candidate).replace("\\", "/")
 
     def _windows_to_msys(self, path: str) -> str:
@@ -356,7 +356,7 @@ class TerminalManager:
         rest = str(candidate).replace("\\", "/")
         if drive:
             rest = rest[len(candidate.drive):].lstrip("/\\")
-            return f"/{drive}/{rest.replace('\\', '/')}"
+            return f"/{drive}/{rest}"
         return str(candidate).replace("\\", "/")
 
     def _quote_posix(self, path: str) -> str:
