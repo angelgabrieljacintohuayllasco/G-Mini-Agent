@@ -13,6 +13,13 @@ pyperclip>=1.8.2
 # OCR con Tesseract (si está instalado en el sistema)
 pytesseract>=0.3.10
 
+# OCR que trae Windows 10/11 (sin Tesseract ni modelos)
+winrt-Windows.Media.Ocr>=3.2; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging>=3.2; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=3.2; sys_platform == "win32"
+winrt-Windows.Foundation>=3.2; sys_platform == "win32"
+winrt-Windows.Foundation.Collections>=3.2; sys_platform == "win32"
+
 # Android por ADB
 pure-python-adb>=0.3.0.dev0
 

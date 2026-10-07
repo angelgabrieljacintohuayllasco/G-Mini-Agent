@@ -331,6 +331,15 @@ class PolicyEngine:
             "connector_list",
             "remote_list",
             "remote_task_status",
+            "screen_read_text",
+            "screen_locate_text",
+            "screen_list_monitors",
+            "screen_set_monitor",
+            "adb_status",
+            "adb_list_devices",
+            "adb_screenshot",
+            "adb_screen_read_text",
+            "adb_screen_locate_text",
         }:
             return self._review(action, "observe", "reading", "low", 0.95, "accion de lectura o cierre")
 
@@ -438,7 +447,8 @@ class PolicyEngine:
                 return self._review(action, "desktop_control", "system", "high", 0.45, f"hotkey sensible: {keys}")
             return self._review(action, "desktop_control", "interactive", "medium", 0.72, f"hotkey: {keys}")
 
-        if action_type in {"adb_tap", "adb_swipe", "adb_text"}:
+        if action_type in {"adb_tap", "adb_swipe", "adb_text", "adb_key", "adb_back", "adb_home", "adb_recents",
+                           "adb_long_press", "adb_open_app"}:
             return self._review(action, "mobile_control", "interactive", "medium", 0.75, "interaccion activa con Android")
 
         if action_type.startswith("browser_"):

@@ -46,6 +46,13 @@ mss>=9.0.0
 
 # OCR (instalar uno o más)
 pytesseract>=0.3.10
+
+# OCR que trae Windows 10/11 (sin Tesseract ni modelos)
+winrt-Windows.Media.Ocr>=3.2; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging>=3.2; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=3.2; sys_platform == "win32"
+winrt-Windows.Foundation>=3.2; sys_platform == "win32"
+winrt-Windows.Foundation.Collections>=3.2; sys_platform == "win32"
 easyocr>=1.7.0
 # paddleocr>=2.7.0   # Descomentar si se desea PaddleOCR (pesado)
 

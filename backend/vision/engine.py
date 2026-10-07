@@ -92,7 +92,8 @@ class VisionEngine:
         self._ocr_engine = None
         self._ocr_type = "none"
 
-        for engine in dict.fromkeys([ocr_preference, "tesseract", "easyocr", "paddleocr"]):
+        # "auto": el OCR de Windows si está (no necesita instalar nada), luego el resto.
+        for engine in dict.fromkeys([ocr_preference, "windows", "tesseract", "easyocr", "paddleocr"]):
             if await self._try_init_ocr(str(engine)):
                 break
 
@@ -105,6 +106,16 @@ class VisionEngine:
     async def _try_init_ocr(self, engine: str) -> bool:
         """Attempts to initialize a specific OCR engine."""
         try:
+            if engine == "windows":
+                from backend.vision import windows_ocr
+
+                if not await asyncio.to_thread(windows_ocr.available):
+                    return False
+                self._ocr_engine = windows_ocr
+                self._ocr_type = "windows"
+                logger.info("OCR: Windows (Windows.Media.Ocr) inicializado")
+                return True
+
             if engine == "tesseract":
                 import pytesseract
 
@@ -442,6 +453,9 @@ class VisionEngine:
 
         img = Image.open(io.BytesIO(image_bytes))
 
+        if self._ocr_type == "windows":
+            return self._ocr_engine.recognize_text(img)
+
         if self._ocr_type == "tesseract":
             return self._ocr_engine.image_to_string(img, lang="spa+eng").strip()
 
@@ -462,6 +476,50 @@ class VisionEngine:
             return ""
 
         return ""
+
+    async def ocr_lines(self, image_bytes: bytes) -> list[dict[str, Any]]:
+        """Líneas OCR con cada palabra y su caja en píxeles de la imagen."""
+        if self._ocr_type == "none":
+            raise OCRExecutionError("No hay motor OCR disponible")
+        return await asyncio.to_thread(self._run_ocr_lines, image_bytes)
+
+    def _run_ocr_lines(self, image_bytes: bytes) -> list[dict[str, Any]]:
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+
+        if self._ocr_type == "windows":
+            return self._ocr_engine.recognize(img)
+
+        if self._ocr_type == "tesseract":
+            from pytesseract import Output
+
+            data = self._ocr_engine.image_to_data(img, lang="spa+eng", output_type=Output.DICT)
+            grouped: dict[tuple, dict[str, Any]] = {}
+            for i, text in enumerate(data.get("text", [])):
+                if not str(text).strip():
+                    continue
+                key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
+                line = grouped.setdefault(key, {"text": "", "words": []})
+                line["words"].append({"text": text, "x": data["left"][i], "y": data["top"][i],
+                                      "w": data["width"][i], "h": data["height"][i]})
+                line["text"] = f"{line['text']} {text}".strip()
+            return list(grouped.values())
+
+        import numpy as np
+
+        if self._ocr_type == "easyocr":
+            segments = [(box, text) for box, text, _conf in self._ocr_engine.readtext(np.array(img))]
+        elif self._ocr_type == "paddleocr":
+            results = self._ocr_engine.ocr(np.array(img), cls=True)
+            segments = [(item[0], item[1][0]) for item in (results[0] if results and results[0] else [])]
+        else:
+            return []
+        lines = []
+        for box, text in segments:
+            xs = [float(pt[0]) for pt in box]
+            ys = [float(pt[1]) for pt in box]
+            word = {"text": text, "x": min(xs), "y": min(ys), "w": max(xs) - min(xs), "h": max(ys) - min(ys)}
+            lines.append({"text": text, "words": [word]})
+        return lines
 
     async def analyze_screen(
         self,

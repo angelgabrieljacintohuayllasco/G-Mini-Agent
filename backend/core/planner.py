@@ -6,6 +6,7 @@ Interpreta instrucciones del LLM y las traduce en acciones ejecutables.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import re
 import time
@@ -530,6 +531,28 @@ def _known_action_types() -> frozenset[str]:
         names.update(ACTION_TYPE_ALIASES.values())
         _KNOWN_ACTION_TYPES = frozenset(names)
     return _KNOWN_ACTION_TYPES
+
+
+# Teclas de Android por nombre (input keyevent).
+_ADB_KEYCODES = {
+    "home": 3, "back": 4, "call": 5, "endcall": 6, "up": 19, "down": 20, "left": 21, "right": 22,
+    "volume_up": 24, "volume_down": 25, "power": 26, "camera": 27, "tab": 61, "space": 62,
+    "enter": 66, "delete": 67, "menu": 82, "search": 84, "play_pause": 85, "escape": 111,
+    "recents": 187, "app_switch": 187,
+}
+
+
+def _list_monitors() -> list[dict[str, int]]:
+    """Monitores según mss: el 0 es el escritorio completo, del 1 en adelante cada pantalla."""
+    try:
+        import mss
+    except ImportError:
+        return []
+    with mss.mss() as sct:
+        return [
+            {"monitor": i, "left": m["left"], "top": m["top"], "width": m["width"], "height": m["height"]}
+            for i, m in enumerate(sct.monitors)
+        ]
 
 
 class ActionPlanner:
@@ -1512,6 +1535,57 @@ class ActionPlanner:
 
         return results
 
+    @staticmethod
+    def _target_monitor(action: Action) -> int:
+        try:
+            return int(action.params.get("monitor", config.get("vision", "target_monitor", default=0)) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    async def _locate_text_on_screen(self, query: str, monitor: int, *, exact: bool = False) -> list[dict[str, Any]]:
+        """Busca texto en pantalla con OCR.
+
+        Cada coincidencia trae x/y (centro) en el mismo espacio que click: el
+        del último screenshot si lo hubo, o coordenadas de pantalla si no; y
+        screen_x/screen_y para hacer click directo.
+        """
+        from backend.vision.engine import _get_logical_screen_size
+        from backend.vision.text_locate import find_text
+
+        png = await self._vision._capture_screen_with_retry(monitor=monitor)
+        lines = await self._vision.ocr_lines(png)
+        found = find_text(lines, query, exact=exact)
+        if not found:
+            return []
+
+        monitors = await asyncio.to_thread(_list_monitors)
+        mon = monitors[monitor] if 0 < monitor < len(monitors) else None
+        primary = monitors[1] if len(monitors) > 1 else (monitors[0] if monitors else None)
+        logical_w, logical_h = _get_logical_screen_size()
+        dpi_x = (primary["width"] / logical_w) if primary and logical_w else 1.0
+        dpi_y = (primary["height"] / logical_h) if primary and logical_h else 1.0
+        off_x, off_y = (mon["left"], mon["top"]) if mon else (0, 0)
+
+        dims = self._screen_dims or {}
+        to_click_x = (dims.get("sent_w") / dims.get("logical_w")) if dims.get("sent_w") and dims.get("logical_w") else 1.0
+        to_click_y = (dims.get("sent_h") / dims.get("logical_h")) if dims.get("sent_h") and dims.get("logical_h") else 1.0
+
+        matches = []
+        for item in found:
+            sx = (off_x + item["x"] + item["w"] / 2) / dpi_x
+            sy = (off_y + item["y"] + item["h"] / 2) / dpi_y
+            matches.append({
+                "text": item["text"],
+                "line": item["line"],
+                "x": int(round(sx * to_click_x)),
+                "y": int(round(sy * to_click_y)),
+                "screen_x": int(round(sx)),
+                "screen_y": int(round(sy)),
+                "width": int(round(item["w"] / dpi_x)),
+                "height": int(round(item["h"] / dpi_y)),
+            })
+        return matches
+
     def _scale_coordinates(self, x: int, y: int) -> tuple[int, int]:
         """
         Escala coordenadas del LLM (basadas en la imagen enviada) a coordenadas de pyautogui (lógicas).
@@ -1765,6 +1839,56 @@ class ActionPlanner:
                     result["success"] = bool(image_b64)
                     result["data"] = screen_data
                     result["message"] = "Captura tomada" if image_b64 else "Captura falló"
+
+                case "screen_read_text":
+                    monitor = self._target_monitor(action)
+                    text = await self._vision.extract_text(monitor=monitor)
+                    result["success"] = bool(text.strip())
+                    result["data"] = {"text": text, "monitor": monitor}
+                    result["message"] = (
+                        f"Texto leído en pantalla ({len(text)} caracteres)" if text.strip()
+                        else "No encontré texto en pantalla (o no hay OCR disponible)"
+                    )
+
+                case "screen_locate_text":
+                    query = str(action.params.get("text", action.params.get("query", ""))).strip()
+                    if not query:
+                        result["message"] = "Falta text en screen_locate_text"
+                        return result
+                    exact = str(action.params.get("exact", "false")).strip().lower() in ("1", "true", "si", "sí")
+                    matches = await self._locate_text_on_screen(query, self._target_monitor(action), exact=exact)
+                    result["data"] = {"query": query, "matches": matches}
+                    if not matches:
+                        result["message"] = f"No encontré '{query}' en pantalla"
+                        return result
+                    first = matches[0]
+                    result["success"] = True
+                    result["message"] = (
+                        f"{len(matches)} coincidencia(s) de '{query}'; la primera en "
+                        f"x={first['x']}, y={first['y']} ({first['line']!r})"
+                    )
+
+                case "screen_list_monitors":
+                    monitors = await asyncio.to_thread(_list_monitors)
+                    current = int(config.get("vision", "target_monitor", default=0) or 0)
+                    result["success"] = bool(monitors)
+                    result["data"] = {"monitors": monitors, "current": current}
+                    result["message"] = f"{max(0, len(monitors) - 1)} monitor(es); 0 = todos juntos, actual: {current}"
+
+                case "screen_set_monitor":
+                    monitors = await asyncio.to_thread(_list_monitors)
+                    try:
+                        index = int(action.params.get("monitor", -1))
+                    except (TypeError, ValueError):
+                        index = -1
+                    if not 0 <= index < len(monitors):
+                        result["message"] = f"Monitor inválido; hay {max(0, len(monitors) - 1)} (0 = todos juntos)"
+                        return result
+                    config.set("vision", "target_monitor", value=index)
+                    self._screen_dims = None  # las coordenadas del screenshot anterior ya no aplican
+                    result["success"] = True
+                    result["data"] = {"monitor": index}
+                    result["message"] = f"Monitor de trabajo: {index}"
 
                 case "chrome_list_profiles":
                     profiles = self._auto.discover_chrome_profiles()
@@ -3563,6 +3687,80 @@ class ActionPlanner:
                     result["message"] = f"Drag a ({x}, {y})" if ok else "Drag falló"
 
                 # ── Android Actions ────
+                case "adb_status" | "adb_list_devices":
+                    devices = await self._adb.list_devices()
+                    connected = bool(self._adb.is_connected())
+                    result["success"] = True
+                    result["data"] = {"connected": connected, "devices": devices}
+                    result["message"] = (
+                        f"Android conectado ({', '.join(devices) or 'sin serial'})" if connected
+                        else "No hay un Android conectado por ADB (activa la depuración USB y acepta la huella)"
+                    )
+
+                case "adb_key" | "adb_back" | "adb_home" | "adb_recents":
+                    name = {"adb_back": "back", "adb_home": "home", "adb_recents": "recents"}.get(
+                        action.type, str(action.params.get("key", action.params.get("keycode", ""))).strip().lower()
+                    )
+                    keycode = _ADB_KEYCODES.get(name)
+                    if keycode is None and name.isdigit():
+                        keycode = int(name)
+                    if keycode is None:
+                        result["message"] = f"Tecla Android desconocida: {name!r} (usa {', '.join(sorted(_ADB_KEYCODES))} o un keycode)"
+                        return result
+                    ok = await self._adb.press_key(keycode)
+                    result["success"] = ok
+                    result["message"] = f"Tecla Android {name} ({keycode})" if ok else "No se pudo enviar la tecla (¿Android conectado?)"
+
+                case "adb_long_press":
+                    x = int(action.params.get("x", 0))
+                    y = int(action.params.get("y", 0))
+                    duration = max(300, min(int(action.params.get("duration_ms", 800) or 800), 5000))
+                    ok = await self._adb.swipe(x, y, x, y, duration)
+                    result["success"] = ok
+                    result["message"] = f"Pulsación larga en ({x}, {y}) {duration} ms" if ok else "Pulsación larga falló"
+
+                case "adb_open_app":
+                    package = str(action.params.get("package", "")).strip()
+                    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+", package):
+                        result["message"] = "package debe ser el id de la app, por ejemplo com.whatsapp"
+                        return result
+                    output = await self._adb.shell(f"monkey -p {package} -c android.intent.category.LAUNCHER 1")
+                    ok = "No activities found" not in output and "Error" not in output and self._adb.is_connected()
+                    result["success"] = ok
+                    result["data"] = {"output": output.strip()[-300:]}
+                    result["message"] = f"App {package} abierta" if ok else f"No pude abrir {package} (¿está instalada?)"
+
+                case "adb_screenshot" | "adb_screen_read_text" | "adb_screen_locate_text":
+                    png = await self._adb.screenshot()
+                    if not png:
+                        result["message"] = "No pude capturar el Android (¿conectado por ADB?)"
+                        return result
+                    if action.type == "adb_screenshot":
+                        result["success"] = True
+                        result["data"] = {"image_base64": base64.b64encode(png).decode("ascii")}
+                        result["message"] = "Captura del Android tomada"
+                    elif action.type == "adb_screen_read_text":
+                        text = await self._vision.extract_text(image_bytes=png)
+                        result["success"] = bool(text.strip())
+                        result["data"] = {"text": text}
+                        result["message"] = f"Texto del Android ({len(text)} caracteres)" if text.strip() else "No encontré texto"
+                    else:
+                        from backend.vision.text_locate import find_text
+
+                        query = str(action.params.get("text", action.params.get("query_text", ""))).strip()
+                        if not query:
+                            result["message"] = "Falta text en adb_screen_locate_text"
+                            return result
+                        found = find_text(await self._vision.ocr_lines(png), query)
+                        matches = [{"text": m["text"], "x": int(m["x"] + m["w"] / 2), "y": int(m["y"] + m["h"] / 2)}
+                                   for m in found]
+                        result["success"] = bool(matches)
+                        result["data"] = {"query": query, "matches": matches}
+                        result["message"] = (
+                            f"'{query}' en x={matches[0]['x']}, y={matches[0]['y']} (usa adb_tap con esas coordenadas)"
+                            if matches else f"No encontré '{query}' en el Android"
+                        )
+
                 case "adb_tap":
                     x = int(action.params.get("x", 0))
                     y = int(action.params.get("y", 0))
