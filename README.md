@@ -63,6 +63,17 @@ proveedor, modelo, autonomía, voz y si quieres que te conozca mejor.
 
 ## Modo servidor y API remota
 
+En Linux, como servicio que sigue corriendo 24/7 (sin sudo; instala Python en
+tu home y lo deja en `systemctl --user`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/angelgabrieljacintohuayllasco/G-Mini-Agent/main/deploy/linux/install-server.sh | bash -s -- --tailscale
+```
+
+`--tailscale` escucha solo en la IP de Tailscale; sin opciones queda en
+`127.0.0.1` y `--host 0.0.0.0` lo abre a la red. Volver a correrlo actualiza.
+A mano, en cualquier sistema:
+
 ```bash
 pip install -r backend/requirements-server.txt
 python -m backend.main --headless --host 0.0.0.0 --port 8765
