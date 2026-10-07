@@ -328,8 +328,12 @@ class PolicyEngine:
             "skill_list",
             "skill_read",
             "skill_resource",
+            "connector_list",
         }:
             return self._review(action, "observe", "reading", "low", 0.95, "accion de lectura o cierre")
+
+        if action_type == "connector_call":
+            return self._review_connector_call(action)
 
         if action_type == "memory_forget":
             return self._review(action, "observe", "files", "medium", 0.80, "borra un recuerdo del usuario a pedido suyo")
@@ -435,6 +439,21 @@ class PolicyEngine:
             return self._review(action, "browser_dom", "reading", "medium", 0.88, "accion web no clasificada de forma especifica")
 
         return self._review(action, None, "system", "high", 0.35, "accion no catalogada; requiere revision humana")
+
+    def _review_connector_call(self, action: Action) -> dict[str, Any]:
+        from backend import connectors
+        from backend.connectors.base import ConnectorError
+
+        try:
+            connector = connectors.get_connector(str(action.params.get("connector", action.params.get("id", ""))))
+            spec = connector.get_action(str(action.params.get("action", "")))
+        except ConnectorError:
+            spec = None
+        if spec is None:
+            return self._review(action, "observe", "reading", "medium", 0.70, "consulta un conector no registrado")
+        if spec.writes:
+            return self._review(action, "development", "publishing", "high", 0.70, "modifica datos en un servicio externo")
+        return self._review(action, "observe", "reading", "low", 0.92, "consulta datos de un servicio externo")
 
     def _review_skill_run(self, action: Action) -> dict[str, Any]:
         skill_id = str(action.params.get("skill_id", "")).strip()

@@ -3655,6 +3655,32 @@ class ActionPlanner:
                     except Exception as app_exc:
                         result["message"] = f"No se pudo abrir '{app_name}': {app_exc}"
 
+                case "connector_list":
+                    from backend import connectors
+
+                    result["success"] = True
+                    result["data"] = {"connectors": connectors.list_status()}
+                    result["message"] = f"{len(result['data']['connectors'])} conectores"
+
+                case "connector_call":
+                    from backend import connectors
+                    from backend.connectors.base import ConnectorError
+
+                    connector_id = str(action.params.get("connector", action.params.get("id", ""))).strip()
+                    action_name = str(action.params.get("action", "")).strip()
+                    params = action.params.get("params") or {}
+                    if not isinstance(params, dict):
+                        result["message"] = "params debe ser un objeto JSON"
+                        return result
+                    try:
+                        data = await connectors.call(connector_id, action_name, params)
+                    except ConnectorError as exc:
+                        result["message"] = str(exc)
+                        return result
+                    result["success"] = True
+                    result["data"] = data if isinstance(data, dict) else {"result": data}
+                    result["message"] = f"{connector_id}.{action_name} listo"
+
                 case "skill_list":
                     from backend.core import agent_skills
 

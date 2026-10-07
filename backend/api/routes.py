@@ -4117,3 +4117,67 @@ async def set_skill_env(skill_id: str, request: Request):
         else:
             config.delete_api_key(env_vault_name(var))
     return {"ok": True, "updated": sorted(body)}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Conectores (clima, tipo de cambio, feriados, GitHub, paquetes, RSS...)
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/connectors")
+async def list_connectors():
+    from backend import connectors
+
+    return {"ok": True, "connectors": await asyncio.to_thread(connectors.list_status)}
+
+
+@router.put("/connectors/{connector_id}")
+async def configure_connector(connector_id: str, request: Request):
+    """Guarda ajustes (config) y secretos (keyring). Un secreto vacío lo borra."""
+    from backend import connectors
+    from backend.connectors.base import ConnectorError
+
+    try:
+        connector = connectors.get_connector(connector_id)
+    except ConnectorError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    body = await _optional_json(request)
+    fields = {f.key: f for f in connector.fields}
+    for key, value in body.items():
+        if key == "enabled":
+            config.set("connectors", connector.id, "enabled", value=bool(value))
+        elif key in fields and fields[key].secret:
+            if str(value or "").strip():
+                config.set_api_key(connector.vault_name(key), str(value).strip())
+            else:
+                config.delete_api_key(connector.vault_name(key))
+        elif key in fields:
+            config.set("connectors", connector.id, key, value=value)
+        else:
+            raise HTTPException(status_code=400, detail=f"Campo desconocido: {key}")
+    _refresh_agent_profile()  # el índice de conectores va en el system prompt
+    return {"ok": True, "connector": connector.status()}
+
+
+@router.post("/connectors/{connector_id}/test")
+async def test_connector(connector_id: str):
+    from backend import connectors
+    from backend.connectors.base import ConnectorError
+
+    try:
+        result = await asyncio.wait_for(connectors.get_connector(connector_id).test(), 30)
+    except (ConnectorError, asyncio.TimeoutError) as exc:
+        return {"ok": False, "message": str(exc) or "Sin respuesta"}
+    return {"ok": bool(result.get("ok")), "message": result.get("message", "")}
+
+
+@router.post("/connectors/{connector_id}/call")
+async def call_connector(connector_id: str, request: Request):
+    from backend import connectors
+    from backend.connectors.base import ConnectorError
+
+    body = await _optional_json(request)
+    try:
+        data = await connectors.call(connector_id, str(body.get("action") or ""), body.get("params") or {})
+    except ConnectorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "data": data}

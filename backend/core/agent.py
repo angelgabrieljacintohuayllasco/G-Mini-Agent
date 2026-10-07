@@ -2294,6 +2294,10 @@ class AgentCore:
         if skills_index:
             prompt = prompt + "\n\n" + skills_index
 
+        connectors_index = self._connectors_prompt_index()
+        if connectors_index:
+            prompt = prompt + "\n\n" + connectors_index
+
         self._memory.set_system_prompt(prompt)
         logger.debug(
             f"System prompt aplicado: total_len={len(prompt)}, "
@@ -2306,6 +2310,16 @@ class AgentCore:
             f"SYSTEM PROMPT APPLIED [len={len(prompt)}]:\n"
             f"--- SYSTEM PROMPT START ---\n{prompt}\n--- SYSTEM PROMPT END ---"
         )
+
+    @staticmethod
+    def _connectors_prompt_index() -> str:
+        try:
+            from backend import connectors
+
+            return connectors.build_prompt_index()
+        except Exception as exc:
+            logger.warning(f"Índice de conectores no disponible: {exc}")
+            return ""
 
     @staticmethod
     def _skills_prompt_index() -> str:
