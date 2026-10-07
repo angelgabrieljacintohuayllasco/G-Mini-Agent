@@ -4227,6 +4227,237 @@ select option {
     gap: 4px;
 }
 
+/* ── Configuración > Memoria ───────────────────────────────── */
+.memory-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+}
+
+.memory-stats:empty {
+    display: none;
+}
+
+.memory-stat {
+    display: flex;
+    flex-direction: column;
+    min-width: 104px;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+}
+
+.memory-stat.is-wide {
+    flex: 1 1 200px;
+    min-width: 0;
+}
+
+.memory-stat-value {
+    overflow: hidden;
+    font-size: var(--fs-md);
+    font-weight: var(--fw-semibold);
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.memory-stat-value.is-mono {
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+}
+
+.memory-stat-label {
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+}
+
+.memory-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.memory-search.sidebar-search {
+    flex: 1 1 220px;
+    margin: 0;
+}
+
+.memory-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+}
+
+.memory-filter {
+    height: 26px;
+    padding: 0 var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: var(--fs-xs);
+    cursor: pointer;
+    transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out),
+        color var(--dur-fast) var(--ease-out);
+}
+
+.memory-filter:hover {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.memory-filter[aria-pressed="true"] {
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    background: var(--accent-soft);
+    color: var(--text-primary);
+}
+
+.memory-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    transition: opacity var(--dur) var(--ease-out);
+}
+
+.memory-list[aria-busy="true"] {
+    opacity: 0.55;
+}
+
+.memory-item {
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+    animation: fade-in var(--dur) var(--ease-out) both;
+}
+
+.memory-item-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.memory-item-meta {
+    margin-left: auto;
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.memory-chip {
+    --chip: var(--text-secondary);
+    padding: 1px var(--space-2);
+    border-radius: var(--radius-pill);
+    background: color-mix(in srgb, var(--chip) 14%, transparent);
+    color: var(--chip);
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-medium);
+}
+
+.memory-chip[data-category="fact"] { --chip: var(--cat-browser); }
+.memory-chip[data-category="preference"] { --chip: var(--cat-creative); }
+.memory-chip[data-category="task"] { --chip: var(--cat-interaction); }
+.memory-chip[data-category="learning"] { --chip: var(--cat-vision); }
+.memory-chip[data-category="entity"] { --chip: var(--cat-file); }
+.memory-chip[data-category="relationship"] { --chip: var(--cat-terminal); }
+.memory-chip[data-category="skill_memory"] { --chip: var(--accent-text); }
+
+.memory-item-content {
+    margin: var(--space-2) 0;
+    font-size: var(--fs-sm);
+    line-height: var(--lh-base);
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+    user-select: text;
+}
+
+.memory-item-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+}
+
+.memory-importance {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.memory-importance-label {
+    margin-right: var(--space-1);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+}
+
+.memory-importance button {
+    width: 14px;
+    height: 14px;
+    padding: 0;
+    border: 1.5px solid var(--border-strong);
+    border-radius: 50%;
+    background: transparent;
+    cursor: pointer;
+    transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+
+.memory-importance button.is-filled {
+    border-color: var(--accent);
+    background: var(--accent);
+}
+
+.memory-delete.is-confirming {
+    width: auto;
+    padding: 0 var(--space-2);
+    background: var(--error-soft);
+    color: var(--error);
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-medium);
+}
+
+.memory-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-6) var(--space-3);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius);
+    font-size: var(--fs-sm);
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.memory-empty .icon {
+    width: 24px;
+    height: 24px;
+    opacity: 0.7;
+}
+
+.setting-group.danger-zone {
+    border-color: color-mix(in srgb, var(--error) 35%, var(--border));
+}
+
+.setting-group.danger-zone > label:not(.setting-toggle) {
+    color: var(--error);
+}
+
+.danger-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.danger-row .setting-input {
+    flex: 1 1 180px;
+    font-family: var(--font-mono);
+    letter-spacing: 0.04em;
+}
+
 /* ── Responsive ────────────────────────────────────────────── */
 
 /* Panel lateral como cajón sobre el chat cuando no hay ancho para ambos. */
