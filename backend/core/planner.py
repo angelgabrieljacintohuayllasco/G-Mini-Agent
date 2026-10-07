@@ -27,7 +27,7 @@ from backend.core.ide_manager import IDEManager
 from backend.core.cost_tracker import get_cost_tracker
 from backend.core.gateway_service import get_gateway
 from backend.core.mcp_registry import MCPRegistry, get_mcp_registry
-from backend.core.mcp_runtime import MCPRuntime
+from backend.core.mcp_runtime import MCPRuntime, get_mcp_runtime
 from backend.core.payment_registry import PaymentRegistry
 from backend.core.scheduler import get_scheduler
 from backend.core.skill_registry import SkillRegistry
@@ -569,7 +569,9 @@ class ActionPlanner:
         self._mcp = mcp_registry or get_mcp_registry()
         self._payments = payment_registry or PaymentRegistry()
         self._skill_runtime = skill_runtime or SkillRuntime(self._skills)
-        self._mcp_runtime = mcp_runtime or MCPRuntime(self._mcp)
+        # Sin registry propio se comparte el runtime del proceso: un solo
+        # proceso por servidor MCP entre agente, scheduler y API.
+        self._mcp_runtime = mcp_runtime or (MCPRuntime(self._mcp) if mcp_registry else get_mcp_runtime())
         # Screen dimensions tracking for coordinate scaling
         self._screen_dims: dict[str, int] | None = None
 

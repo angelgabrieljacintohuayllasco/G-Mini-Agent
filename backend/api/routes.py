@@ -20,7 +20,7 @@ from loguru import logger
 from backend.config import config
 from backend.core.modes import PREDEFINED_MODES, get_mode, get_mode_behavior_prompt, list_modes
 from backend.core.mcp_registry import MCPRegistry
-from backend.core.mcp_runtime import MCPRuntime
+from backend.core.mcp_runtime import MCPRuntime, get_mcp_runtime
 from backend.core.mcp_registry import get_mcp_registry
 from backend.core.payment_registry import PaymentRegistry
 from backend.core.prompt_manager import list_core_prompts, reset_prompt_override, set_prompt_override
@@ -146,8 +146,8 @@ def _get_payment_registry() -> PaymentRegistry:
 
 
 def _get_mcp_runtime() -> MCPRuntime:
-    registry = _get_mcp_registry()
-    return MCPRuntime(registry)
+    # Antes se creaba un runtime (y un proceso MCP) nuevo en cada request.
+    return get_mcp_runtime()
 
 
 def _get_skill_runtime() -> SkillRuntime:

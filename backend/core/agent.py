@@ -2298,7 +2298,10 @@ class AgentCore:
             if not runtime:
                 logger.debug("_get_mcp_tools_context: mcp_runtime no disponible en planner")
                 return ""
-            summary = runtime.get_all_tools_summary()
+            # Solo caché: esto corre en el event loop y lanzar procesos MCP
+            # aquí congelaba el backend hasta 20 s por servidor.
+            summary = runtime.get_cached_tools_summary()
+            self._refresh_mcp_tools_in_background(runtime)
             if not summary:
                 logger.debug("_get_mcp_tools_context: get_all_tools_summary retornó vacío")
                 return ""
@@ -2316,6 +2319,29 @@ class AgentCore:
         except Exception as exc:
             logger.warning(f"No se pudo generar contexto MCP: {exc}", exc_info=True)
             return ""
+
+    def _refresh_mcp_tools_in_background(self, runtime) -> None:
+        """Descubre tools MCP fuera del event loop y reaplica el prompt si cambiaron."""
+        task = getattr(self, "_mcp_refresh_task", None)
+        if task is not None and not task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        async def _refresh() -> None:
+            before = runtime.get_cached_tools_summary()
+            try:
+                await asyncio.to_thread(runtime.discover_all_tools)
+            except Exception as exc:
+                logger.debug(f"MCP: descubrimiento en segundo plano falló: {exc}")
+                return
+            if runtime.get_cached_tools_summary() != before:
+                self._apply_system_prompt()
+                logger.info("MCP: tools actualizadas en el system prompt")
+
+        self._mcp_refresh_task = loop.create_task(_refresh())
 
     def reload_prompt_configuration(self) -> None:
         self._base_system_prompt = _load_system_prompt()
@@ -2525,20 +2551,12 @@ class AgentCore:
         self._running = True
         self._cancel_event.clear()
 
-        # Phase 4: MCP auto-discovery — descubre tools y re-aplica system prompt con contexto MCP
+        # Phase 4: MCP auto-discovery en segundo plano: el arranque no espera a
+        # servidores lentos y el prompt se reaplica cuando llegan las tools.
         if self._planner and bool(config.get("mcp", "enabled", default=True)):
-            try:
-                import asyncio
-                mcp_summary = await asyncio.to_thread(
-                    lambda: getattr(self._planner, '_mcp_runtime', None) and self._planner._mcp_runtime.get_all_tools_summary()
-                )
-                if mcp_summary:
-                    self._apply_system_prompt()
-                    logger.info("MCP auto-discovery completado — tools inyectadas en system prompt")
-                else:
-                    logger.info("MCP auto-discovery: sin tools disponibles")
-            except Exception as exc:
-                logger.warning(f"MCP auto-discovery falló (no crítico): {exc}")
+            runtime = getattr(self._planner, "_mcp_runtime", None)
+            if runtime is not None:
+                self._refresh_mcp_tools_in_background(runtime)
 
         logger.info("AgentCore inicializado correctamente")
 

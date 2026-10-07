@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ DEFAULT_PROTOCOL_VERSION = "2024-11-05"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30
 TOOLS_CACHE_TTL_SECONDS = 300  # 5 minutos
 GRACEFUL_SHUTDOWN_SECONDS = 5
+FAILED_DISCOVERY_BACKOFF_SECONDS = 60  # no reintentar en cada prompt a un servidor que falla
 
 _logger = logging.getLogger(__name__)
 
@@ -36,13 +38,16 @@ class _MCPProcessSession:
         self.server = server
         self.timeout_seconds = timeout_seconds
         self.process: subprocess.Popen[str] | None = None
-        self._stdout_queue: queue.Queue[dict[str, Any]] = queue.Queue()
-        self._stderr_lines: list[str] = []
-        self._notifications: list[dict[str, Any]] = []
+        # Una cola por request en vuelo: dos llamadas concurrentes al mismo
+        # servidor ya no se roban ni descartan las respuestas.
+        self._pending: dict[int, queue.Queue[dict[str, Any]]] = {}
+        self._stderr_lines: deque[str] = deque(maxlen=200)
+        self._notifications: deque[dict[str, Any]] = deque(maxlen=100)
         self._request_id = 0
         self.protocol_version = ""
         self._initialized = False
         self._lock = threading.Lock()
+        self._init_lock = threading.Lock()
 
     @property
     def alive(self) -> bool:
@@ -54,11 +59,11 @@ class _MCPProcessSession:
 
     @property
     def stderr_output(self) -> str:
-        return "\n".join(self._stderr_lines[-50:]).strip()
+        return "\n".join(list(self._stderr_lines)[-50:]).strip()
 
     @property
     def notifications(self) -> list[dict[str, Any]]:
-        return list(self._notifications)
+        return list(self._notifications)[-20:]
 
     def start(self) -> None:
         """Inicia el proceso MCP heredando el entorno completo del host."""
@@ -130,9 +135,13 @@ class _MCPProcessSession:
         self.process = None
 
     def initialize(self) -> dict[str, Any]:
-        """Handshake MCP: initialize + notifications/initialized."""
-        if self._initialized:
-            return {"result": {"protocolVersion": self.protocol_version}}
+        """Handshake MCP: initialize + notifications/initialized (una sola vez aunque lleguen dos hilos)."""
+        with self._init_lock:
+            if self._initialized:
+                return {"result": {"protocolVersion": self.protocol_version}}
+            return self._handshake()
+
+    def _handshake(self) -> dict[str, Any]:
         response = self.request(
             "initialize",
             {
@@ -153,18 +162,24 @@ class _MCPProcessSession:
         return response
 
     def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        reply_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1)
         with self._lock:
             self._request_id += 1
             request_id = self._request_id
-        self._send(
-            {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "method": method,
-                "params": params or {},
-            }
-        )
-        return self._wait_for_response(request_id)
+            self._pending[request_id] = reply_queue
+        try:
+            self._send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": method,
+                    "params": params or {},
+                }
+            )
+            return self._wait_for_response(request_id, reply_queue)
+        finally:
+            with self._lock:
+                self._pending.pop(request_id, None)
 
     def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
         self._send(
@@ -181,55 +196,89 @@ class _MCPProcessSession:
         self.process.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
         self.process.stdin.flush()
 
-    def _wait_for_response(self, request_id: int) -> dict[str, Any]:
+    def _wait_for_response(self, request_id: int, reply_queue: queue.Queue[dict[str, Any]]) -> dict[str, Any]:
         deadline = time.time() + self.timeout_seconds
         while time.time() < deadline:
-            remaining = max(0.05, deadline - time.time())
             try:
-                message = self._stdout_queue.get(timeout=remaining)
+                message = reply_queue.get(timeout=min(0.5, max(0.05, deadline - time.time())))
             except queue.Empty:
-                if self.process is not None and self.process.poll() is not None:
+                if self.process is None or self.process.poll() is not None:
                     raise RuntimeError(
                         "El servidor MCP finalizo antes de responder. "
                         + (self.stderr_output or "Sin detalles en stderr.")
                     )
                 continue
-
-            if message.get("id") == request_id:
-                if "error" in message:
-                    error = message.get("error") or {}
-                    raise RuntimeError(
-                        f"MCP {self.server['id']} devolvio error {error.get('code')}: {error.get('message')}"
-                    )
-                return message
-
-            if message.get("method"):
-                self._notifications.append(message)
+            if message.get("_closed"):
+                raise RuntimeError(
+                    "El servidor MCP cerro la conexion. " + (self.stderr_output or "Sin detalles en stderr.")
+                )
+            if "error" in message:
+                error = message.get("error") or {}
+                raise RuntimeError(
+                    f"MCP {self.server['id']} devolvio error {error.get('code')}: {error.get('message')}"
+                )
+            return message
 
         raise TimeoutError(
             f"Timeout esperando respuesta MCP de {self.server['id']} tras {self.timeout_seconds}s."
         )
 
+    def _answer_server_request(self, payload: dict[str, Any]) -> None:
+        """Responde peticiones que el servidor le hace al cliente (ping, roots/list)."""
+        method = str(payload.get("method") or "")
+        if method == "ping":
+            reply: dict[str, Any] = {"jsonrpc": "2.0", "id": payload["id"], "result": {}}
+        elif method == "roots/list":
+            reply = {"jsonrpc": "2.0", "id": payload["id"], "result": {"roots": []}}
+        else:
+            reply = {
+                "jsonrpc": "2.0",
+                "id": payload["id"],
+                "error": {"code": -32601, "message": f"Metodo no soportado por G-Mini: {method}"},
+            }
+        try:
+            self._send(reply)
+        except Exception as exc:
+            _logger.debug("MCP: no se pudo responder %s: %s", method, exc)
+
     def _stdout_loop(self) -> None:
         if self.process is None or self.process.stdout is None:
             return
-        for raw_line in self.process.stdout:
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                payload = json.loads(line)
-            except Exception:
-                self._stdout_queue.put(
-                    {
-                        "jsonrpc": "2.0",
-                        "method": "_invalid",
-                        "params": {"raw": line},
-                    }
-                )
-                continue
-            if isinstance(payload, dict):
-                self._stdout_queue.put(payload)
+        try:
+            for raw_line in self.process.stdout:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except Exception:
+                    self._notifications.append({"method": "_invalid", "params": {"raw": line[:500]}})
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                if "method" in payload:
+                    if "id" in payload:
+                        self._answer_server_request(payload)
+                    else:
+                        self._notifications.append(payload)
+                    continue
+                request_id = payload.get("id")
+                with self._lock:
+                    reply_queue = self._pending.get(request_id)
+                if reply_queue is not None:
+                    try:
+                        reply_queue.put_nowait(payload)
+                    except queue.Full:
+                        pass
+        finally:
+            # EOF: despertar a quien espere respuesta para que falle rápido.
+            with self._lock:
+                waiting = list(self._pending.values())
+            for reply_queue in waiting:
+                try:
+                    reply_queue.put_nowait({"_closed": True})
+                except queue.Full:
+                    pass
 
     def _stderr_loop(self) -> None:
         if self.process is None or self.process.stderr is None:
@@ -316,6 +365,7 @@ class MCPRuntime:
         self._registry = registry or MCPRegistry()
         self._pool = MCPSessionPool()
         self._tools_cache: dict[str, _ToolsCacheEntry] = {}
+        self._failed_discovery: dict[str, float] = {}
         self._cache_lock = threading.Lock()
 
     @property
@@ -465,20 +515,41 @@ class MCPRuntime:
             if cached is not None:
                 result[sid] = cached
                 continue
+            with self._cache_lock:
+                failed_at = self._failed_discovery.get(sid, 0.0)
+            if time.time() - failed_at < FAILED_DISCOVERY_BACKOFF_SECONDS:
+                result[sid] = []
+                continue
 
             try:
                 data = self.list_tools(sid, timeout_seconds=timeout_seconds)
                 if data.get("success"):
                     result[sid] = data.get("tools", [])
+                    with self._cache_lock:
+                        self._failed_discovery.pop(sid, None)
             except Exception as exc:
                 _logger.warning("Auto-discovery falló para %s: %s", sid, exc)
+                with self._cache_lock:
+                    self._failed_discovery[sid] = time.time()
                 result[sid] = []
 
         return result
 
+    def cached_tools_by_server(self) -> dict[str, list[dict[str, Any]]]:
+        """Tools ya descubiertas (no lanza procesos: seguro para el event loop)."""
+        with self._cache_lock:
+            return {sid: entry.tools for sid, entry in self._tools_cache.items() if entry.tools}
+
+    def get_cached_tools_summary(self) -> str:
+        """Resumen para el prompt usando solo la caché."""
+        return self._format_tools_summary(self.cached_tools_by_server())
+
     def get_all_tools_summary(self, timeout_seconds: int | None = None) -> str:
-        """Genera un resumen legible de todas las tools MCP disponibles para inyectar en contexto del LLM."""
-        all_tools = self.discover_all_tools(timeout_seconds=timeout_seconds)
+        """Descubre (bloqueante) y resume las tools. Llamar fuera del event loop."""
+        return self._format_tools_summary(self.discover_all_tools(timeout_seconds=timeout_seconds))
+
+    @staticmethod
+    def _format_tools_summary(all_tools: dict[str, list[dict[str, Any]]]) -> str:
         if not all_tools:
             return ""
 
@@ -541,3 +612,26 @@ class MCPRuntime:
 
         timeout = requested_value or configured_value or DEFAULT_REQUEST_TIMEOUT_SECONDS
         return max(3, min(timeout, 180))
+
+
+_shared_runtime: MCPRuntime | None = None
+_shared_lock = threading.Lock()
+
+
+def get_mcp_runtime() -> MCPRuntime:
+    """Runtime MCP único del proceso (planner, scheduler y API comparten procesos)."""
+    global _shared_runtime
+    with _shared_lock:
+        if _shared_runtime is None:
+            from backend.core.mcp_registry import get_mcp_registry
+
+            _shared_runtime = MCPRuntime(get_mcp_registry())
+        return _shared_runtime
+
+
+def shutdown_mcp_runtime() -> None:
+    global _shared_runtime
+    with _shared_lock:
+        runtime, _shared_runtime = _shared_runtime, None
+    if runtime is not None:
+        runtime.shutdown()

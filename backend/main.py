@@ -83,11 +83,14 @@ async def lifespan(app: FastAPI):
     finally:
         await scheduler.shutdown()
         await gateway.shutdown()
-        # Cerrar sesiones MCP persistentes
+        # Cerrar sesiones MCP persistentes (runtime compartido + el del planner si es propio)
         try:
+            from backend.core.mcp_runtime import shutdown_mcp_runtime
+
             if agent_core._planner and hasattr(agent_core._planner, '_mcp_runtime'):
                 agent_core._planner._mcp_runtime.shutdown()
-                logger.info("MCPSessionPool cerrado correctamente")
+            shutdown_mcp_runtime()
+            logger.info("MCPSessionPool cerrado correctamente")
         except Exception as exc:
             logger.warning(f"Error cerrando MCPSessionPool: {exc}")
         try:
