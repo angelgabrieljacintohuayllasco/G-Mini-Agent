@@ -41,7 +41,8 @@ from urllib.parse import urlparse
 import yaml
 from loguru import logger
 
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+from backend.config import ROOT_DIR  # noqa: E402 - GMINI_HOME si está definido
+
 SKILLS_DIR = ROOT_DIR / "data" / "agent_skills"
 BUNDLED_DIR = SKILLS_DIR / "bundled"
 INSTALLED_DIR = SKILLS_DIR / "installed"

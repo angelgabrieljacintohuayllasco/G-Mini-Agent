@@ -12,8 +12,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Agregar el directorio raiz al path para imports
-ROOT_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT_DIR))
+CODE_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(CODE_ROOT))
 
 import socketio
 import uvicorn
@@ -211,6 +211,11 @@ def _parse_args(argv: list[str] | None = None):
 def main(argv: list[str] | None = None):
     """Entry point."""
     args = _parse_args(argv)
+    from backend.config import CODE_DIR, ROOT_DIR
+
+    if ROOT_DIR != CODE_DIR:
+        os.chdir(ROOT_DIR)  # las rutas relativas de la config ("data/...") van a GMINI_HOME
+        logger.info(f"Datos en GMINI_HOME: {ROOT_DIR}")
     if args.headless:
         os.environ["GMINI_HEADLESS"] = "1"
     host = args.host or os.environ.get("GMINI_BIND_HOST") or config.get("server", "host", default="127.0.0.1")

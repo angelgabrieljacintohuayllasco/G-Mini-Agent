@@ -16,7 +16,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from backend.config import config
+from backend.config import ROOT_DIR, config
 from backend.core.avatar_context import build_avatar_context
 from backend.core.modes import build_autonomy_context
 
@@ -54,7 +54,7 @@ class RealTimeVoice:
             return cls._cached_providers
         
         # Ruta al archivo YAML dinámico
-        config_path = Path(__file__).resolve().parent.parent.parent / "data" / "realtime_models.yaml"
+        config_path = ROOT_DIR / "data" / "realtime_models.yaml"
         
         if config_path.exists():
             try:

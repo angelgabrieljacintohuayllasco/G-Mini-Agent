@@ -15,9 +15,10 @@ from typing import Any
 import aiosqlite
 from loguru import logger
 
+from backend.config import ROOT_DIR as _DATA_ROOT
 from backend.providers.base import LLMMessage
 
-DB_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+DB_DIR = _DATA_ROOT / "data"
 DB_DIR.mkdir(exist_ok=True)
 DB_PATH = DB_DIR / "memory.db"
 

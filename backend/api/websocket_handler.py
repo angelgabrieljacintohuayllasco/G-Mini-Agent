@@ -11,6 +11,7 @@ from typing import Any
 import socketio
 from loguru import logger
 
+from backend.config import ROOT_DIR
 from backend.api.schemas import (
     AgentMessage,
     AgentApprovalEvent,
@@ -216,7 +217,7 @@ async def handle_user_message(sid: str, data: dict) -> None:
         if _current_provider == "google" and _current_model:
             from pathlib import Path as _LPath
             import yaml as _lyaml
-            _my = _LPath(__file__).resolve().parent.parent.parent / "data" / "models.yaml"
+            _my = _LPath(ROOT_DIR) / "data" / "models.yaml"
             with open(_my, "r", encoding="utf-8") as _lf:
                 _lcat = _lyaml.safe_load(_lf) or {}
             _lgm = _lcat.get("llm", {}).get("google", {})
@@ -565,7 +566,7 @@ async def handle_check_realtime(sid: str, data: dict) -> None:
 
         # Consultar live_api del modelo en models.yaml (aplica a AI Studio y Vertex AI)
         try:
-            _models_yaml = _Path(__file__).resolve().parent.parent.parent / "data" / "models.yaml"
+            _models_yaml = _Path(ROOT_DIR) / "data" / "models.yaml"
             with open(_models_yaml, "r", encoding="utf-8") as _f:
                 _catalog = _yaml.safe_load(_f) or {}
             _google_models = _catalog.get("llm", {}).get("google", {})

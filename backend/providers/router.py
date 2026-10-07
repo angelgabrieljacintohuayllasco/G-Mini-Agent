@@ -16,7 +16,7 @@ from typing import Any, AsyncGenerator
 import yaml
 from loguru import logger
 
-from backend.config import config
+from backend.config import ROOT_DIR, config
 from backend.providers import registry
 from backend.providers.anthropic_provider import AnthropicProvider
 from backend.providers.base import (
@@ -71,7 +71,7 @@ class ModelRouter:
         if self._models_catalog is not None:
             return self._models_catalog
         try:
-            yaml_path = Path(__file__).resolve().parent.parent.parent / "data" / "models.yaml"
+            yaml_path = ROOT_DIR / "data" / "models.yaml"
             with open(yaml_path, "r", encoding="utf-8") as f:
                 self._models_catalog = yaml.safe_load(f) or {}
         except Exception as exc:

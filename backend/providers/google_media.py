@@ -19,10 +19,10 @@ from typing import Any
 
 from loguru import logger
 
-from backend.config import config
+from backend.config import ROOT_DIR as _DATA_ROOT, config
 
 # Directorio de salida para archivos generados
-OUTPUT_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "generated"
+OUTPUT_DIR = _DATA_ROOT / "data" / "generated"
 
 # Flag de cancelación para operaciones de larga duración (video polling, music gen)
 _cancel_requested = False

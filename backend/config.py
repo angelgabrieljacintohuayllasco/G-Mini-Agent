@@ -14,9 +14,35 @@ import yaml
 import keyring
 
 SERVICE_NAME = "gmini-agent"
-ROOT_DIR = Path(__file__).resolve().parent.parent
-DEFAULT_CONFIG = ROOT_DIR / "config.default.yaml"
+CODE_DIR = Path(__file__).resolve().parent.parent
+# GMINI_HOME separa los datos del programa: con una instalación de solo
+# lectura (AppImage, deb, Program Files) o en Docker, la config, las bases y
+# los archivos generados viven ahí. Sin la variable todo queda junto al código.
+_GMINI_HOME = os.environ.get("GMINI_HOME", "").strip()
+ROOT_DIR = Path(_GMINI_HOME).expanduser().resolve() if _GMINI_HOME else CODE_DIR
+DEFAULT_CONFIG = CODE_DIR / "config.default.yaml"
 USER_CONFIG = ROOT_DIR / "config.user.yaml"
+# Recursos que trae el programa dentro de data/ (se copian a GMINI_HOME al arrancar).
+SHIPPED_DATA = ("prompts", "skills", "agent_skills/bundled", "crews", "models.yaml", "realtime_models.yaml")
+
+
+def sync_shipped_data(code_dir: Path = CODE_DIR, home_dir: Path = ROOT_DIR) -> None:
+    """Copia a GMINI_HOME los prompts, catálogos y skills incluidas del programa.
+
+    Se repite en cada arranque para que una actualización llegue a la carpeta
+    de datos; lo que el usuario cambia (overrides de prompts, skills propias)
+    vive en la config o en otras carpetas y no se pisa.
+    """
+    if home_dir == code_dir:
+        return
+    for rel in SHIPPED_DATA:
+        src, dst = code_dir / "data" / rel, home_dir / "data" / rel
+        if src.is_dir():
+            shutil.copytree(src, dst, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        elif src.is_file():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -43,6 +69,9 @@ class Config:
         return cls._instance
 
     def _load(self) -> None:
+        if ROOT_DIR != CODE_DIR:
+            ROOT_DIR.mkdir(parents=True, exist_ok=True)
+            sync_shipped_data()
         # Cargar defaults
         with open(DEFAULT_CONFIG, "r", encoding="utf-8") as f:
             self._data = yaml.safe_load(f) or {}

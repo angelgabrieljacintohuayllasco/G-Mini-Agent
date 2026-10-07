@@ -17,7 +17,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from loguru import logger
 
-from backend.config import config
+from backend.config import ROOT_DIR as _DATA_ROOT, config
 from backend.core.modes import PREDEFINED_MODES, get_mode, get_mode_behavior_prompt, list_modes
 from backend.core.mcp_registry import MCPRegistry
 from backend.core.mcp_runtime import MCPRuntime, get_mcp_runtime
@@ -101,7 +101,7 @@ router = APIRouter()
 _start_time = time.time()
 
 # ── Servir archivos multimedia generados ──────────────────────────
-_GENERATED_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "generated"
+_GENERATED_DIR = _DATA_ROOT / "data" / "generated"
 _MIME_MAP = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
     ".mp4": "video/mp4", ".webm": "video/webm",
@@ -197,7 +197,7 @@ async def health():
 
 # ── Models catalog (YAML source of truth) ────────────────────────
 
-_MODELS_YAML_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "models.yaml"
+_MODELS_YAML_PATH = _DATA_ROOT / "data" / "models.yaml"
 _models_catalog_cache: dict | None = None
 
 
