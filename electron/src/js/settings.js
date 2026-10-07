@@ -241,6 +241,10 @@ class SettingsManager {
             btn.addEventListener('click', () => this._switchPage(btn.dataset.page));
         });
         this.panel.querySelector('.settings-nav')?.addEventListener('keydown', (e) => this._onNavKeydown(e));
+        document.getElementById('btn-rerun-onboarding')?.addEventListener('click', () => {
+            this.hide();
+            window.gminiOnboarding?.start({ rerun: true });
+        });
         this._initAppearanceControls();
         this._enhanceLabels();
 
@@ -734,6 +738,7 @@ class SettingsManager {
         (activeTab || this.panel.querySelector('.settings-nav-item'))?.focus();
         if (!this._onPanelKeydown) this._onPanelKeydown = (e) => this._handlePanelKeydown(e);
         document.addEventListener('keydown', this._onPanelKeydown, true);
+        document.dispatchEvent(new CustomEvent('gmini:settings-page', { detail: { page: this.currentPage, open: true } }));
     }
 
     hide() {
@@ -794,6 +799,8 @@ class SettingsManager {
         });
         const content = this.panel.querySelector('.settings-content');
         if (content && changed) content.scrollTop = 0;
+        // Las páginas con carga diferida (Memoria) se enteran por este evento.
+        document.dispatchEvent(new CustomEvent('gmini:settings-page', { detail: { page: pageId, open: this.isOpen() } }));
     }
 
     /**
@@ -1563,6 +1570,7 @@ class SettingsManager {
                     this.appStartHiddenToTrayCheckbox.checked = this.currentStartHiddenToTray;
                 }
                 this._applyAppearanceFromConfig(appConfig);
+                window.gminiIdentity?.applyAppConfig(appConfig);
             }
         } catch (err) {
             // Backend no listo
@@ -1599,6 +1607,7 @@ class SettingsManager {
             if (resp.ok) {
                 const data = await resp.json();
                 const agentConfig = data?.data?.agent || {};
+                window.gminiIdentity?.applyAgentConfig(agentConfig);
                 this.currentAutonomy = agentConfig.autonomy || 'media';
                 if (this.autonomySelect) {
                     this.autonomySelect.value = this.currentAutonomy;

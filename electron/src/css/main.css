@@ -2069,6 +2069,28 @@ body.executing-task .status-bar::after,
     min-height: 168px;
 }
 
+/* Texto libre (carácter del agente): tipografía de lectura, no monoespaciada. */
+.setting-textarea.is-prose {
+    min-height: 96px;
+    font-family: var(--font);
+    font-size: var(--fs-sm);
+}
+
+.setting-meta-row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+}
+
+.setting-meta-row > :last-child {
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
+}
+
+.setting-help-text.is-error {
+    color: var(--error);
+}
+
 :is(.setting-select, .setting-input, .api-key-input, .setting-textarea, .realtime-voice-select):hover {
     border-color: color-mix(in srgb, var(--text-muted) 55%, var(--border-strong));
 }

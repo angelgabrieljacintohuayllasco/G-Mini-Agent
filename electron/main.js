@@ -1957,6 +1957,65 @@ handleIpc('save-media-as', async (_, url, filename) => {
     }
 });
 
+// ── Exportar texto (conversación en Markdown) a un archivo elegido ──
+const SAVE_TEXT_FILTERS = Object.freeze({
+    markdown: [{ name: 'Markdown', extensions: ['md'] }, { name: 'Texto', extensions: ['txt'] }],
+    json: [{ name: 'JSON', extensions: ['json'] }],
+    text: [{ name: 'Texto', extensions: ['txt'] }],
+});
+const SAVE_TEXT_MAX_BYTES = 20 * 1024 * 1024;
+
+handleIpc('save-text-as', async (_, payload = {}) => {
+    try {
+        const content = typeof payload.content === 'string' ? payload.content : '';
+        if (!content) return { ok: false, error: 'sin contenido' };
+        if (Buffer.byteLength(content, 'utf8') > SAVE_TEXT_MAX_BYTES) {
+            return { ok: false, error: 'el archivo supera 20 MB' };
+        }
+        const suggested = path.basename(String(payload.suggestedName || 'conversacion.md'))
+            .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+            .slice(0, 120) || 'conversacion.md';
+        const result = await dialog.showSaveDialog(mainWindow, {
+            title: 'Exportar conversación',
+            defaultPath: path.join(app.getPath('documents'), suggested),
+            filters: SAVE_TEXT_FILTERS[payload.kind] || SAVE_TEXT_FILTERS.text,
+        });
+        if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+        fs.writeFileSync(result.filePath, content, 'utf8');
+        return { ok: true, path: result.filePath };
+    } catch (err) {
+        return { ok: false, error: String((err && err.message) || err) };
+    }
+});
+
+// ── Avisos del sistema ──────────────────────────────────────
+// Tarea terminada o aprobación pendiente mientras la ventana no está a la
+// vista (bandeja, minimizada o modo avatar). Una aprobación también avisa si
+// la ventana está detrás de otras.
+const notifyLastShown = {};
+
+handleIpc('notify', (_, payload = {}) => {
+    if (!Notification.isSupported()) return false;
+    const kind = payload.kind === 'approval' ? 'approval' : 'task';
+    const hasWindow = mainWindow && !mainWindow.isDestroyed();
+    const hidden = !hasWindow || !mainWindow.isVisible() || mainWindow.isMinimized();
+    const inAvatar = currentSkinMode === 'skin';
+    const unfocused = hasWindow && !mainWindow.isFocused();
+    if (!(hidden || inAvatar || (kind === 'approval' && unfocused))) return false;
+    const now = Date.now();
+    if (now - (notifyLastShown[kind] || 0) < 4000) return false;
+    notifyLastShown[kind] = now;
+    const notification = new Notification({
+        title: String(payload.title || 'G-Mini Agent').slice(0, 80),
+        body: String(payload.body || '').replace(/\s+/g, ' ').trim().slice(0, 220),
+        icon: path.join(__dirname, 'assets', 'icon.png'),
+        silent: kind !== 'approval',
+    });
+    notification.on('click', () => focusPrimaryWindow());
+    notification.show();
+    return true;
+});
+
 handleIpc('minimize-window', () => {
     if (mainWindow) mainWindow.minimize();
 });
@@ -2395,6 +2454,10 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(async () => {
+    // Windows agrupa y muestra las notificaciones por AppUserModelId.
+    if (process.platform === 'win32') {
+        app.setAppUserModelId(app.isPackaged ? 'com.gmini.agent' : process.execPath);
+    }
     watchConfigFiles();
 
     // 1. Lanzar backend Python como proceso hijo

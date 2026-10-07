@@ -9,6 +9,8 @@ class HistoryManager {
         this.chatList = document.getElementById('chat-list');
         this.btnToggle = document.getElementById('btn-toggle-sidebar');
         this.btnNewChat = document.getElementById('btn-new-chat');
+        this.searchInput = document.getElementById('chat-search');
+        this.searchQuery = '';
         this.currentSessionId = null;
         this.sessions = [];
         this.isSidebarCollapsed = false;
@@ -54,6 +56,43 @@ class HistoryManager {
 
         // New chat button
         this.btnNewChat?.addEventListener('click', () => this.createNewChat());
+        document.getElementById('btn-export-chat')?.addEventListener('click', () => this.exportCurrentConversation());
+
+        // Búsqueda: filtra en el cliente las conversaciones ya cargadas.
+        this.searchInput?.addEventListener('input', () => {
+            this.searchQuery = this.searchInput.value.trim();
+            this._renderChatList();
+        });
+        this.searchInput?.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && this.searchInput.value) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.searchInput.value = '';
+                this.searchQuery = '';
+                this._renderChatList();
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                this.chatList?.querySelector('.chat-item')?.focus();
+            }
+        });
+
+        // Lista accesible con teclado: Enter/Espacio cargan, flechas navegan, Supr elimina.
+        this.chatList?.addEventListener('keydown', (e) => {
+            const item = e.target.closest('.chat-item');
+            if (!item || e.target !== item) return;
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                this.loadSession(item.dataset.sessionId);
+            } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                const sibling = e.key === 'ArrowDown' ? item.nextElementSibling : item.previousElementSibling;
+                if (sibling?.classList.contains('chat-item')) sibling.focus();
+                else if (e.key === 'ArrowUp') this.searchInput?.focus();
+            } else if (e.key === 'Delete') {
+                e.preventDefault();
+                this.deleteSession(item.dataset.sessionId);
+            }
+        });
 
         // Keyboard shortcut: Ctrl+N for new chat
         document.addEventListener('keydown', (e) => {
@@ -90,8 +129,39 @@ class HistoryManager {
         }
     }
 
+    /** Coincidencia sin acentos ni mayúsculas sobre título, modo y fecha. */
+    _matchesSearch(session) {
+        if (!this.searchQuery) return true;
+        const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+        const haystack = norm([
+            session.title || this._generateTitle(session),
+            session.mode,
+            this._formatDate(session.updated_at),
+        ].join(' '));
+        return norm(this.searchQuery).split(/\s+/).every((word) => haystack.includes(word));
+    }
+
+    focusSearch() {
+        if (this.isSidebarCollapsed) this.toggleSidebar(true);
+        requestAnimationFrame(() => {
+            this.searchInput?.focus();
+            this.searchInput?.select();
+        });
+    }
+
     _renderChatList() {
         if (!this.chatList) return;
+
+        const visible = this.sessions.filter((session) => this._matchesSearch(session));
+        if (this.sessions.length > 0 && visible.length === 0) {
+            this.chatList.innerHTML = `
+                <div class="chat-list-empty">
+                    <div class="chat-list-empty-icon">${window.gminiDom.icon('search', 'icon-xl')}</div>
+                    <div>Sin resultados para "${this._escapeHtml(this.searchQuery)}"</div>
+                </div>
+            `;
+            return;
+        }
 
         if (this.sessions.length === 0) {
             this.chatList.innerHTML = `
@@ -103,7 +173,7 @@ class HistoryManager {
             return;
         }
 
-        const html = this.sessions.map(session => {
+        const html = visible.map(session => {
             const isActive = session.session_id === this.currentSessionId;
             const title = session.title || this._generateTitle(session);
             const date = this._formatDate(session.updated_at);
@@ -112,8 +182,8 @@ class HistoryManager {
             const escapedId = this._escapeHtml(session.session_id);
 
             return `
-                <div class="chat-item ${isActive ? 'active' : ''}" 
-                     data-session-id="${escapedId}">
+                <div class="chat-item ${isActive ? 'active' : ''}" role="button" tabindex="0"
+                     ${isActive ? 'aria-current="true"' : ''} data-session-id="${escapedId}">
                     <div class="chat-item-title">${this._escapeHtml(title)}</div>
                     <div class="chat-item-meta">
                         <span class="chat-item-date">${date}</span>
@@ -195,13 +265,9 @@ class HistoryManager {
                 await window.settingsManager.refreshModesFromBackend();
             }
             
-            // Clear chat UI
+            // Clear chat UI (vuelve el estado vacío con sugerencias)
             chatManager.clear();
-            chatManager.messagesContainer.innerHTML = `
-                <div class="message system-message">
-                    <p>Nueva conversación. Escribe un mensaje para comenzar.</p>
-                </div>
-            `;
+            window.gminiComposer?.focus();
             
             // NO recargamos las sesiones aquí - la nueva sesión no existe en DB aún
             // Se actualizará cuando el usuario envíe el primer mensaje
@@ -225,7 +291,7 @@ class HistoryManager {
             // Detener generación activa antes de cambiar de sesión
             ws.sendCommand('stop');
 
-            const response = await fetch(`http://127.0.0.1:8765/api/sessions/${sessionId}/load`, {
+            const response = await fetch(`http://127.0.0.1:8765/api/sessions/${encodeURIComponent(sessionId)}/load`, {
                 method: 'POST',
             });
             if (!response.ok) throw new Error('Failed to load session');
@@ -273,12 +339,6 @@ class HistoryManager {
                     }
                 });
                 chatManager._scrollToBottom();
-            } else {
-                chatManager.messagesContainer.innerHTML = `
-                    <div class="message system-message">
-                        <p>Conversación cargada. Sin mensajes.</p>
-                    </div>
-                `;
             }
             
             // Update active state in sidebar
@@ -292,7 +352,7 @@ class HistoryManager {
         if (!confirm('¿Eliminar esta conversación?')) return;
 
         try {
-            const response = await fetch(`http://127.0.0.1:8765/api/sessions/${sessionId}`, {
+            const response = await fetch(`http://127.0.0.1:8765/api/sessions/${encodeURIComponent(sessionId)}`, {
                 method: 'DELETE',
             });
             if (!response.ok) throw new Error('Failed to delete session');
@@ -306,6 +366,95 @@ class HistoryManager {
         } catch (error) {
             console.error('Error deleting session:', error);
         }
+    }
+
+    // ── Exportar la conversación actual a Markdown ─────────────
+
+    async exportCurrentConversation() {
+        const agentName = window.gminiIdentity?.name?.() || 'G-Mini';
+        const session = this.sessions.find((s) => s.session_id === this.currentSessionId);
+        const title = session ? (session.title || this._generateTitle(session)) : 'Conversación';
+        let messages = null;
+        if (this.currentSessionId) {
+            try {
+                const resp = await fetch(`http://127.0.0.1:8765/api/sessions/${encodeURIComponent(this.currentSessionId)}`);
+                if (resp.ok) messages = (await resp.json()).messages || null;
+            } catch (e) { /* se exporta lo que hay en pantalla */ }
+        }
+        const markdown = messages && messages.length
+            ? this._markdownFromMessages(title, messages, agentName)
+            : this._markdownFromScreen(title, agentName);
+        if (!markdown) {
+            chatManager._toast('Todavía no hay nada que exportar.');
+            return;
+        }
+        const suggestedName = `${this._slug(title)}.md`;
+        if (!window.gmini?.saveTextAs) {
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown' }));
+            link.download = suggestedName;
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+            return;
+        }
+        const res = await window.gmini.saveTextAs({ suggestedName, content: markdown, kind: 'markdown' });
+        if (res?.ok) chatManager._toast(`Conversación exportada: ${res.path}`);
+        else if (!res?.canceled) chatManager._toast(`No se pudo exportar${res?.error ? `: ${res.error}` : ''}`, true);
+    }
+
+    _exportHeader(title) {
+        return [`# ${title}`, '', `_Exportada desde G-Mini Agent el ${new Date().toLocaleString('es')}_`, ''];
+    }
+
+    _markdownFromMessages(title, messages, agentName) {
+        const lines = this._exportHeader(title);
+        for (const msg of messages) {
+            const meta = msg.metadata || {};
+            const stamp = msg.timestamp ? ` · ${this._formatStamp(msg.timestamp)}` : '';
+            const content = String(msg.content || '').trim();
+            if (meta.tool_name) {
+                const outcome = meta.success !== false ? 'ok' : 'falló';
+                const preview = meta.result_preview ? `: ${String(meta.result_preview).replace(/\s+/g, ' ').slice(0, 200)}` : '';
+                lines.push(`> Acción \`${meta.tool_name}\` (${outcome})${preview}`, '');
+            } else if (msg.role === 'user') {
+                lines.push(`### Tú${stamp}`, '', content, '');
+            } else if (msg.role === 'assistant') {
+                lines.push(`### ${agentName}${stamp}`, '', content, '');
+            } else if (content) {
+                lines.push(`> ${content.replace(/\n/g, '\n> ')}`, '');
+            }
+        }
+        return `${lines.join('\n').trim()}\n`;
+    }
+
+    /** Respaldo para conversaciones aún no guardadas: lo que se ve en el chat. */
+    _markdownFromScreen(title, agentName) {
+        const nodes = chatManager.messagesContainer.querySelectorAll('.message');
+        if (!nodes.length) return '';
+        const lines = this._exportHeader(title);
+        nodes.forEach((node) => {
+            const text = node.innerText.trim();
+            if (!text) return;
+            if (node.classList.contains('user-message')) lines.push('### Tú', '', text, '');
+            else if (node.classList.contains('assistant-message')) lines.push(`### ${agentName}`, '', text, '');
+            else lines.push(`> ${text.replace(/\n/g, '\n> ')}`, '');
+        });
+        return `${lines.join('\n').trim()}\n`;
+    }
+
+    _formatStamp(iso) {
+        try {
+            return new Date(iso).toLocaleString('es', { dateStyle: 'short', timeStyle: 'short' });
+        } catch (e) {
+            return '';
+        }
+    }
+
+    _slug(text) {
+        return String(text || 'conversacion')
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+            .slice(0, 60) || 'conversacion';
     }
 
     // Called after a message is sent/received to update the session

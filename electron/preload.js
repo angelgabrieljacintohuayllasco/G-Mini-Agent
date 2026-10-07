@@ -25,6 +25,11 @@ contextBridge.exposeInMainWorld('gmini', {
     initialTheme: readInitialTheme(),
     setTheme: (prefs) => ipcRenderer.invoke('theme:set', prefs),
 
+    // Exportar texto (conversación en Markdown) con el diálogo nativo
+    saveTextAs: (payload) => ipcRenderer.invoke('save-text-as', payload),
+    // Aviso del sistema (tarea terminada / aprobación pendiente con la ventana oculta)
+    notify: (payload) => ipcRenderer.invoke('notify', payload),
+
     // Guardar media generada (imagen/video/audio) en carpeta a eleccion del usuario
     saveMediaAs: (url, filename) => ipcRenderer.invoke('save-media-as', url, filename),
 

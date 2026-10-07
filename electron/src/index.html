@@ -691,12 +691,20 @@
                             <button id="btn-save-shortcuts" class="btn-secondary" type="button">Guardar atajos</button>
                         </div>
                     </div>
+
+                    <div class="setting-group">
+                        <label>Asistente de configuración</label>
+                        <div class="setting-help-text">Vuelve a recorrer los pasos de bienvenida: idioma, identidad, proveedor, modelo, autonomía y voz.</div>
+                        <div class="setting-actions">
+                            <button id="btn-rerun-onboarding" class="btn-secondary" type="button"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-rotate-ccw"></use></svg>Volver a ejecutar el asistente</button>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- ═══ PERSONALIDAD ═══ -->
                 <div class="settings-page" data-page="personality" id="settings-page-personality" role="tabpanel" aria-labelledby="settings-tab-personality">
                     <h3 class="settings-page-title">Personalidad</h3>
-                    <p class="settings-page-lead">Cómo se presenta el agente en la interfaz y en las notificaciones.</p>
+                    <p class="settings-page-lead">Cómo se llama el agente, con qué carácter habla y en qué idioma responde.</p>
 
                     <div class="setting-group">
                         <label for="input-agent-name">Nombre del agente</label>
@@ -704,14 +712,33 @@
                             <span class="status-dot idle"></span>
                             <div>
                                 <div class="identity-preview-name" id="identity-preview-name">G-Mini</div>
-                                <div class="identity-preview-sub">Así aparece en la cabecera, el chat y las notificaciones.</div>
+                                <div class="identity-preview-sub">Así aparece en la cabecera, el saludo, el avatar y las notificaciones.</div>
                             </div>
                         </div>
-                        <input id="input-agent-name" class="setting-input" type="text" maxlength="32" placeholder="G-Mini" autocomplete="off" spellcheck="false">
-                        <div id="agent-name-meta" class="setting-help-text" role="status"></div>
-                        <div class="setting-actions">
-                            <button id="btn-save-agent-name" class="btn-secondary" type="button">Guardar nombre</button>
+                        <input id="input-agent-name" class="setting-input" type="text" maxlength="32" placeholder="G-Mini" autocomplete="off" spellcheck="false" aria-describedby="agent-name-help">
+                        <div id="agent-name-help" class="setting-help-text">Hasta 32 caracteres: letras, números, espacios y . ' -. El agente también puede cambiarse el nombre desde el chat.</div>
+
+                        <label class="setting-subhead" for="input-agent-soul">Carácter</label>
+                        <textarea id="input-agent-soul" class="setting-textarea is-prose" rows="5" maxlength="600" placeholder="Tono, estilo y límites. Por ejemplo: directo y breve, explica el porqué de cada paso, evita la jerga." aria-describedby="agent-soul-count agent-soul-help"></textarea>
+                        <div class="setting-meta-row">
+                            <span id="agent-soul-help" class="setting-help-text">Solo se edita desde aquí: el agente no puede cambiar su propio carácter.</span>
+                            <span id="agent-soul-count" class="setting-help-text">0 / 600</span>
                         </div>
+
+                        <div id="agent-identity-meta" class="setting-help-text" role="status"></div>
+                        <div class="setting-actions">
+                            <button id="btn-save-agent-identity" class="btn-secondary" type="button">Guardar identidad</button>
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <label for="select-agent-language">Idioma</label>
+                        <select id="select-agent-language" class="setting-select">
+                            <option value="es">Español</option>
+                            <option value="en">English</option>
+                            <option value="pt">Português</option>
+                        </select>
+                        <div class="setting-help-text">Idioma en el que el agente saluda y responde.</div>
                     </div>
 
                     <div class="setting-group">
@@ -1446,6 +1473,8 @@
     <script src="js/settings.js"></script>
     <script src="js/voiceRealtime.js"></script>
     <script src="js/onboarding.js"></script>
+    <script src="js/identity.js"></script>
+    <script src="js/palette.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

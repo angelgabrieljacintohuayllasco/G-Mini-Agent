@@ -291,6 +291,7 @@
     ws.on('connected', () => {
         agentRuntimeState = 'idle';
         setStatus('idle', 'Conectado');
+        window.gminiIdentity?.fetchBackendName();
         updateAgentControls();
         settingsManager.updateModelLabel();
         pushOverlayCharacterRuntime({ status: 'idle', visemes: [], audioHintMs: 0 });
@@ -434,9 +435,34 @@
         chatManager.renderApprovalState(data);
         if (data?.pending) {
             agentRuntimeState = 'thinking';
-            setStatus('thinking', 'Esperando aprobacion...');
+            setStatus('thinking', 'Esperando aprobación...');
             setGenerating(false);
+            const summary = String(data.summary || '').replace(/[`*_#>]/g, '').trim();
+            notifyOs('approval', 'Aprobación pendiente', summary || 'El agente espera tu confirmación para continuar.');
         }
+    });
+
+    // ── Avisos del sistema ─────────────────────────────
+    // Tarea terminada o aprobación pendiente; el proceso principal decide si
+    // mostrarlo (solo con la ventana oculta, en bandeja o en modo avatar).
+    function notifyOs(kind, title, body) {
+        if (!window.gmini?.notify) return;
+        void window.gmini.notify({ kind, title, body }).catch(() => {});
+    }
+
+    let taskInProgress = false;
+    ws.on('agent:status', (data) => {
+        const status = data?.status || 'idle';
+        if (status === 'thinking' || status === 'responding' || status === 'executing') {
+            taskInProgress = true;
+            return;
+        }
+        if (status !== 'idle' || !taskInProgress) return;
+        taskInProgress = false;
+        const last = Array.from(document.querySelectorAll('#messages .assistant-message')).pop();
+        const snippet = (last?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+        const name = window.gminiIdentity?.name?.() || 'G-Mini';
+        notifyOs('task', `${name} terminó`, snippet || 'La respuesta está lista.');
     });
 
     ws.on('agent:subagents', (data) => {
@@ -585,6 +611,7 @@
 
     ws.on('agent:emotion', (data) => {
         if (!data || typeof data.emotion !== 'string') return;
+        window.gminiIdentity?.setEmotion(data.emotion);
         pushOverlayCharacterRuntime({
             status: agentRuntimeState,
             emotion: data.emotion,
@@ -700,8 +727,14 @@
 
     // ── Onboarding wizard ────────────────────────────
     if (window.OnboardingWizard) {
-        new OnboardingWizard(ws);
+        window.gminiOnboarding = new OnboardingWizard(ws);
     }
+
+    // El agente puede renombrarse desde el chat (agent_rename): tras cualquier
+    // cambio de configuración se vuelve a leer agent.name.
+    ws.on('config:updated', () => {
+        window.gminiIdentity?.refreshFromBackend();
+    });
 
     // ── Connect to backend ────────────────────────────
     ws.connect();
@@ -925,6 +958,7 @@
     function setStatus(state, text) {
         statusDot.className = `status-dot ${state}`;
         statusText.textContent = text;
+        window.gminiIdentity?.updateOrbLabel();
     }
 
     // El textarea sigue editable mientras el agente responde (B25): se puede

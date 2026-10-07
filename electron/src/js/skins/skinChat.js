@@ -13,6 +13,20 @@ const MAX_MESSAGES = 6;
 let isOpen = false;
 let streamingBubble = null;
 
+// Nombre con el que se presenta el agente: la ventana principal lo deja en
+// localStorage (mismo origen) y avisa de cambios con el evento storage.
+function applyAgentName() {
+    let name = 'G-Mini';
+    try { name = localStorage.getItem('gmini_agent_name') || 'G-Mini'; } catch (e) { /* sin storage */ }
+    if (input) input.placeholder = `Escribe a ${name}...`;
+    root?.setAttribute('aria-label', `Chat rápido con ${name}`);
+}
+
+applyAgentName();
+window.addEventListener('storage', (e) => {
+    if (e.key === 'gmini_agent_name') applyAgentName();
+});
+
 function isChatOpen() {
     return isOpen;
 }
