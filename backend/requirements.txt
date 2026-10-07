@@ -82,7 +82,7 @@ websockets>=12.0
 # Audio I/O
 sounddevice>=0.4.6
 soundfile>=0.12.1
-webrtcvad>=2.0.10
+webrtcvad-wheels>=2.0.14   # mismo módulo webrtcvad, con wheels (sin compilar)
 
 # ═══ Phase 6: Gateway (Slack) ═══
 slack-sdk>=3.27.0

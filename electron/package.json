@@ -1,14 +1,15 @@
 {
   "name": "gmini-agent-ui",
   "version": "0.1.0",
-  "description": "G-Mini Agent — Interfaz Electron con overlay transparente",
+  "description": "G-Mini Agent: agente de IA de escritorio",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
+    "fetch:uv": "node scripts/fetch-uv.js",
     "build": "electron-builder",
-    "dist:win": "electron-builder --win",
-    "dist:linux": "electron-builder --linux",
+    "dist:win": "node scripts/fetch-uv.js win && electron-builder --win --publish never",
+    "dist:linux": "node scripts/fetch-uv.js linux && electron-builder --linux --publish never",
     "vendor:skin": "node scripts/copy-skin-vendor.js"
   },
   "dependencies": {
@@ -24,16 +25,105 @@
   "build": {
     "appId": "com.gmini.agent",
     "productName": "G-Mini Agent",
+    "copyright": "Copyright (c) 2024-2026 G-Mini Agent",
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "build"
     },
+    "files": [
+      "main.js",
+      "preload.js",
+      "setup-preload.js",
+      "runtime-setup.js",
+      "src/**/*",
+      "assets/**/*",
+      "package.json",
+      "!**/*.map"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend",
+        "to": "core/backend",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "../data",
+        "to": "core/data",
+        "filter": [
+          "prompts/**/*",
+          "skills/**/*",
+          "agent_skills/bundled/**/*",
+          "crews/**/*",
+          "commands/**/*",
+          "models.yaml",
+          "realtime_models.yaml",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "../config.default.yaml",
+        "to": "core/config.default.yaml"
+      },
+      {
+        "from": "../LICENSE",
+        "to": "core/LICENSE"
+      }
+    ],
     "win": {
-      "target": "nsis",
-      "icon": "assets/icon.png"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "extraResources": [
+        {
+          "from": "build/uv/win",
+          "to": "uv",
+          "filter": [
+            "uv.exe"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "G-Mini Agent",
+      "uninstallDisplayName": "G-Mini Agent",
+      "artifactName": "G-Mini-Agent-Setup-${version}.${ext}",
+      "deleteAppDataOnUninstall": false
     },
     "linux": {
-      "target": "AppImage",
-      "icon": "assets/icon.png"
+      "target": [
+        "AppImage"
+      ],
+      "icon": "assets/icon.png",
+      "category": "Utility",
+      "extraResources": [
+        {
+          "from": "build/uv/linux",
+          "to": "uv",
+          "filter": [
+            "uv"
+          ]
+        }
+      ],
+      "artifactName": "G-Mini-Agent-${version}.${ext}"
     }
-  }
+  },
+  "author": "G-Mini Agent",
+  "homepage": "https://github.com/angelgabrieljacintohuayllasco/G-Mini-Agent",
+  "license": "MIT"
 }

@@ -101,9 +101,6 @@ dist/
 build/
 .electron/
 
-# Dependencias instaladas
-electron/package-lock.json
-
 # Pruebas y coverage
 .coverage
 htmlcov/

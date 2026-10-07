@@ -1,0 +1,286 @@
+/* G-Mini Agent — Ventana de preparación del primer arranque. Usa tokens.css. */
+
+* { box-sizing: border-box; margin: 0; }
+
+html, body {
+    height: 100%;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: var(--font);
+    font-size: var(--fs-base);
+    line-height: var(--lh-base);
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    overflow: hidden;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    background:
+        radial-gradient(120% 70% at 100% 0%, color-mix(in srgb, var(--acc-500) 9%, transparent), transparent 60%),
+        var(--bg-primary);
+}
+
+/* ── Barra superior ───────────────────────────────────────── */
+.titlebar {
+    height: 40px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 var(--space-2) 0 var(--space-4);
+    -webkit-app-region: drag;
+}
+
+.titlebar-name {
+    color: var(--text-muted);
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-medium);
+    letter-spacing: 0.02em;
+}
+
+.titlebar-close {
+    -webkit-app-region: no-drag;
+    width: 32px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.titlebar-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+.titlebar-close:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.titlebar-close svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+
+/* ── Contenido ────────────────────────────────────────────── */
+.setup {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+    padding: var(--space-2) var(--space-6) 0;
+    min-height: 0;
+}
+
+.hero {
+    display: flex;
+    gap: var(--space-4);
+    align-items: flex-start;
+}
+
+.hero-mark {
+    flex: none;
+    border-radius: var(--radius-lg);
+    filter: drop-shadow(0 6px 18px var(--accent-glow));
+}
+
+h1 {
+    font-family: var(--font-display);
+    font-size: var(--fs-xl);
+    font-weight: var(--fw-semibold);
+    line-height: var(--lh-tight);
+    letter-spacing: -0.01em;
+}
+
+.lead {
+    margin-top: var(--space-1);
+    color: var(--text-secondary);
+    max-width: 40ch;
+}
+
+/* ── Pasos ────────────────────────────────────────────────── */
+.steps {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.step {
+    display: grid;
+    grid-template-columns: 22px 1fr;
+    gap: var(--space-3);
+    align-items: start;
+    opacity: 0.55;
+    transition: opacity var(--dur-slow) var(--ease-out);
+}
+
+.step.is-running, .step.is-done, .step.is-failed { opacity: 1; }
+
+.step-dot {
+    position: relative;
+    width: 22px;
+    height: 22px;
+    margin-top: 1px;
+    border-radius: 50%;
+    border: 1.5px solid var(--border-strong);
+    display: grid;
+    place-items: center;
+    transition: background var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out);
+}
+
+.step-dot svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    display: none;
+}
+
+.step.is-running .step-dot {
+    border-color: color-mix(in srgb, var(--accent-text) 30%, transparent);
+    border-top-color: var(--accent-text);
+    animation: spin 0.9s linear infinite;
+}
+
+.step.is-done .step-dot {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--text-on-accent);
+    animation: settle var(--dur-slow) var(--ease-spring);
+}
+
+.step.is-done .icon-check { display: block; stroke-dasharray: 22; stroke-dashoffset: 22; animation: draw 360ms var(--ease-out) 80ms forwards; }
+
+.step.is-failed .step-dot {
+    background: var(--error-soft);
+    border-color: var(--error);
+    color: var(--error);
+}
+
+.step.is-failed .icon-fail { display: block; }
+
+.step-body { display: flex; flex-direction: column; min-width: 0; }
+
+.step-title { font-weight: var(--fw-medium); }
+
+.step-note {
+    color: var(--text-muted);
+    font-size: var(--fs-sm);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.step.is-running .step-note { color: var(--text-secondary); }
+
+/* ── Barra de progreso ────────────────────────────────────── */
+.track {
+    position: relative;
+    height: 3px;
+    border-radius: var(--radius-pill);
+    background: var(--bg-hover);
+    overflow: hidden;
+}
+
+.track-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 0;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--acc-600), var(--acc-400));
+    transition: width var(--dur-slow) var(--ease-out);
+}
+
+.track.is-busy .track-fill {
+    width: 34%;
+    animation: sweep 1.4s var(--ease-in-out) infinite;
+}
+
+.track.is-done .track-fill { width: 100%; animation: none; }
+.track.is-failed .track-fill { width: 100%; background: var(--error); opacity: 0.6; animation: none; }
+
+/* ── Problema ─────────────────────────────────────────────── */
+.problem {
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius);
+    background: var(--error-soft);
+    border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);
+    animation: rise var(--dur-slow) var(--ease-out);
+}
+
+.problem p { color: var(--text-primary); }
+
+.actions { display: flex; gap: var(--space-2); margin-top: var(--space-3); }
+
+.btn {
+    height: var(--control-h);
+    padding: 0 var(--space-4);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-strong);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font: inherit;
+    font-weight: var(--fw-medium);
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+
+.btn:hover { background: var(--bg-hover); }
+.btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--text-on-accent); }
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn-quiet { border-color: transparent; background: transparent; color: var(--text-secondary); margin-left: auto; }
+
+/* ── Detalles ─────────────────────────────────────────────── */
+.details summary {
+    width: fit-content;
+    color: var(--text-muted);
+    font-size: var(--fs-sm);
+    cursor: pointer;
+    list-style: none;
+    border-radius: var(--radius-xs);
+}
+
+.details summary::-webkit-details-marker { display: none; }
+.details summary:hover { color: var(--text-secondary); }
+.details summary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.details pre {
+    margin-top: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    max-height: 104px;
+    overflow: auto;
+    border-radius: var(--radius-sm);
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-all;
+    user-select: text;
+}
+
+.foot {
+    flex: none;
+    padding: var(--space-3) var(--space-6) var(--space-4);
+    color: var(--text-muted);
+    font-size: var(--fs-xs);
+}
+
+/* ── Movimiento ───────────────────────────────────────────── */
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes settle { from { transform: scale(0.7); } to { transform: scale(1); } }
+@keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+@keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
+    .step.is-running .step-dot { border-color: var(--accent-text); }
+    .track.is-busy .track-fill { width: 100%; opacity: 0.5; transform: none; }
+    .step.is-done .icon-check { stroke-dashoffset: 0; }
+}

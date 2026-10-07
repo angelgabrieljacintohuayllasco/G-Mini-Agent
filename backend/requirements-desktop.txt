@@ -1,0 +1,23 @@
+# App de escritorio instalada: lo que la app prepara en el primer arranque.
+# Todo trae wheels para Windows y Linux (no hace falta compilar). Visión
+# avanzada (EasyOCR, YOLO), browser-use y los modelos locales quedan fuera:
+# pesan varios GB y se agregan aparte con backend/requirements.txt.
+-r requirements-server.txt
+
+# Pantalla, mouse, teclado y portapapeles
+mss>=9.0.0
+pyautogui>=0.9.54
+pynput>=1.7.6
+pyperclip>=1.8.2
+
+# OCR con Tesseract (si está instalado en el sistema)
+pytesseract>=0.3.10
+
+# Android por ADB
+pure-python-adb>=0.3.0.dev0
+
+# Voz local: micrófono, detección de voz y Whisper
+sounddevice>=0.4.6
+webrtcvad-wheels>=2.0.14
+faster-whisper>=1.0.0
+elevenlabs>=1.0.0

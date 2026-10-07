@@ -26,6 +26,7 @@ const { pathToFileURL } = require('url');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
 const yaml = require('js-yaml');
+const { ensurePythonRuntime } = require('./runtime-setup');
 
 protocol.registerSchemesAsPrivileged([
     {
@@ -50,12 +51,24 @@ const BACKEND_HEALTH_URL = `${BACKEND_URL}/api/health`;
 const BACKEND_START_TIMEOUT_MS = 60000;
 const BACKEND_HEALTH_CHECK_INTERVAL_MS = 1000;
 const BACKEND_HEALTH_REQUEST_TIMEOUT_MS = 1500;
-const PROJECT_ROOT = path.resolve(__dirname, '..');
+// Instalada, el núcleo viene en resources/core y los datos del usuario van a
+// GMINI_HOME (%APPDATA%\G-Mini Agent\home); el Python del núcleo se prepara en
+// LOCAL_ROOT la primera vez. En desarrollo todo vive en la carpeta del repo.
+const IS_PACKAGED = app.isPackaged;
+const PROJECT_ROOT = IS_PACKAGED ? path.join(process.resourcesPath, 'core') : path.resolve(__dirname, '..');
+const LOCAL_ROOT = process.platform === 'win32'
+    ? path.join(process.env.LOCALAPPDATA || app.getPath('appData'), 'G-Mini Agent')
+    : path.join(process.env.XDG_DATA_HOME || path.join(app.getPath('home'), '.local', 'share'), 'g-mini-agent');
+const DATA_ROOT = process.env.GMINI_HOME
+    ? path.resolve(process.env.GMINI_HOME)
+    : (IS_PACKAGED ? path.join(app.getPath('appData'), 'G-Mini Agent', 'home') : PROJECT_ROOT);
+let runtimePython = null;
+let uiStarted = false;
 // Token de sesión que el núcleo exige a la UI (anti CSRF / DNS rebinding).
 const SESSION_TOKEN = crypto.randomBytes(32).toString('base64url');
-const SESSION_TOKEN_FILE = path.join(PROJECT_ROOT, 'data', 'runtime', 'session_token');
+const SESSION_TOKEN_FILE = path.join(DATA_ROOT, 'data', 'runtime', 'session_token');
 const DEFAULT_CONFIG_PATH = path.join(PROJECT_ROOT, 'config.default.yaml');
-const USER_CONFIG_PATH = path.join(PROJECT_ROOT, 'config.user.yaml');
+const USER_CONFIG_PATH = path.join(DATA_ROOT, 'config.user.yaml');
 const OVERLAY_STATE_FILENAME = 'overlay-state.json';
 const OVERLAY_BASE_SIZE = Object.freeze({ width: 400, height: 300 });
 const OVERLAY_MIN_SCALE = 0.7;
@@ -67,7 +80,7 @@ const SKIN_MIN_SCALE = 0.5;
 const SKIN_MAX_SCALE = 2.5;
 const SKIN_SAVE_DEBOUNCE_MS = 180;
 const SKIN_CHAT_BUBBLE_WIDTH = 300;
-const DATA_SKINS_DIR = path.join(PROJECT_ROOT, 'data', 'skins');
+const DATA_SKINS_DIR = path.join(DATA_ROOT, 'data', 'skins');
 const CHARACTER_EMOTIONS = Object.freeze(['neutral', 'happy', 'sad', 'angry', 'surprised', 'relaxed']);
 const SINGLE_INSTANCE_LOCK = app.requestSingleInstanceLock();
 
@@ -1383,8 +1396,9 @@ async function startBackend() {
         const venvPython = path.join(PROJECT_ROOT, 'venv', 'Scripts', 'python.exe');
         const fallbackPython = 'python';
 
-        // Intentar con el venv primero, fallback a python global
-        const pythonPath = fs.existsSync(venvPython) ? venvPython : fallbackPython;
+        // Instalada: el Python que preparó runtime-setup. En desarrollo, el venv
+        // del repo y si no existe el python global.
+        const pythonPath = runtimePython || (fs.existsSync(venvPython) ? venvPython : fallbackPython);
 
         console.log(`[Backend] Iniciando con: ${pythonPath}`);
 
@@ -1396,7 +1410,9 @@ async function startBackend() {
                 PYTHONIOENCODING: 'utf-8',
                 PYTHONUTF8: '1',
                 GMINI_SESSION_TOKEN: SESSION_TOKEN,
+                ...(DATA_ROOT !== PROJECT_ROOT ? { GMINI_HOME: DATA_ROOT } : {}),
             },
+            windowsHide: true,
             stdio: ['ignore', 'pipe', 'pipe'],
         });
         backendProcess = child;
@@ -2460,6 +2476,20 @@ app.whenReady().then(async () => {
     }
     watchConfigFiles();
 
+    // 0. App instalada: la primera vez prepara el Python del núcleo (con ventana de progreso).
+    if (IS_PACKAGED) {
+        runtimePython = await ensurePythonRuntime({
+            codeRoot: PROJECT_ROOT,
+            localRoot: LOCAL_ROOT,
+            resourcesPath: process.resourcesPath,
+            iconPath: path.join(__dirname, 'assets', 'icon.png'),
+        });
+        if (!runtimePython) {
+            app.quit();
+            return;
+        }
+    }
+
     // 1. Lanzar backend Python como proceso hijo
     console.log('[App] Iniciando backend...');
     const backendOk = await startBackend();
@@ -2496,6 +2526,7 @@ app.whenReady().then(async () => {
     // 2. Crear UI (con el tema ya resuelto para el color de fondo nativo)
     applyThemePreferences(normalizeThemePreferences(loadMergedProjectConfigFromDisk().app || {}));
     createMainWindow();
+    uiStarted = true;
     createOverlayWindow();
     createSkinWindow();
     createActionOverlayWindow();  // Pre-crear overlay de acciones
@@ -2509,6 +2540,8 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+    // Al cerrar la ventana de preparación todavía no existe la UI: no es salir.
+    if (!uiStarted) return;
     if (process.platform !== 'darwin') {
         app.quit();
     }

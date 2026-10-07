@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>Preparando G-Mini</title>
+    <link rel="stylesheet" href="css/tokens.css">
+    <link rel="stylesheet" href="css/setup.css">
+</head>
+<body>
+    <header class="titlebar">
+        <span class="titlebar-name">G-Mini</span>
+        <button class="titlebar-close" id="close" type="button" aria-label="Cerrar">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+    </header>
+
+    <main class="setup">
+        <div class="hero">
+            <img class="hero-mark" src="../assets/icon.png" alt="" width="52" height="52">
+            <div>
+                <h1>Preparando G-Mini</h1>
+                <p class="lead">Solo esta vez: descargo Python y los componentes del núcleo. Tarda unos minutos según tu conexión.</p>
+            </div>
+        </div>
+
+        <ol class="steps" id="steps" aria-label="Pasos de la preparación"></ol>
+
+        <div class="track" id="track" aria-hidden="true"><span class="track-fill"></span></div>
+
+        <section class="problem" id="problem" hidden>
+            <p id="problem-text" role="alert"></p>
+            <div class="actions">
+                <button class="btn btn-primary" id="retry" type="button">Reintentar</button>
+                <button class="btn" id="open-log" type="button">Ver registro</button>
+                <button class="btn btn-quiet" id="quit" type="button">Salir</button>
+            </div>
+        </section>
+
+        <details class="details" id="details">
+            <summary>Ver detalles</summary>
+            <pre id="tail"></pre>
+        </details>
+    </main>
+
+    <footer class="foot">Se instala en tu carpeta de usuario y no toca el Python que ya tengas.</footer>
+
+    <template id="step-template">
+        <li class="step">
+            <span class="step-dot" aria-hidden="true">
+                <svg class="icon-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+                <svg class="icon-fail" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>
+            </span>
+            <div class="step-body">
+                <span class="step-title"></span>
+                <span class="step-note"></span>
+            </div>
+        </li>
+    </template>
+
+    <script src="js/setup.js"></script>
+</body>
+</html>
