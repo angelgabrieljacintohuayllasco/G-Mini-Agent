@@ -2214,11 +2214,63 @@ class AgentCore:
                 return hashlib.md5(ocr_text.encode("utf-8", errors="ignore")).hexdigest()
         return ""
 
+    async def _gate_voice_actions(self, sid: str, actions: list) -> tuple[list, list[dict[str, Any]]]:
+        """La voz (nativa o simulada) pasa por la misma policy que el chat.
+
+        Devuelve (acciones permitidas, resultados de las rechazadas). Si hace falta
+        aprobación, el lote queda pendiente en la UI igual que en el chat y el
+        modelo recibe un resultado que le dice que espere.
+        """
+        if not actions:
+            return [], []
+        review = self._policy.review_actions(actions, mode_key=self._current_mode)
+
+        def refuse(message: str) -> tuple[list, list[dict[str, Any]]]:
+            return [], [
+                {"action": action.type, "success": False, "message": message, "data": {"policy": "refused"}}
+                for action in actions
+            ]
+
+        if review.get("blocked"):
+            reasons = "; ".join(
+                str(item.get("reason", "")) for item in review.get("findings", []) if item.get("effect") == "deny"
+            ) or "bloqueada por la política del modo activo"
+            await emit_message(sid, f"Acción de voz bloqueada: {reasons}", "warning", done=True)
+            return refuse(f"Bloqueada por la política: {reasons}. No la repitas.")
+
+        if review.get("requires_approval"):
+            if self._pending_approval:
+                return refuse("Ya hay acciones esperando la aprobación del usuario. No sigas hasta que responda.")
+            findings_text = "\n".join(
+                f"- {item.get('action', '?')}: {item.get('reason', '?')}" for item in review.get("findings", [])
+            )
+            summary = f"Desde la voz se pidieron acciones que necesitan tu aprobación:\n{findings_text}"
+            self._pending_approval = {
+                "actions": actions,
+                "review": review,
+                "assistant_response": "",
+                "kind": "approval",
+                "sid": sid,
+                "session_id": self._memory.session_id,
+                "token": secrets.token_urlsafe(8),
+                "source": "voice",
+            }
+            await emit_approval_state(
+                sid, pending=True, summary=summary, findings=review.get("findings", []),
+                mode=review.get("mode"), mode_name=review.get("mode_name"), kind="approval",
+            )
+            await emit_message(sid, f"{summary}\n\nAprueba o cancela en el chat.", "warning", done=True)
+            return refuse(
+                "Necesita la aprobación del usuario en la ventana de G-Mini. Dile que la revise y no la repitas."
+            )
+        return list(actions), []
+
     async def _execute_approved_actions(self, sid: str) -> None:
         if not self._pending_approval or not self._planner:
             return
 
         actions = self._pending_approval["actions"]
+        from_voice = self._pending_approval.get("source") == "voice"
         self._pending_approval = None
         await emit_approval_state(sid, pending=False)
 
@@ -2251,7 +2303,7 @@ class AgentCore:
             summary_title="**Acciones aprobadas ejecutadas:**",
         )
 
-        if task_completed:
+        if task_completed or from_voice:
             await self._set_agent_status(sid, AgentStatus.IDLE)
             await self._emit_activity(sid, "✅ **Tarea completada**", "system")
             return
@@ -3729,6 +3781,7 @@ class AgentCore:
                 on_user_text=sim_on_user_text,
                 on_turn_complete=sim_on_turn_complete,
                 planner=self._planner,
+                action_gate=lambda actions: self._gate_voice_actions(sid, actions),
                 sio=sio,
                 sid=sid,
             )
@@ -3920,6 +3973,8 @@ class AgentCore:
                                     logger.debug(f"RT verificación post-delegación falló: {_exc}")
                             else:
                                 result_data = {"error": "Sub-agente de computer use no disponible o falló."}
+                    elif (refusal := await self._voice_refusal(sid, fn_name, fn_args)) is not None:
+                        result_data = {"error": refusal}
                     elif fn_name == "mcp_call_tool":
                         # ── MCP tool execution via runtime ──
                         mcp_server_id = str(fn_args.get("server_id", "")).strip()
@@ -4114,6 +4169,16 @@ class AgentCore:
         #   audio chunk  → on_audio → sio.emit("agent:audio")
         #   transcripción → on_text → emit_message_chunk / emit_message_done
         # La reflexión de memoria corre en on_turn_complete, ya con la respuesta.
+
+    async def _voice_refusal(self, sid: str, fn_name: str, fn_args: Any) -> str | None:
+        """None si la tool de voz puede ejecutarse; si no, el mensaje para el modelo."""
+        from backend.core.planner import Action
+
+        action = Action(type=fn_name, params=fn_args if isinstance(fn_args, dict) else {})
+        allowed, refused = await self._gate_voice_actions(sid, [action])
+        if allowed:
+            return None
+        return refused[0]["message"] if refused else "Acción no permitida."
 
     async def send_realtime_audio(self, audio_chunk: bytes) -> None:
         """Reenvía un chunk de audio del micrófono al proveedor RT o simulado."""

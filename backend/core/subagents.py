@@ -217,6 +217,27 @@ class SubAgentOrchestrator:
         self._tasks: dict[str, asyncio.Task] = {}
         self._groups: dict[str, dict[str, Any]] = {}
         self._cost_tracker = get_cost_tracker()
+        self._policy = None
+
+    def _gate_actions(self, actions: list, mode_key: str) -> tuple[list, list[dict[str, Any]]]:
+        """Misma policy que el coordinador. Un sub-agente no puede pedir aprobación:
+        lo bloqueado o sensible no se ejecuta y vuelve como pendiente al coordinador."""
+        if self._policy is None:
+            from backend.core.policy import PolicyEngine
+
+            self._policy = PolicyEngine()
+        review = self._policy.review_actions(actions, mode_key=mode_key)
+        if not review.get("blocked") and not review.get("requires_approval"):
+            return list(actions), []
+        reason = (
+            "bloqueada por la política del modo activo"
+            if review.get("blocked")
+            else "necesita aprobación del usuario y un sub-agente no puede pedirla; "
+                 "descríbela en tu resultado para que el coordinador la solicite"
+        )
+        return [], [
+            {"action": action.type, "success": False, "message": f"No ejecutada: {reason}"} for action in actions
+        ]
 
     def list_agents(self) -> list[dict[str, Any]]:
         items = sorted(self._records.values(), key=lambda item: item.created_at, reverse=True)
@@ -491,8 +512,9 @@ class SubAgentOrchestrator:
                 # Check for task_complete in parsed actions
                 has_task_complete = any(a.type == "task_complete" for a in actions)
 
-                # Execute actions
-                action_results = await planner.execute_actions(actions)
+                # Execute actions (solo las que la policy permite sin aprobación)
+                allowed, refused = self._gate_actions(actions, record.mode)
+                action_results = (await planner.execute_actions(allowed) if allowed else []) + refused
                 record.execution_results.extend(action_results)
 
                 # Build execution feedback for next iteration

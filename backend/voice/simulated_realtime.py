@@ -89,6 +89,7 @@ class SimulatedRealtimeVoice:
         on_text: Callable[[str], Coroutine] | None = None,
         on_user_text: Callable[[str], Coroutine] | None = None,
         on_turn_complete: Callable[[], Coroutine] | None = None,
+        action_gate: Callable[[list], Coroutine] | None = None,
         planner: Any = None,
         sio: Any = None,
         sid: str = "",
@@ -112,6 +113,7 @@ class SimulatedRealtimeVoice:
         self._on_text = on_text
         self._on_user_text = on_user_text
         self._on_turn_complete = on_turn_complete
+        self._action_gate = action_gate
         self._planner = planner
         self._sio = sio
         self._sid = sid
@@ -502,9 +504,16 @@ class SimulatedRealtimeVoice:
 
         set_planner_socket(self._sio, self._sid)
 
+        # Misma policy que el chat: aprobaciones, bloqueos por modo y allowlist de comandos.
+        refused: list[dict[str, Any]] = []
+        if self._action_gate is not None:
+            allowed, refused = await self._action_gate(actions)
+            actions = list(allowed) + [a for a in actions if a not in allowed]
+
         try:
             await self._sio.emit("agent:executing", {"active": True}, to=self._sid)
-            results = await self._planner.execute_actions(actions)
+            executable = actions[: len(actions) - len(refused)]
+            results = (await self._planner.execute_actions(executable) if executable else []) + refused
         except Exception as exc:
             logger.error(f"SimulatedRT: error ejecutando acciones: {exc}", exc_info=True)
             results = []
