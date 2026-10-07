@@ -1,7 +1,7 @@
 """
 G-Mini Agent — Gestión de configuración.
 Carga config.default.yaml con merge de config.user.yaml.
-API keys se guardan en el OS keyring (Windows Credential Manager).
+Las API keys van al almacén de credenciales del sistema (ver backend/security/vault.py).
 """
 
 import os
@@ -11,9 +11,10 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-import keyring
 
-SERVICE_NAME = "gmini-agent"
+from backend.security import vault
+from backend.security.vault import SERVICE_NAME  # noqa: F401  (compatibilidad)
+
 CODE_DIR = Path(__file__).resolve().parent.parent
 # GMINI_HOME separa los datos del programa: con una instalación de solo
 # lectura (AppImage, deb, Program Files) o en Docker, la config, las bases y
@@ -179,28 +180,20 @@ class Config:
     def data(self) -> dict:
         return self._data
 
-    # ── API Key management via OS keyring ────────────────────────
+    # ── API keys (backend/security/vault.py) ─────────────────────
 
     @staticmethod
     def get_api_key(vault_name: str) -> str | None:
-        """Obtiene una API key del OS keyring."""
-        try:
-            return keyring.get_password(SERVICE_NAME, vault_name)
-        except Exception:
-            return None
+        """API key por su nombre de vault: entorno, almacén del sistema o archivo protegido."""
+        return vault.get_api_key(vault_name)
 
     @staticmethod
     def set_api_key(vault_name: str, api_key: str) -> None:
-        """Guarda una API key en el OS keyring."""
-        keyring.set_password(SERVICE_NAME, vault_name, api_key)
+        vault.set_api_key(vault_name, api_key)
 
     @staticmethod
     def delete_api_key(vault_name: str) -> None:
-        """Elimina una API key del OS keyring."""
-        try:
-            keyring.delete_password(SERVICE_NAME, vault_name)
-        except keyring.errors.PasswordDeleteError:
-            pass
+        vault.delete_api_key(vault_name)
 
 
 # Instancia global
