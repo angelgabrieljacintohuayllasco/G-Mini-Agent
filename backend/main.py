@@ -221,6 +221,7 @@ def main(argv: list[str] | None = None):
     host = args.host or os.environ.get("GMINI_BIND_HOST") or config.get("server", "host", default="127.0.0.1")
     port = args.port or config.get("server", "port", default=8765)
     os.environ["GMINI_BIND_HOST"] = str(host)  # local_auth decide la validación de Host según el bind
+    os.environ["GMINI_BIND_PORT"] = str(port)
 
     if str(host) not in ("127.0.0.1", "localhost", "::1"):
         logger.warning(f"Escuchando en {host}: todas las rutas exigen token (usa Tailscale/VPN o TLS para exponerlo).")

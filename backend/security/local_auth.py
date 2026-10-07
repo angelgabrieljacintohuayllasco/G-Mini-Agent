@@ -109,8 +109,9 @@ def _write_private(path: Path, content: str) -> None:
 
 
 def _server_port() -> int:
+    # GMINI_BIND_PORT lo fija main.py con el puerto real (--port gana a la config).
     try:
-        return int(config.get("server", "port", default=8765) or 8765)
+        return int(os.environ.get("GMINI_BIND_PORT") or config.get("server", "port", default=8765) or 8765)
     except (TypeError, ValueError):
         return 8765
 

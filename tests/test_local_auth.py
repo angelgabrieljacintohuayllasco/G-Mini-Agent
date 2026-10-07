@@ -20,6 +20,7 @@ def auth_home(tmp_path, monkeypatch):
     monkeypatch.setattr(local_auth, "DEVICES_FILE", runtime / "devices.json")
     monkeypatch.setenv("GMINI_SESSION_TOKEN", TOKEN)
     monkeypatch.delenv("GMINI_BIND_HOST", raising=False)
+    monkeypatch.delenv("GMINI_BIND_PORT", raising=False)
     local_auth.reset_session_token_for_tests()
     local_auth._pairing_codes.clear()
     local_auth._claim_attempts.clear()
@@ -43,6 +44,14 @@ def test_foreign_host_is_rejected_even_with_token(client):
     resp = client.get("/api/config/app", headers={"Host": "evil.example:8765", "X-GMini-Token": TOKEN})
     assert resp.status_code == 403
     assert resp.json()["error"]["code"] == "invalid_host"
+
+
+def test_port_from_command_line_is_the_allowed_one(auth_home, monkeypatch):
+    # python -m backend.main --port 8799: el Host válido es el del puerto real.
+    monkeypatch.setenv("GMINI_BIND_PORT", "8799")
+    assert local_auth.host_is_allowed("127.0.0.1:8799")
+    assert local_auth.host_is_allowed("localhost:8799")
+    assert not local_auth.host_is_allowed("127.0.0.1:8765")
 
 
 def test_api_requires_token(client):
