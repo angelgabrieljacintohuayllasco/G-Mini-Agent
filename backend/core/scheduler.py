@@ -1256,6 +1256,9 @@ class SchedulerService:
         if job["task_type"] == "learning_consolidate":
             from backend.core.learning import get_learning
             return await asyncio.to_thread(get_learning().consolidate)
+        if job["task_type"] == "skill_curator":
+            from backend.core.skill_curator import get_curator
+            return await asyncio.to_thread(get_curator().run)
         raise RuntimeError(f"Task type no soportado por el scheduler: {job['task_type']}")
 
     async def _ensure_job_columns(self, db: aiosqlite.Connection) -> None:
@@ -1332,7 +1335,7 @@ class SchedulerService:
         heartbeat_key: str,
         heartbeat_interval_seconds: int | None,
     ) -> None:
-        supported = ("skill", "mcp_tool", "budget_weekly_report", "learning_consolidate")
+        supported = ("skill", "mcp_tool", "budget_weekly_report", "learning_consolidate", "skill_curator")
         if task_type not in supported:
             raise ValueError(f"task_type debe ser uno de: {', '.join(supported)}.")
         if not isinstance(payload, dict):

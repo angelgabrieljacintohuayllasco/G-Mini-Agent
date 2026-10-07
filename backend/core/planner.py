@@ -3655,6 +3655,59 @@ class ActionPlanner:
                     except Exception as app_exc:
                         result["message"] = f"No se pudo abrir '{app_name}': {app_exc}"
 
+                case "skill_list":
+                    from backend.core import agent_skills
+
+                    skills = await asyncio.to_thread(agent_skills.discover)
+                    listed = [
+                        {"name": s.name, "description": s.description, "source": s.source, "lifecycle": s.lifecycle}
+                        for s in skills if s.enabled
+                    ]
+                    result["success"] = True
+                    result["data"] = {"skills": listed}
+                    result["message"] = f"{len(listed)} skills disponibles"
+
+                case "skill_read" | "skill_resource":
+                    from backend.core import agent_skills
+
+                    sk_name = str(action.params.get("name", "")).strip()
+                    try:
+                        if action.type == "skill_read":
+                            data = await asyncio.to_thread(agent_skills.read_skill, sk_name)
+                            result["message"] = f"Instrucciones de la skill '{sk_name}' cargadas"
+                        else:
+                            sk_path = str(action.params.get("path", "")).strip()
+                            content = await asyncio.to_thread(agent_skills.read_resource, sk_name, sk_path)
+                            data = {"name": sk_name, "path": sk_path, "content": content}
+                            result["message"] = f"Recurso {sk_path} de '{sk_name}' leído"
+                        result["success"] = True
+                        result["data"] = data
+                    except agent_skills.SkillError as exc:
+                        result["message"] = str(exc)
+
+                case "skill_author":
+                    from backend.core import agent_skills
+
+                    files = action.params.get("files") or {}
+                    if not isinstance(files, dict):
+                        result["message"] = "files debe ser un objeto {ruta: contenido}"
+                        return result
+                    try:
+                        skill = await asyncio.to_thread(
+                            agent_skills.author_skill,
+                            str(action.params.get("name", "")),
+                            str(action.params.get("description", "")),
+                            str(action.params.get("instructions", "")),
+                            files,
+                            overwrite=bool(action.params.get("overwrite", False)),
+                        )
+                    except agent_skills.SkillError as exc:
+                        result["message"] = str(exc)
+                        return result
+                    result["success"] = True
+                    result["data"] = skill.to_dict()
+                    result["message"] = f"Skill '{skill.name}' guardada: la usarás en tareas parecidas"
+
                 case "memory_search" | "memory_forget" | "agent_rename":
                     from backend.core import memory_actions
 

@@ -325,6 +325,9 @@ class PolicyEngine:
             "schedule_list_jobs",
             "schedule_list_runs",
             "memory_search",
+            "skill_list",
+            "skill_read",
+            "skill_resource",
         }:
             return self._review(action, "observe", "reading", "low", 0.95, "accion de lectura o cierre")
 

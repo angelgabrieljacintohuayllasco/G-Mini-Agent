@@ -3968,3 +3968,152 @@ async def _optional_json(request: Request) -> dict:
     except Exception:
         return {}
     return body if isinstance(body, dict) else {}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Skills de instrucciones (SKILL.md): incluidas, importadas y del agente
+# ═══════════════════════════════════════════════════════════════════════
+
+def _agent_skills_payload() -> dict[str, Any]:
+    from backend.core import agent_skills
+
+    return {
+        "skills": [skill.to_dict() for skill in agent_skills.discover()],
+        "packs": agent_skills.list_packs(),
+        "suggested": agent_skills.SUGGESTED_SOURCES,
+    }
+
+
+@router.get("/agent-skills")
+async def list_agent_skills():
+    return {"ok": True, **(await asyncio.to_thread(_agent_skills_payload))}
+
+
+@router.get("/agent-skills/{name}")
+async def get_agent_skill(name: str):
+    from backend.core import agent_skills
+
+    try:
+        skill = await asyncio.to_thread(agent_skills.read_skill, name, mark_use=False)
+    except agent_skills.SkillError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"ok": True, "skill": skill}
+
+
+@router.post("/agent-skills/install")
+async def install_agent_skills(request: Request):
+    """Instala skills desde un repo de GitHub (owner/repo o URL) o una carpeta local."""
+    from backend.core import agent_skills
+
+    body = await _optional_json(request)
+    source = str(body.get("source") or "").strip()
+    pack = str(body.get("pack") or "").strip() or None
+    if not source:
+        raise HTTPException(status_code=400, detail="Indica un repositorio de GitHub o una carpeta")
+    try:
+        if Path(source).expanduser().is_dir():
+            result = await asyncio.to_thread(agent_skills.install_from_folder, source, pack)
+        else:
+            result = await agent_skills.install_from_github(source, pack)
+    except agent_skills.SkillError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _refresh_agent_profile()  # el índice de skills va en el system prompt
+    return {"ok": True, **result}
+
+
+@router.post("/agent-skills/{name}/enabled")
+async def set_agent_skill_enabled(name: str, request: Request):
+    from backend.core import agent_skills
+
+    body = await _optional_json(request)
+    try:
+        skill = await asyncio.to_thread(agent_skills.set_enabled, name, bool(body.get("enabled", True)))
+    except agent_skills.SkillError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    _refresh_agent_profile()
+    return {"ok": True, "skill": skill.to_dict()}
+
+
+@router.post("/agent-skills/{name}/pinned")
+async def set_agent_skill_pinned(name: str, request: Request):
+    from backend.core import agent_skills
+
+    body = await _optional_json(request)
+    try:
+        skill = await asyncio.to_thread(agent_skills.set_pinned, name, bool(body.get("pinned", True)))
+    except agent_skills.SkillError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "skill": skill.to_dict()}
+
+
+@router.delete("/agent-skills/packs/{pack}")
+async def remove_agent_skill_pack(pack: str):
+    from backend.core import agent_skills
+
+    if not await asyncio.to_thread(agent_skills.remove_pack, pack):
+        raise HTTPException(status_code=404, detail="Pack no encontrado")
+    _refresh_agent_profile()
+    return {"ok": True}
+
+
+@router.delete("/agent-skills/agent/{name}")
+async def delete_agent_authored_skill(name: str):
+    from backend.core import agent_skills
+
+    if not await asyncio.to_thread(agent_skills.delete_agent_skill, name):
+        raise HTTPException(status_code=404, detail="No es una skill escrita por el agente")
+    _refresh_agent_profile()
+    return {"ok": True}
+
+
+@router.post("/agent-skills/curator/run")
+async def run_skill_curator():
+    from backend.core.skill_curator import get_curator
+
+    result = await asyncio.to_thread(get_curator().run, force=True)
+    _refresh_agent_profile()
+    return {"ok": True, "result": result}
+
+
+# ── Variables de entorno de skills con tools (skill.yaml) ──────────────
+# Se guardan en el keyring y solo se pasan a la tool que las declara.
+
+@router.get("/skills/{skill_id}/env")
+async def get_skill_env(skill_id: str):
+    import os
+
+    from backend.core.skill_runtime import env_vault_name
+
+    try:
+        skill = await asyncio.to_thread(_get_skill_registry().get_skill, skill_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' no encontrada")
+    names = skill.get("requires_env") or []
+    return {
+        "ok": True,
+        "vars": [
+            {"name": var, "configured": bool(config.get_api_key(env_vault_name(var))), "from_env": var in os.environ}
+            for var in names
+        ],
+    }
+
+
+@router.put("/skills/{skill_id}/env")
+async def set_skill_env(skill_id: str, request: Request):
+    from backend.core.skill_runtime import env_vault_name
+
+    try:
+        skill = await asyncio.to_thread(_get_skill_registry().get_skill, skill_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' no encontrada")
+    allowed = set(skill.get("requires_env") or [])
+    body = await _optional_json(request)
+    unknown = sorted(set(body) - allowed)
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"La skill no declara: {', '.join(unknown)}")
+    for var, value in body.items():
+        if str(value or "").strip():
+            config.set_api_key(env_vault_name(var), str(value).strip())
+        else:
+            config.delete_api_key(env_vault_name(var))
+    return {"ok": True, "updated": sorted(body)}

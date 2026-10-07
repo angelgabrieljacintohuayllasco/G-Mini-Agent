@@ -130,7 +130,10 @@ _dev_log.txt
 # Estado de ejecución local (token de sesión, dispositivos emparejados)
 data/runtime/
 
-# Skills importadas por el usuario y su estado
+# Skills importadas por el usuario, las que escribe el agente y su estado
 data/agent_skills/installed/
+data/agent_skills/agent/
 data/agent_skills/state.json
+data/agent_skills/state.corrupt-*.json
+data/agent_skills/curator.json
 data/agent_skills/.tmp/

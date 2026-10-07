@@ -41,6 +41,9 @@ BUILTIN_JOBS: tuple[dict, ...] = (
     # Consolidación de memoria: solo actúa si el agente lleva un rato inactivo.
     {"name": "learning_consolidate", "task_type": "learning_consolidate",
      "trigger_type": "interval", "interval_seconds": 900},
+    # Curator de skills del agente: revisa cada hora, actúa una vez al día con el agente inactivo.
+    {"name": "skill_curator", "task_type": "skill_curator",
+     "trigger_type": "interval", "interval_seconds": 3600},
 )
 
 

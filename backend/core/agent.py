@@ -2290,6 +2290,10 @@ class AgentCore:
         if mcp_context:
             prompt = prompt + "\n\n" + mcp_context
 
+        skills_index = self._skills_prompt_index()
+        if skills_index:
+            prompt = prompt + "\n\n" + skills_index
+
         self._memory.set_system_prompt(prompt)
         logger.debug(
             f"System prompt aplicado: total_len={len(prompt)}, "
@@ -2302,6 +2306,17 @@ class AgentCore:
             f"SYSTEM PROMPT APPLIED [len={len(prompt)}]:\n"
             f"--- SYSTEM PROMPT START ---\n{prompt}\n--- SYSTEM PROMPT END ---"
         )
+
+    @staticmethod
+    def _skills_prompt_index() -> str:
+        """Índice de skills SKILL.md (nombre + descripción); el cuerpo se carga con skill_read."""
+        try:
+            from backend.core import agent_skills
+
+            return agent_skills.build_prompt_index()
+        except Exception as exc:
+            logger.warning(f"Índice de skills no disponible: {exc}")
+            return ""
 
     def _get_mcp_tools_context(self) -> str:
         """Genera contexto MCP para inyectar en el system prompt."""

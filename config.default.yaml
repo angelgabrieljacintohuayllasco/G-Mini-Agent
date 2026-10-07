@@ -619,6 +619,14 @@ onboarding:
   profile_build: "ask"    # ask = ofrece armar tu perfil; off = no guarda datos personales
   seen: {}
 
+# ═══ Skills que escribe el agente (data/agent_skills/agent) ═══
+curator:
+  enabled: true
+  interval_hours: 24
+  min_idle_minutes: 30
+  stale_after_days: 30     # sin usarse: deja de destacarse
+  archive_after_days: 90   # sale del índice del prompt (nunca se borra)
+
 # Modelos para tareas de fondo. Vacío = modelo económico del proveedor del chat.
 auxiliary:
   learning:

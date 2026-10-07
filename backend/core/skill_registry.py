@@ -73,6 +73,7 @@ class SkillDescriptor:
     readme_path: Path | None = None
     readme_excerpt: str | None = None
     requires_api_keys: list[str] = field(default_factory=list)
+    requires_env: list[str] = field(default_factory=list)
     requires_permissions: list[str] = field(default_factory=list)
     tools: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -93,6 +94,7 @@ class SkillDescriptor:
             "readme_path": str(self.readme_path) if self.readme_path else None,
             "readme_excerpt": self.readme_excerpt,
             "requires_api_keys": list(self.requires_api_keys),
+            "requires_env": list(self.requires_env),
             "requires_permissions": list(self.requires_permissions),
             "tools": list(self.tools),
             "errors": list(self.errors),
@@ -350,6 +352,7 @@ class SkillRegistry:
             readme_path=readme_path,
             readme_excerpt=readme_excerpt,
             requires_api_keys=_coerce_list(requires.get("api_keys")),
+            requires_env=_coerce_list(requires.get("env")),
             requires_permissions=_coerce_list(requires.get("permissions")),
             tools=tools,
             errors=errors,
