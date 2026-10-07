@@ -506,6 +506,8 @@ agent:
   download_output_dir: "%USERPROFILE%\\Downloads\\G-Mini-Agent"  # Carpeta destino de descargas
   blocked_sites_enabled: false                         # Activa bloqueo configurable de dominios
   blocked_sites: []                                    # Lista editable desde Settings
+  name: "G-Mini"                                       # Nombre del agente (lo eliges tú o se lo pides en el chat)
+  soul: ""                                             # Personalidad: tono y estilo (solo desde Ajustes)
 
 # ═══ Model Assignments para Sub-Agentes ═══
 # Mapea tipo de tarea → provider:modelo preferido para sub-agentes ejecutores.
@@ -610,6 +612,12 @@ learning:
   merge_similarity: 0.97
   consolidate_on_idle: true
   min_idle_minutes: 10
+
+# ═══ Asistente de primera ejecución ═══
+onboarding:
+  completed: false        # en instalaciones existentes se marca solo al arrancar
+  profile_build: "ask"    # ask = ofrece armar tu perfil; off = no guarda datos personales
+  seen: {}
 
 # Modelos para tareas de fondo. Vacío = modelo económico del proveedor del chat.
 auxiliary:

@@ -5,6 +5,7 @@ Gestiona la comunicación bidireccional en tiempo real entre Electron y Python.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import socketio
@@ -112,6 +113,15 @@ async def connect(sid: str, environ: dict, auth: Any = None) -> None:
                 )
         except Exception as exc:
             logger.warning(f"No se pudo restaurar sesión anterior: {exc}")
+
+    # Asistente inicial: solo en la primera ejecución y si no se descartó.
+    try:
+        from backend.core.onboarding import should_offer
+
+        if should_offer():
+            await sio.emit("onboarding:required", {}, to=sid)
+    except Exception as exc:
+        logger.debug(f"Onboarding check falló: {exc}")
 
     # Enviar estado inicial
     await sio.emit(
@@ -912,4 +922,56 @@ async def canvas_unsubscribe(sid: str, data: dict) -> None:
         canvas_id = data.get("canvas_id", "")
         svc.unsubscribe(canvas_id, sid)
     except Exception as exc:
-        logger.debug(f"Error en canvas_unsubscribe (ignorado): {exc}")
+        logger.debug# ── Asistente inicial ────────────────────────────────────────────────
+# Las respuestas pueden tocar el keyring y recargar providers: van en un hilo.
+
+
+async def _emit_onboarding(sid: str, result: dict) -> None:
+    if result.get("status") in ("done", "cancelled"):
+        await sio.emit("onboarding:done", result, to=sid)
+    else:
+        await sio.emit("onboarding:step", result, to=sid)
+    if _agent_core is not None:
+        try:
+            _agent_core.reload_prompt_configuration()  # nombre, personalidad e idioma
+        except Exception as exc:
+            logger.debug(f"onboarding: no se pudo recargar el prompt: {exc}")
+
+
+async def _run_onboarding(sid: str, label: str, fn, *args, **kwargs) -> None:
+    try:
+        result = await asyncio.to_thread(fn, *args, **kwargs)
+        await _emit_onboarding(sid, result)
+    except Exception as exc:
+        logger.warning(f"onboarding:{label} error: {exc}")
+        await sio.emit("onboarding:error", {"message": f"No se pudo completar el paso: {exc}"}, to=sid)
+
+
+@sio.on("onboarding:start")
+async def onboarding_start_ws(sid: str, data: dict | None = None) -> None:
+    from backend.core.onboarding import get_onboarding
+
+    rerun = bool((data or {}).get("rerun")) if isinstance(data, dict) else False
+    await _run_onboarding(sid, "start", get_onboarding().start, rerun=rerun)
+
+
+@sio.on("onboarding:answer")
+async def onboarding_answer_ws(sid: str, data: dict | None = None) -> None:
+    from backend.core.onboarding import get_onboarding
+
+    data = data if isinstance(data, dict) else {}
+    await _run_onboarding(sid, "answer", get_onboarding().answer, str(data.get("step_id", "")), data.get("value") or {})
+
+
+@sio.on("onboarding:back")
+async def onboarding_back_ws(sid: str, data: dict | None = None) -> None:
+    from backend.core.onboarding import get_onboarding
+
+    await _run_onboarding(sid, "back", get_onboarding().back)
+
+
+@sio.on("onboarding:cancel")
+async def onboarding_cancel_ws(sid: str, data: dict | None = None) -> None:
+    from backend.core.onboarding import get_onboarding
+
+    await _run_onboarding(sid, "cancel", get_onboarding().cancel)

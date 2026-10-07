@@ -1089,8 +1089,15 @@ async def update_config(req: ConfigUpdateRequest):
                 f"persisted_voice_tts_primary={persisted_voice_engine}"
             )
 
-        if _agent_core is not None and req.section == "agent" and req.key in ("system_prompt_file", "autonomy_level", "autonomy"):
+        prompt_keys = {"agent": {"system_prompt_file", "autonomy_level", "autonomy", "name", "soul"}, "app": {"language"}}
+        if _agent_core is not None and req.key in prompt_keys.get(req.section, ()):
             _agent_core.reload_prompt_configuration()
+        if req.section in ("memory", "model_router") and (
+            str(req.key).startswith("embedding") or req.key == "default_provider"
+        ):
+            from backend.core.embeddings import reset_embedder
+
+            reset_embedder()
 
         # Solo recargar el motor de voz cuando el cambio afecta al engine activo.
         # Claves que NO requieren reload: tts_speed, auto_tts, enabled, elevenlabs_voice_id, google_voice.
@@ -3903,3 +3910,61 @@ async def run_crew(crew_id: str, request: Request):
 
     await sio.emit("crew:finished", run.to_dict())
     return {"ok": True, "run": run.to_dict()}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Asistente inicial (onboarding)
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/onboarding/state")
+async def onboarding_state():
+    from backend.core.onboarding import get_onboarding, is_first_run, should_offer
+
+    return {
+        "ok": True,
+        "first_run": is_first_run(),
+        "should_offer": should_offer(),
+        "current": await asyncio.to_thread(get_onboarding().current),
+    }
+
+
+@router.post("/onboarding/start")
+async def onboarding_start(request: Request):
+    from backend.core.onboarding import get_onboarding
+
+    body = await _optional_json(request)
+    return {"ok": True, **(await asyncio.to_thread(get_onboarding().start, rerun=bool(body.get("rerun"))))}
+
+
+@router.post("/onboarding/answer")
+async def onboarding_answer(request: Request):
+    from backend.core.onboarding import get_onboarding
+
+    body = await _optional_json(request)
+    step_id = str(body.get("step_id") or "")
+    value = body.get("value") if isinstance(body.get("value"), dict) else {}
+    if not step_id:
+        raise HTTPException(status_code=400, detail="Falta step_id")
+    return {"ok": True, **(await asyncio.to_thread(get_onboarding().answer, step_id, value))}
+
+
+@router.post("/onboarding/back")
+async def onboarding_back():
+    from backend.core.onboarding import get_onboarding
+
+    return {"ok": True, **(await asyncio.to_thread(get_onboarding().back))}
+
+
+@router.post("/onboarding/cancel")
+async def onboarding_cancel():
+    from backend.core.onboarding import get_onboarding
+
+    return {"ok": True, **(await asyncio.to_thread(get_onboarding().cancel))}
+
+
+async def _optional_json(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except Exception:
+        return {}
+    return body if isinstance(body, dict) else {}

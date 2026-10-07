@@ -324,8 +324,15 @@ class PolicyEngine:
             "budget_weekly_report",
             "schedule_list_jobs",
             "schedule_list_runs",
+            "memory_search",
         }:
             return self._review(action, "observe", "reading", "low", 0.95, "accion de lectura o cierre")
+
+        if action_type == "memory_forget":
+            return self._review(action, "observe", "files", "medium", 0.80, "borra un recuerdo del usuario a pedido suyo")
+
+        if action_type == "agent_rename":
+            return self._review(action, "observe", "interactive", "low", 0.90, "cambia el nombre con el que se presenta el agente")
 
         if action_type == "gateway_notify":
             return self._review(action, "development", "publishing", "medium", 0.82, "envia una notificacion por el gateway configurado")

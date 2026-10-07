@@ -68,6 +68,14 @@ async def lifespan(app: FastAPI):
     logger.info(f"  Version: {config.get('app', 'version', default='0.1.0')}")
     logger.info("=" * 60)
 
+    # Quien ya usaba G-Mini no debe ver el asistente inicial (lee keyring y SQLite: en un hilo).
+    try:
+        from backend.core.onboarding import migrate_existing_install
+
+        await asyncio.to_thread(migrate_existing_install)
+    except Exception as exc:
+        logger.warning(f"No se pudo revisar el estado del asistente inicial: {exc}")
+
     agent_core = AgentCore()
     await agent_core.initialize()
     set_agent_core(agent_core)

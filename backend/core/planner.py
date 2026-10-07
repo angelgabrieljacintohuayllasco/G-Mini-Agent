@@ -3655,6 +3655,11 @@ class ActionPlanner:
                     except Exception as app_exc:
                         result["message"] = f"No se pudo abrir '{app_name}': {app_exc}"
 
+                case "memory_search" | "memory_forget" | "agent_rename":
+                    from backend.core import memory_actions
+
+                    result.update(await asyncio.to_thread(memory_actions.run, action.type, dict(action.params)))
+
                 case _:
                     result["message"] = f"Acción desconocida: {action.type}"
                     logger.warning(f"Acción no reconocida: {action.type}")

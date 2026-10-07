@@ -727,6 +727,16 @@ class RealTimeVoice:
             base += "\n\n" + build_autonomy_context()
         except Exception:
             pass
+        # Identidad (nombre, personalidad, idioma) y perfil del usuario, igual que en texto.
+        try:
+            from backend.core.identity import build_identity_context
+            from backend.core.memory_context import build_profile_context
+
+            for block in (build_identity_context(), build_profile_context().text):
+                if block:
+                    base += "\n\n" + block
+        except Exception:
+            pass
         # Contexto del avatar (3D/2D/desactivado) segun config del usuario.
         # En audio nativo NO se usan tags de texto [happy] (el modelo los leeria en
         # voz alta); en su lugar la expresion facial se controla con la herramienta

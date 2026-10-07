@@ -21,6 +21,7 @@ from backend.config import config, ROOT_DIR
 from backend.core.action_output import build_results_block
 from backend.core.memory import Memory
 from backend.core.ide_manager import IDEManager
+from backend.core.identity import build_identity_context
 from backend.core.memory_context import build_profile_context, build_recall_context_async
 from backend.core.modes import DEFAULT_MODE_KEY, build_autonomy_context, build_mode_system_prompt, get_mode, get_mode_behavior_prompt, list_modes
 from backend.core.policy import PolicyEngine, is_approval_text, is_rejection_text
@@ -2270,6 +2271,10 @@ class AgentCore:
         autonomy = config.get("agent", "autonomy", default="media")
         prompt = prompt + "\n\n" + build_autonomy_context()
 
+        identity = build_identity_context()
+        if identity:
+            prompt = prompt + "\n\n" + identity
+
         # Perfil del usuario: lo más importante de la memoria (sin red).
         profile = build_profile_context()
         self._profile_memory_ids = profile.ids
@@ -2662,12 +2667,15 @@ class AgentCore:
             else:
                 enhanced_text = text
 
-            # Recuerdos del turno: van como contexto efímero del system
+            # Recuerdos y avisos del turno: van como contexto efímero del system
             # prompt, no dentro del mensaje (no se acumulan en el historial).
             turn_notes: list[str] = []
             recall_block = await build_recall_context_async(text, exclude_ids=self._profile_memory_ids)
             if recall_block:
                 turn_notes.append(recall_block)
+            profile_directive = self._profile_directive_for_turn()
+            if profile_directive:
+                turn_notes.append(profile_directive)
             self._memory.set_turn_context("\n\n".join(turn_notes))
 
             # Rutas a archivos media que el usuario escribio directamente en el chat
@@ -2708,6 +2716,10 @@ class AgentCore:
             await self._run_agent_loop(sid, max_iterations, loop_timeout, is_task_request=is_task_request)
 
             self._schedule_reflection()
+            if profile_directive:
+                from backend.core.onboarding import mark_seen
+
+                mark_seen(flag="profile_build_offered")
 
         except asyncio.CancelledError:
             logger.info("Tarea de procesamiento cancelada")
@@ -2765,6 +2777,18 @@ class AgentCore:
         task = asyncio.create_task(_reflect())
         self._bg_tasks.add(task)
         task.add_done_callback(self._on_bg_task_done)
+
+    def _profile_directive_for_turn(self) -> str:
+        """Aviso de una sola vez para ofrecer armar el perfil, si el usuario lo aceptó."""
+        try:
+            from backend.core.onboarding import is_seen, profile_build_directive, profile_build_mode
+
+            if profile_build_mode() != "ask" or is_seen(flag="profile_build_offered"):
+                return ""
+            return profile_build_directive()
+        except Exception as exc:
+            logger.debug(f"Aviso de perfil no disponible: {exc}")
+            return ""
 
     async def _run_agent_loop(
         self,
@@ -3337,10 +3361,15 @@ class AgentCore:
         task = asyncio.create_task(self._planner.execute_actions(actions))
         self._current_action_task = task
         try:
-            return await task
+            results = await task
         finally:
             if self._current_action_task is task:
                 self._current_action_task = None
+        from backend.core.memory_actions import PROMPT_REFRESH_ACTIONS
+
+        if any(r.get("success") and r.get("action") in PROMPT_REFRESH_ACTIONS for r in results or []):
+            self._apply_system_prompt()  # perfil o nombre cambiaron
+        return results
 
     async def stop(self) -> None:
         """Detiene la generación y las acciones en curso."""
@@ -3646,6 +3675,10 @@ class AgentCore:
             agent_prompt = build_mode_system_prompt(self._base_system_prompt, self._current_mode)
 
             agent_prompt = agent_prompt + "\n\n" + build_autonomy_context()
+
+            for block in (build_identity_context(), build_profile_context().text):
+                if block:
+                    agent_prompt = agent_prompt + "\n\n" + block
 
             mcp_context = self._get_mcp_tools_context()
             if mcp_context:
