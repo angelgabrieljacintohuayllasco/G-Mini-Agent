@@ -11,8 +11,8 @@ class VoiceRealtime {
         this._stream = null;
         /** @type {AudioContext|null} */
         this._captureCtx = null;
-        /** @type {ScriptProcessorNode|null} */
-        this._processor = null;
+        /** Captura PCM16 con AudioWorklet (mic-capture.js): {worklet, stop()}. */
+        this._capture = null;
         /** @type {AudioContext|null} */
         this._playbackCtx = null;
         /** @type {AnalyserNode|null} */
@@ -38,7 +38,7 @@ class VoiceRealtime {
 
         // Capture config — PCM16 mono 16 kHz
         this._sampleRate = 16000;
-        this._bufferSize = 4096;
+        this._bufferSize = 2048;        // 128 ms por trozo a 16 kHz
     }
 
     /**
@@ -91,21 +91,22 @@ class VoiceRealtime {
             this._captureCtx = new AudioContext({ sampleRate: this._sampleRate });
             const source = this._captureCtx.createMediaStreamSource(this._stream);
 
-            // ScriptProcessorNode for PCM capture (simple, works in Electron Chromium)
-            this._processor = this._captureCtx.createScriptProcessor(this._bufferSize, 1, 1);
-            this._processor.onaudioprocess = (ev) => {
-                if (!this._active) return;
-                // Barge-in con TTS de navegador: no mandar mic mientras la IA habla por
-                // speechSynthesis (la bocina entra al mic y el STT transcribiría el eco).
-                if (window.__webSpeech && window.__webSpeech.speaking()) return;
-                const float32 = ev.inputBuffer.getChannelData(0);
-                const pcm16 = this._float32ToPcm16(float32);
-                const b64 = this._arrayBufferToBase64(pcm16.buffer);
-                ws.sendRealtimeAudio(b64);
-            };
-
-            source.connect(this._processor);
-            this._processor.connect(this._captureCtx.destination);
+            const capture = await window.gminiPcmCapture.attach(this._captureCtx, source, {
+                chunkSize: this._bufferSize,
+                onChunk: (pcm16) => {
+                    if (!this._active) return;
+                    // Barge-in con TTS de navegador: no mandar mic mientras la IA habla por
+                    // speechSynthesis (la bocina entra al mic y el STT transcribiría el eco).
+                    if (window.__webSpeech && window.__webSpeech.speaking()) return;
+                    ws.sendRealtimeAudio(window.gminiPcmCapture.toBase64(pcm16));
+                },
+            });
+            // Se canceló mientras cargaba el worklet: stop() o release() ya limpiaron el resto.
+            if (token !== this._startToken) {
+                capture.stop();
+                return false;
+            }
+            this._capture = capture;
 
             this._ensurePlayback();
             this._active = true;
@@ -332,13 +333,9 @@ class VoiceRealtime {
 
     /** Suelta el micrófono: nodo de captura, contexto y pistas de getUserMedia. */
     _cleanupCapture() {
-        if (this._processor) {
-            this._processor.onaudioprocess = null;
-            if (this._processor.port) {
-                try { this._processor.port.close(); } catch (_) { /* nodo sin puerto */ }
-            }
-            try { this._processor.disconnect(); } catch (_) { /* noop */ }
-            this._processor = null;
+        if (this._capture) {
+            this._capture.stop();
+            this._capture = null;
         }
         if (this._captureCtx) {
             try { this._captureCtx.close(); } catch (_) { /* noop */ }
@@ -388,18 +385,6 @@ class VoiceRealtime {
     }
 
     /**
-     * Convierte Float32Array (-1..1) a Int16Array PCM16.
-     */
-    _float32ToPcm16(float32) {
-        const pcm16 = new Int16Array(float32.length);
-        for (let i = 0; i < float32.length; i++) {
-            const s = Math.max(-1, Math.min(1, float32[i]));
-            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-        }
-        return pcm16;
-    }
-
-    /**
      * Convierte Int16Array PCM16 a Float32Array (-1..1).
      */
     _pcm16ToFloat32(pcm16) {
@@ -408,18 +393,6 @@ class VoiceRealtime {
             float32[i] = pcm16[i] / (pcm16[i] < 0 ? 0x8000 : 0x7FFF);
         }
         return float32;
-    }
-
-    /**
-     * ArrayBuffer → base64 string.
-     */
-    _arrayBufferToBase64(buffer) {
-        const bytes = new Uint8Array(buffer);
-        let binary = '';
-        for (let i = 0; i < bytes.length; i++) {
-            binary += String.fromCharCode(bytes[i]);
-        }
-        return btoa(binary);
     }
 
     /** Micrófono capturando. @returns {boolean} */

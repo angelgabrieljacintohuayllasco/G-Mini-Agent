@@ -65,14 +65,19 @@
             capture.stream = stream;
             capture.ctx = new AudioContext({ sampleRate: RATE });
             capture.source = capture.ctx.createMediaStreamSource(stream);
-            capture.processor = capture.ctx.createScriptProcessor(CHUNK, 1, 1);
-            capture.processor.onaudioprocess = (ev) => {
-                if (!state.listening || typeof ws === 'undefined' || !ws.connected) return;
-                const pcm16 = voiceRealtime._float32ToPcm16(ev.inputBuffer.getChannelData(0));
-                ws.sendWakeAudio(voiceRealtime._arrayBufferToBase64(pcm16.buffer));
-            };
-            capture.source.connect(capture.processor);
-            capture.processor.connect(capture.ctx.destination);
+            const pcm = await window.gminiPcmCapture.attach(capture.ctx, capture.source, {
+                chunkSize: CHUNK,
+                onChunk: (pcm16) => {
+                    if (!state.listening || typeof ws === 'undefined' || !ws.connected) return;
+                    ws.sendWakeAudio(window.gminiPcmCapture.toBase64(pcm16));
+                },
+            });
+            // Se apagó o empezó la voz mientras cargaba el worklet: stopCapture() ya soltó todo.
+            if (token !== state.token) {
+                pcm.stop();
+                return true;
+            }
+            capture.processor = pcm;
             // Si el usuario sale del micrófono desde Windows, el modo no se queda colgado.
             stream.getAudioTracks()[0]?.addEventListener('ended', () => {
                 if (capture.stream !== stream) return;
@@ -98,8 +103,7 @@
         state.token += 1;
         state.starting = false;
         state.listening = false;
-        if (capture.processor) capture.processor.onaudioprocess = null;
-        try { capture.processor?.disconnect(); } catch (e) { /* ya desconectado */ }
+        capture.processor?.stop();
         try { capture.source?.disconnect(); } catch (e) { /* ya desconectado */ }
         capture.stream?.getTracks().forEach((track) => track.stop());
         capture.ctx?.close().catch(() => {});
