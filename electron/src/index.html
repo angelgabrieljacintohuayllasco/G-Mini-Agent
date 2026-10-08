@@ -1560,7 +1560,78 @@
                 <!-- ═══ DISPOSITIVOS ═══ -->
                 <div class="settings-page" data-page="devices" id="settings-page-devices" role="tabpanel" aria-labelledby="settings-tab-devices">
                     <h3 class="settings-page-title">Dispositivos</h3>
-                    <p class="settings-page-lead">Otros equipos con G-Mini (un VPS, una Raspberry Pi, otra PC) a los que este puede mandar tareas. El agente también los usa cuando le pides algo para ese equipo.</p>
+                    <p class="settings-page-lead">Conecta un teléfono, una placa u otra PC a este G-Mini, o empareja otros G-Mini para mandarles tareas.</p>
+
+                    <h4 class="settings-section-title"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-laptop"></use></svg>Este equipo</h4>
+
+                    <div class="setting-group">
+                        <span class="setting-group-title">Conexiones</span>
+                        <div id="access-status" class="access-status"></div>
+                        <div id="access-addresses" class="access-addresses" hidden></div>
+                        <div id="access-restart" class="access-restart" hidden>
+                            <span id="access-restart-text"></span>
+                            <button id="btn-access-restart" class="btn-primary-accent" type="button"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-refresh-cw"></use></svg>Reiniciar G-Mini</button>
+                        </div>
+                        <details class="access-advanced">
+                            <summary><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-chevron-right"></use></svg>Opciones avanzadas</summary>
+                            <div id="access-advanced-body" class="access-advanced-body"></div>
+                        </details>
+                    </div>
+
+                    <div class="setting-group">
+                        <span class="setting-group-title">Conectar un dispositivo</span>
+                        <div class="setting-help-text">Genera un código de un solo uso y escríbelo, o escanéalo, en el otro dispositivo. Vence a los 5 minutos.</div>
+                        <form id="pairing-form" class="pairing-form" novalidate>
+                            <div class="pairing-field">
+                                <label for="pairing-label">Nombre</label>
+                                <input id="pairing-label" class="setting-input" type="text" maxlength="60" placeholder="Teléfono, sala, oficina" autocomplete="off" spellcheck="false">
+                            </div>
+                            <div class="pairing-field">
+                                <label for="pairing-type">Tipo</label>
+                                <select id="pairing-type" class="setting-select">
+                                    <option value="phone">Teléfono</option>
+                                    <option value="desktop">Otra PC u otro G-Mini</option>
+                                    <option value="esp32">Placa (ESP32)</option>
+                                    <option value="custom">Otro</option>
+                                </select>
+                            </div>
+                            <fieldset class="pairing-scopes">
+                                <legend>Permisos</legend>
+                                <label><input type="checkbox" name="pairing-scope" value="chat" checked>Conversar</label>
+                                <label><input type="checkbox" name="pairing-scope" value="voice" checked>Voz</label>
+                                <label><input type="checkbox" name="pairing-scope" value="tasks" checked>Tareas en segundo plano</label>
+                                <label><input type="checkbox" name="pairing-scope" value="node">Nodo: cara, LEDs, relés y sensores</label>
+                            </fieldset>
+                            <button id="btn-pairing-generate" class="btn-primary-accent" type="submit"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-qr-code"></use></svg>Generar código</button>
+                        </form>
+                        <div id="pairing-result" class="pairing-result" hidden>
+                            <div class="pairing-code-box">
+                                <span class="pairing-code-label">Código de emparejamiento</span>
+                                <span id="pairing-code" class="pairing-code"></span>
+                                <div class="pairing-timer">
+                                    <span id="pairing-countdown" role="timer" aria-live="off"></span>
+                                    <span class="pairing-bar" aria-hidden="true"><span id="pairing-bar-fill" class="pairing-bar-fill"></span></span>
+                                </div>
+                                <p id="pairing-hint" class="setting-help-text"></p>
+                            </div>
+                            <figure id="pairing-qr" class="pairing-qr">
+                                <div id="pairing-qr-svg" class="pairing-qr-svg"></div>
+                                <figcaption>Escanéalo con el otro dispositivo</figcaption>
+                            </figure>
+                        </div>
+                        <div id="pairing-status" class="connector-status" role="status"></div>
+                    </div>
+
+                    <div class="setting-group">
+                        <div class="skills-head-row">
+                            <span class="setting-group-title">Dispositivos con acceso</span>
+                            <button id="btn-devices-refresh" class="btn-secondary btn-panel-action" type="button"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-refresh-cw"></use></svg>Actualizar</button>
+                        </div>
+                        <div id="access-devices-list" class="connectors-list"></div>
+                    </div>
+
+                    <h4 class="settings-section-title"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-server"></use></svg>Otros G-Mini</h4>
+                    <p class="settings-section-lead">Un VPS, una Raspberry Pi u otra PC con G-Mini a la que este puede mandar tareas. El agente también los usa cuando le pides algo para ese equipo.</p>
 
                     <div class="setting-group">
                         <span class="setting-group-title">Emparejar otro G-Mini</span>
@@ -1585,7 +1656,7 @@
 
                     <div class="setting-group">
                         <div class="skills-head-row">
-                            <span class="setting-group-title">Otros G-Mini</span>
+                            <span class="setting-group-title">Emparejados</span>
                             <button id="btn-remote-refresh" class="btn-secondary btn-panel-action" type="button" hidden><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-refresh-cw"></use></svg>Comprobar todos</button>
                         </div>
                         <div id="remote-servers-list" class="connectors-list remote-list"></div>
@@ -1677,6 +1748,8 @@
     <script src="js/skills.js"></script>
     <script src="js/connectors.js"></script>
     <script src="js/devices.js"></script>
+    <script src="vendor/qrcode-generator.js"></script>
+    <script src="js/device-access.js"></script>
     <script src="js/palette.js"></script>
     <script src="js/app.js"></script>
     <script src="js/slash.js"></script>

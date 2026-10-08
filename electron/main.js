@@ -21,6 +21,7 @@ const {
     shell, session, Notification,
 } = electronModule;
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { spawn } = require('child_process');
@@ -1905,6 +1906,40 @@ function readSessionToken() {
 
 handleIpc('get-backend-url', () => BACKEND_URL);
 handleIpc('get-session-token', () => readSessionToken());
+
+/**
+ * IPv4 de este equipo a las que otro dispositivo puede llegar (Configuración >
+ * Dispositivos > Este equipo). Tailscale va primero: 100.64.0.0/10 o una
+ * interfaz con ese nombre. Se omiten loopback, las 169.254.x.x sin DHCP y los
+ * adaptadores virtuales (Hyper-V, WSL, VirtualBox, VMware, Docker).
+ */
+function listNetworkAddresses() {
+    const found = [];
+    const virtual = /vEthernet|VirtualBox|VMware|WSL|Docker|vboxnet/i;
+    for (const [name, entries] of Object.entries(os.networkInterfaces() || {})) {
+        if (virtual.test(name)) continue;
+        for (const entry of entries || []) {
+            const ipv4 = entry.family === 'IPv4' || entry.family === 4;
+            if (!ipv4 || entry.internal) continue;
+            const [a, b] = String(entry.address).split('.').map(Number);
+            if (a === 169 && b === 254) continue;
+            const tailscale = /tailscale/i.test(name) || (a === 100 && b >= 64 && b <= 127);
+            found.push({ name, address: entry.address, tailscale });
+        }
+    }
+    return found.sort((x, y) => Number(y.tailscale) - Number(x.tailscale));
+}
+
+handleIpc('net:addresses', () => listNetworkAddresses());
+
+// Reinicio pedido desde Configuración (p. ej. tras cambiar server.host): will-quit
+// detiene el núcleo y la nueva instancia lo vuelve a lanzar con la config nueva.
+handleIpc('app:relaunch', () => {
+    app.relaunch();
+    app.isQuitting = true;
+    app.quit();
+    return true;
+});
 
 // Configuración cambia el tema: fondo nativo y nativeTheme al instante, sin
 // esperar al sondeo de config.user.yaml. El resto de ventanas se entera por

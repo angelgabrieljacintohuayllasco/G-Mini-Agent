@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld('gmini', {
     // Backend URL
     getBackendUrl: () => ipcRenderer.invoke('get-backend-url'),
     getSessionToken: () => ipcRenderer.invoke('get-session-token'),
+    // Configuración > Dispositivos: direcciones de este equipo y reinicio de la app
+    getNetworkAddresses: () => ipcRenderer.invoke('net:addresses'),
+    relaunch: () => ipcRenderer.invoke('app:relaunch'),
 
     // Tema
     initialTheme: readInitialTheme(),

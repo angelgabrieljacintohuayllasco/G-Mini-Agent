@@ -4808,6 +4808,385 @@ select option {
     }
 }
 
+/* ── Configuración > Dispositivos > Este equipo ────────────── */
+.settings-section-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: var(--space-3) 0 0;
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semibold);
+    color: var(--text-primary);
+}
+
+.settings-section-title .icon {
+    width: 16px;
+    height: 16px;
+    color: var(--accent-text);
+}
+
+.settings-section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+}
+
+.settings-section-lead {
+    margin: calc(-1 * var(--space-1)) 0 0;
+    font-size: var(--fs-sm);
+    color: var(--text-muted);
+}
+
+.access-status {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+}
+
+.access-status-icon {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius);
+    background: var(--tint-2);
+    color: var(--text-secondary);
+}
+
+.access-status.is-open .access-status-icon {
+    background: var(--success-soft);
+    color: var(--success);
+}
+
+.access-status-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    font-size: var(--fs-xs);
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+
+.access-status-text strong {
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semibold);
+    color: var(--text-primary);
+}
+
+.access-addresses {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.access-address {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: 26px;
+    padding: 0 var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--bg-primary);
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+}
+
+.access-address code {
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+}
+
+.access-address.is-tailscale {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.access-address-note {
+    color: var(--accent-text);
+}
+
+.access-restart {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+    font-size: var(--fs-sm);
+    color: var(--text-primary);
+}
+
+.access-advanced summary {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-medium);
+    color: var(--text-secondary);
+    cursor: pointer;
+    list-style: none;
+}
+
+.access-advanced summary::-webkit-details-marker {
+    display: none;
+}
+
+.access-advanced summary .icon {
+    width: 14px;
+    height: 14px;
+    transition: transform var(--dur) var(--ease-out);
+}
+
+.access-advanced[open] summary .icon {
+    transform: rotate(90deg);
+}
+
+.access-advanced summary:hover {
+    color: var(--text-primary);
+}
+
+.access-advanced-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+}
+
+.access-advanced-row {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+}
+
+.access-advanced-row .setting-help-text {
+    margin: 0;
+}
+
+.access-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border));
+    border-radius: var(--radius-sm);
+    background: var(--warning-soft);
+    font-size: var(--fs-xs);
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+
+.access-warning > .icon {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+    color: var(--warning);
+}
+
+.access-warning-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.access-warning-text strong {
+    color: var(--text-primary);
+}
+
+.pairing-form {
+    display: grid;
+    grid-template-columns: minmax(160px, 1.4fr) minmax(150px, 1fr);
+    align-items: end;
+    gap: var(--space-3);
+}
+
+.pairing-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+.pairing-field > label,
+.pairing-scopes legend {
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-medium);
+    color: var(--text-secondary);
+}
+
+.pairing-scopes {
+    display: flex;
+    flex-wrap: wrap;
+    grid-column: 1 / -1;
+    gap: var(--space-1) var(--space-4);
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.pairing-scopes legend {
+    margin-bottom: var(--space-1);
+    padding: 0;
+}
+
+.pairing-scopes label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--fs-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.pairing-scopes input {
+    accent-color: var(--accent);
+}
+
+.pairing-form > button {
+    grid-column: 1 / -1;
+    justify-self: start;
+}
+
+.pairing-result {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-4);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    background: var(--bg-primary);
+    animation: pop-in var(--dur) var(--ease-out) both;
+}
+
+.pairing-code-box {
+    display: flex;
+    flex: 1 1 260px;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.pairing-code-label {
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-medium);
+    color: var(--text-muted);
+}
+
+.pairing-code {
+    font-family: var(--font-mono);
+    font-size: 40px;
+    font-weight: var(--fw-semibold);
+    line-height: 1.1;
+    letter-spacing: 0.08em;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    user-select: all;
+}
+
+.pairing-timer {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    max-width: 280px;
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+.pairing-bar {
+    display: block;
+    height: 4px;
+    overflow: hidden;
+    border-radius: var(--radius-pill);
+    background: var(--tint-2);
+}
+
+.pairing-bar-fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--accent);
+    transform-origin: left center;
+    transition: transform 1s linear;
+}
+
+.pairing-code-box .setting-help-text {
+    margin: 0;
+}
+
+.pairing-result.is-expired .pairing-code {
+    color: var(--text-muted);
+    text-decoration: line-through;
+    text-decoration-thickness: 2px;
+}
+
+.pairing-result.is-expired .pairing-qr {
+    opacity: 0.25;
+}
+
+.pairing-qr {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    transition: opacity var(--dur) var(--ease-out);
+}
+
+.pairing-qr-svg {
+    width: 168px;
+    height: 168px;
+    padding: 6px;
+    border-radius: var(--radius);
+    background: #ffffff;
+}
+
+.pairing-qr-svg svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.pairing-qr figcaption {
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+}
+
+.device-scopes {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.device-card.is-new {
+    border-color: color-mix(in srgb, var(--success) 55%, var(--border));
+    box-shadow: 0 0 0 3px var(--success-soft);
+}
+
+@media (max-width: 560px) {
+    .pairing-form {
+        grid-template-columns: 1fr;
+    }
+
+    .pairing-code {
+        font-size: 32px;
+    }
+}
+
 /* ── Configuración > Dispositivos (otros G-Mini) ───────────── */
 .remote-pair-form {
     display: grid;
