@@ -129,6 +129,26 @@ def test_extension_ws_rejects_web_origins(client, origin):
     assert exc.value.code == 1008
 
 
+def test_a_newer_extension_connection_survives_the_old_one_closing(client):
+    import json
+    import time
+
+    from backend.automation.extension_bridge import get_bridge
+
+    headers = {"Origin": "chrome-extension://abcdefghijklmnop", "Host": "127.0.0.1:8765"}
+    bridge = get_bridge()
+    with client.websocket_connect("/ws/extension", headers=headers) as first:
+        first.send_text(json.dumps({"event": "ext:hello", "data": {}}))
+        with client.websocket_connect("/ws/extension", headers=headers) as second:
+            second.send_text(json.dumps({"event": "ext:hello", "data": {}}))
+            time.sleep(0.2)
+            first.close()
+            time.sleep(0.2)
+            assert bridge.is_connected  # la conexión vigente es la segunda
+    time.sleep(0.2)
+    assert not bridge.is_connected
+
+
 def test_origin_helper():
     assert local_auth.browser_origin_is_untrusted("https://evil.example")
     assert local_auth.browser_origin_is_untrusted("null")

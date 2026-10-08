@@ -1,13 +1,17 @@
 """G-Mini Agent — Logger centralizado con loguru."""
 
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
 
-LOG_DIR = Path(__file__).resolve().parent.parent.parent / "logs"
-LOG_DIR.mkdir(exist_ok=True)
+# Junto a los datos (GMINI_HOME) si existe: instalada o en un servidor, la
+# carpeta del programa puede ser de solo lectura.
+_HOME = os.environ.get("GMINI_HOME", "").strip()
+LOG_DIR = (Path(_HOME).expanduser().resolve() if _HOME else Path(__file__).resolve().parent.parent.parent) / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Timestamp fijo capturado al arrancar el proceso. Cada EJECUCION del backend
 # genera sus propios archivos de log (fecha + hora), no uno por dia. Asi cada

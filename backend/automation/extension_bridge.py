@@ -87,13 +87,15 @@ class ExtensionBridge:
             logger.warning(f"[ExtBridge] Error en WebSocket: {e}")
         finally:
             async with self._lock:
-                self._ws = None
-                self._connected = False
-                # Rechazar todos los pending
-                for fid, fut in self._pending.items():
-                    if not fut.done():
-                        fut.set_exception(ConnectionError("Extension disconnected"))
-                self._pending.clear()
+                # Si ya entró otra conexión (otra pestaña de la extensión, una
+                # reconexión), es la vigente: no se toca su estado.
+                if self._ws is ws:
+                    self._ws = None
+                    self._connected = False
+                    for fid, fut in self._pending.items():
+                        if not fut.done():
+                            fut.set_exception(ConnectionError("Extension disconnected"))
+                    self._pending.clear()
 
     async def _handle_message(self, event: str, data: dict) -> None:
         """Procesa un mensaje entrante de la extensión."""
