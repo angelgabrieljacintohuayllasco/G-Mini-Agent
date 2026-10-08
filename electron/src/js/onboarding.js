@@ -69,7 +69,7 @@ class OnboardingWizard {
                         <div id="onboarding-fields"></div>
                         <div class="onboarding-actions">
                             <button id="onboarding-cancel" class="btn-text" type="button">Cancelar configuración</button>
-                            <button id="onboarding-back" class="btn-secondary" type="button" disabled>Atrás</button>
+                            <button id="onboarding-back" class="btn-secondary" type="button" disabled hidden>Atrás</button>
                             <button id="onboarding-next" class="btn-primary" type="submit">Siguiente</button>
                         </div>
                     </form>
@@ -106,7 +106,12 @@ class OnboardingWizard {
         const next = this._el('onboarding-next');
         const back = this._el('onboarding-back');
         if (next) next.disabled = busy;
-        if (back) back.disabled = busy || (this.currentStep?.step_number || 1) <= 1;
+        if (back) {
+            // En el primer paso no hay adónde volver: el botón no se muestra.
+            const first = !(Number(this.currentStep?.step_number) > 1);
+            back.hidden = first;
+            back.disabled = busy || first;
+        }
     }
 
     _renderStep(step) {
