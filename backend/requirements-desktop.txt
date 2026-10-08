@@ -7,7 +7,7 @@
 # Pantalla, mouse, teclado y portapapeles
 mss>=9.0.0
 pyautogui>=0.9.54
-pynput>=1.7.6
+pynput>=1.7.6; sys_platform != "linux"   # en Linux pide compilar evdev; pyautogui cubre la entrada
 pyperclip>=1.8.2
 
 # OCR con Tesseract (si está instalado en el sistema)

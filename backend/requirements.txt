@@ -58,7 +58,7 @@ easyocr>=1.7.0
 
 # PC Automation
 pyautogui>=0.9.54
-pynput>=1.7.6
+pynput>=1.7.6; sys_platform != "linux"   # en Linux pide compilar evdev; pyautogui cubre la entrada
 pyperclip>=1.8.2
 browser-use>=0.12.0        # Automatización browser (reemplaza playwright directo)
 # playwright se instala como dependencia de browser-use (no usar directo)

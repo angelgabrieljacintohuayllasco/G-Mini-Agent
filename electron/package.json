@@ -125,7 +125,10 @@
       "artifactName": "G-Mini-Agent-${version}.${ext}",
       "maintainer": "G-Mini Agent <angelgabrieljacintohuayllasco@gmail.com>",
       "synopsis": "Agente de IA de escritorio",
-      "description": "Agente de IA que ve tu pantalla, usa el mouse, el teclado y el navegador, recuerda lo que le cuentas y habla. La primera vez prepara su propio Python con uv."
+      "description": "Agente de IA que ve tu pantalla, usa el mouse, el teclado y el navegador, recuerda lo que le cuentas y habla. La primera vez prepara su propio Python con uv.",
+      "desktop": {
+        "StartupWMClass": "gmini-agent-ui"
+      }
     },
     "deb": {
       "artifactName": "g-mini-agent_${version}_${arch}.${ext}",
