@@ -165,6 +165,7 @@ las acciones sensibles que el agente dejó pendientes. `404` si no hay ninguna.
 
 - `POST /api/v1/voice/tts` `{"text": "Hola", "voice": null, "format": "wav"}` → audio (`audio/wav`, PCM16 mono).
 - `POST /api/v1/voice/stt` con cuerpo `audio/wav` (recomendado 16 kHz mono PCM16) → `{"text": "..."}`.
+- `POST /api/v1/voice/wake` con un `audio/wav` corto (menos de 4 s) → `{"wake": true, "phrase": "oye g-mini", "command": "qué hora es", "transcript": "..."}`. Sirve para dispositivos con su propio detector de voz: si `wake` es true, `command` trae lo pedido después de la palabra de activación (puede venir vacío).
 - `POST /api/v1/voice/turn?session_id=&reply_format=wav` con cuerpo `audio/wav` →
 
   ```json
