@@ -541,6 +541,7 @@
                 <button class="settings-nav-item" type="button" role="tab" id="settings-tab-prompts" aria-controls="settings-page-prompts" aria-selected="false" tabindex="-1" data-page="prompts"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-file-text"></use></svg>Prompts</button>
                 <button class="settings-nav-item" type="button" role="tab" id="settings-tab-security" aria-controls="settings-page-security" aria-selected="false" tabindex="-1" data-page="security"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-shield"></use></svg>Seguridad</button>
                 <button class="settings-nav-item" type="button" role="tab" id="settings-tab-integrations" aria-controls="settings-page-integrations" aria-selected="false" tabindex="-1" data-page="integrations"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-waypoints"></use></svg>Integraciones</button>
+                <button class="settings-nav-item" type="button" role="tab" id="settings-tab-devices" aria-controls="settings-page-devices" aria-selected="false" tabindex="-1" data-page="devices"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-monitor-smartphone"></use></svg>Dispositivos</button>
                 <button class="settings-nav-item" type="button" role="tab" id="settings-tab-scheduler" aria-controls="settings-page-scheduler" aria-selected="false" tabindex="-1" data-page="scheduler"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-clock"></use></svg>Scheduler</button>
                 <button class="settings-nav-item" type="button" role="tab" id="settings-tab-crews" aria-controls="settings-page-crews" aria-selected="false" tabindex="-1" data-page="crews"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-users"></use></svg>Equipos</button>
             </nav>
@@ -1524,6 +1525,41 @@
                     </div>
                 </div>
 
+                <!-- ═══ DISPOSITIVOS ═══ -->
+                <div class="settings-page" data-page="devices" id="settings-page-devices" role="tabpanel" aria-labelledby="settings-tab-devices">
+                    <h3 class="settings-page-title">Dispositivos</h3>
+                    <p class="settings-page-lead">Otros equipos con G-Mini (un VPS, una Raspberry Pi, otra PC) a los que este puede mandar tareas. El agente también los usa cuando le pides algo para ese equipo.</p>
+
+                    <div class="setting-group">
+                        <span class="setting-group-title">Emparejar otro G-Mini</span>
+                        <div class="setting-help-text">En el otro equipo genera un código de emparejamiento (vence a los 5 minutos). Aquí escribe su dirección (IP, nombre de Tailscale o una URL https) y ese código; sin puerto se usa el 8765.</div>
+                        <form id="remote-pair-form" class="remote-pair-form" novalidate>
+                            <div class="remote-pair-field remote-pair-url">
+                                <label for="remote-pair-url">Dirección</label>
+                                <input id="remote-pair-url" class="setting-input" type="text" placeholder="Ej.: 100.71.131.70" autocomplete="off" spellcheck="false">
+                            </div>
+                            <div class="remote-pair-field remote-pair-code">
+                                <label for="remote-pair-code">Código</label>
+                                <input id="remote-pair-code" class="setting-input remote-code-input" type="text" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code" spellcheck="false">
+                            </div>
+                            <div class="remote-pair-field remote-pair-name">
+                                <label for="remote-pair-name">Nombre <span class="remote-optional">(opcional)</span></label>
+                                <input id="remote-pair-name" class="setting-input" type="text" placeholder="tv-server" autocomplete="off" spellcheck="false">
+                            </div>
+                            <button id="btn-remote-pair" class="btn-primary-accent" type="submit"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-link-2"></use></svg>Emparejar</button>
+                        </form>
+                        <div id="remote-pair-status" class="connector-status remote-pair-status" role="status"></div>
+                    </div>
+
+                    <div class="setting-group">
+                        <div class="skills-head-row">
+                            <span class="setting-group-title">Otros G-Mini</span>
+                            <button id="btn-remote-refresh" class="btn-secondary btn-panel-action" type="button" hidden><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-refresh-cw"></use></svg>Comprobar todos</button>
+                        </div>
+                        <div id="remote-servers-list" class="connectors-list remote-list"></div>
+                    </div>
+                </div>
+
                 <!-- ═══ SCHEDULER ═══ -->
                 <div class="settings-page" data-page="scheduler" id="settings-page-scheduler" role="tabpanel" aria-labelledby="settings-tab-scheduler">
                     <h3 class="settings-page-title">Scheduler</h3>
@@ -1607,6 +1643,7 @@
     <script src="js/memory.js"></script>
     <script src="js/skills.js"></script>
     <script src="js/connectors.js"></script>
+    <script src="js/devices.js"></script>
     <script src="js/palette.js"></script>
     <script src="js/app.js"></script>
     <script src="js/slash.js"></script>

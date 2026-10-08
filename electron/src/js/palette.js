@@ -366,6 +366,7 @@ window.gminiPalette = commandPalette;
         ['prompts', 'Prompts', 'file-text', ['plantillas', 'modo personalizado']],
         ['security', 'Seguridad y permisos', 'shield', ['presupuesto', 'gastos', 'bloqueadas', 'token']],
         ['integrations', 'Integraciones', 'waypoints', ['mcp', 'telegram', 'whatsapp', 'discord', 'skills']],
+        ['devices', 'Dispositivos', 'monitor-smartphone', ['otros g-mini', 'emparejar', 'servidor', 'vps', 'raspberry', 'remoto']],
         ['scheduler', 'Scheduler', 'clock', ['tareas programadas', 'cron']],
         ['crews', 'Equipos', 'users', ['crews', 'multi-agente', 'roles']],
     ];

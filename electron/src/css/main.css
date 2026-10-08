@@ -4751,6 +4751,133 @@ select option {
     flex: 1 1 200px;
 }
 
+/* ── Configuración > Dispositivos (otros G-Mini) ───────────── */
+.remote-pair-form {
+    display: grid;
+    grid-template-columns: minmax(180px, 2fr) minmax(110px, 0.9fr) minmax(130px, 1.2fr) auto;
+    align-items: end;
+    gap: var(--space-2) var(--space-3);
+}
+
+.remote-pair-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+.remote-pair-field > label {
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-medium);
+    color: var(--text-secondary);
+}
+
+.remote-optional {
+    font-weight: var(--fw-regular);
+    color: var(--text-muted);
+}
+
+.remote-code-input {
+    font-family: var(--font-mono);
+    letter-spacing: 0.24em;
+}
+
+.remote-pair-status:empty {
+    display: none;
+}
+
+.remote-url code {
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+}
+
+.remote-warn {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.remote-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.remote-actions .is-loading .icon {
+    animation: spin 0.9s linear infinite;
+}
+
+.remote-wait {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.remote-wait input {
+    accent-color: var(--accent);
+}
+
+.remote-task .is-loading .icon {
+    animation: spin 0.9s linear infinite;
+}
+
+.remote-result {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+}
+
+.remote-result-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--fs-xs);
+}
+
+.remote-result-head code {
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+}
+
+.remote-result-text {
+    max-height: 220px;
+    overflow-y: auto;
+    font-size: var(--fs-sm);
+    line-height: 1.55;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.remote-result-text.is-error {
+    color: var(--error);
+}
+
+@media (max-width: 720px) {
+    .remote-pair-form {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .remote-pair-url {
+        grid-column: 1 / -1;
+    }
+
+    .remote-pair-form > button {
+        grid-column: 1 / -1;
+        justify-self: start;
+    }
+}
+
 /* ── Configuración > Conectores ────────────────────────────── */
 .connectors-toolbar {
     display: flex;
