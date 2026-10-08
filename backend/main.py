@@ -99,6 +99,14 @@ async def lifespan(app: FastAPI):
 
     await _ensure_builtin_jobs(scheduler)
 
+    # Tareas del trabajador 24/7 que quedaron a medias si el servicio se reinició.
+    try:
+        from backend.core import remote_tasks
+
+        await remote_tasks.recover_after_restart()
+    except Exception as exc:
+        logger.warning(f"No se pudieron retomar las tareas remotas: {exc}")
+
     try:
         yield
     finally:

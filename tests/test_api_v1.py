@@ -179,6 +179,36 @@ async def test_background_task_runs_and_stores_the_result(agent, monkeypatch):
     assert (await remote_tasks.get_task(task["task_id"]))["status"] == "cancelled"
 
 
+async def test_tasks_left_pending_by_a_restart_are_recovered(agent, monkeypatch):
+    import time
+
+    from backend.core import remote_tasks
+
+    monkeypatch.setattr("backend.core.gateway_service.get_gateway", lambda: None)
+    await remote_tasks._ensure_db()
+    rows = [
+        ("tsk_cola", "queued", None),
+        ("tsk_corriendo", "running", None),
+        ("tsk_programada", "running", '{"interval_seconds": 3600}'),
+    ]
+    async with remote_tasks._db() as db:
+        for task_id, status, schedule in rows:
+            await db.execute(
+                "INSERT INTO remote_tasks (task_id, title, prompt, status, schedule_json, notify_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, '[]', ?)", (task_id, task_id, "resume mi correo", status, schedule, time.time()),
+            )
+        await db.commit()
+
+    counts = await remote_tasks.recover_after_restart()
+    await asyncio.gather(*list(remote_tasks._running))
+
+    assert counts == {"requeued": 1, "interrupted": 1, "rescheduled": 1}
+    assert (await remote_tasks.get_task("tsk_cola"))["status"] == "done"
+    interrupted = await remote_tasks.get_task("tsk_corriendo")
+    assert interrupted["status"] == "failed" and "reinició" in interrupted["error"]
+    assert (await remote_tasks.get_task("tsk_programada"))["status"] == "scheduled"
+
+
 def test_websocket_chat_and_node_registration(client):
     with client.websocket_connect(f"/api/v1/ws?token={TOKEN}", headers=LOCAL_HOST) as ws:
         ws.send_text(json.dumps({"type": "hello", "client": "test"}))

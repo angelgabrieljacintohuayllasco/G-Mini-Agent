@@ -211,6 +211,41 @@ async def cancel_task(task_id: str) -> bool:
     return True
 
 
+async def recover_after_restart() -> dict[str, int]:
+    """Al arrancar: retoma lo que quedó pendiente cuando el servidor se apagó.
+
+    - En cola (nunca empezaron): se lanzan otra vez.
+    - Corriendo cuando se cortó: una tarea única se marca fallida (repetirla
+      podría duplicar lo que ya hizo, como mandar un correo dos veces); una
+      programada vuelve a "scheduled" y espera su próxima corrida.
+    """
+    await _ensure_db()
+    async with _db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT task_id, status, schedule_json FROM remote_tasks WHERE status IN ('queued', 'running')"
+        ) as cursor:
+            rows = await cursor.fetchall()
+    counts = {"requeued": 0, "interrupted": 0, "rescheduled": 0}
+    for row in rows:
+        recurring = bool(json.loads(row["schedule_json"] or "null"))
+        if row["status"] == "running" and recurring:
+            await _update(row["task_id"], status="scheduled")
+            counts["rescheduled"] += 1
+        elif row["status"] == "running":
+            await _update(row["task_id"], status="failed", finished_at=time.time(),
+                          error="Se interrumpió porque el servidor se reinició; vuelve a enviarla si hace falta.")
+            counts["interrupted"] += 1
+        else:
+            task = asyncio.create_task(run_task(row["task_id"]))
+            _running.add(task)
+            task.add_done_callback(_running.discard)
+            counts["requeued"] += 1
+    if any(counts.values()):
+        logger.info(f"Tareas remotas tras reinicio: {counts}")
+    return counts
+
+
 async def run_task(task_id: str) -> dict[str, Any]:
     """Ejecuta una tarea (ya o desde el scheduler) y guarda el resultado."""
     row = await _get_row(task_id)
