@@ -11,9 +11,10 @@
  * todos los alcances.
  *
  * Con server.host en 127.0.0.1 (lo normal) ningún otro equipo llega a este PC.
- * "Permitir conexiones" guarda 0.0.0.0 (todas las redes, siempre con token) y
- * pide reiniciar. No se fija la IP de Tailscale sola: el núcleo escucha en un
- * único host y la app habla con él por 127.0.0.1, así que se quedaría sin él.
+ * "Permitir conexiones", con Tailscale, guarda server.extra_hosts = [su IP]: el
+ * núcleo sigue en 127.0.0.1 (la app) y escucha además ahí, sin abrir las demás
+ * redes. Sin Tailscale guarda server.host = 0.0.0.0, con advertencia. Los dos
+ * se aplican al reiniciar el núcleo, igual que "Volver a solo este equipo".
  */
 (function () {
     'use strict';
@@ -32,8 +33,10 @@
 
     const state = {
         configLoaded: false,
-        effectiveHost: '',     // con el que arrancó el núcleo (se aplica al reiniciar)
-        savedHost: '',         // el de la config ahora
+        effectiveHost: '',     // server.host con el que arrancó el núcleo
+        effectiveExtras: [],   // server.extra_hosts con los que arrancó
+        savedHost: '',         // lo guardado ahora (se aplica al reiniciar)
+        savedExtras: [],
         port: 8765,
         addresses: [],
         devices: [],
@@ -85,11 +88,28 @@
         return new Date(value * 1000).toLocaleDateString('es', { day: '2-digit', month: 'short', year: 'numeric' });
     }
 
+    const sameList = (a, b) => [...a].sort().join(',') === [...b].sort().join(',');
+    const tailscale = () => state.addresses.find((a) => a.tailscale) || null;
+    const present = (ips) => ips.filter((ip) => state.addresses.some((a) => a.address === ip));
+    const isTailscaleIp = (ip) => !!state.addresses.find((a) => a.address === ip)?.tailscale;
+
+    /**
+     * Cómo escucha el núcleo con esa config: 'local' (solo 127.0.0.1), 'extra'
+     * (127.0.0.1 más IPs como la de Tailscale), 'extra-missing' (configuradas
+     * pero ausentes en este equipo: queda en local) o 'all' (0.0.0.0).
+     */
+    function modeOf(host, extras) {
+        if (!isLoopback(host)) return 'all';
+        if (present(extras).length) return 'extra';
+        return extras.length ? 'extra-missing' : 'local';
+    }
+
     /** Dirección que debe usar el otro equipo, o '' si hoy no puede llegar. */
     function reachableHost() {
-        const host = state.effectiveHost;
-        if (!host || isLoopback(host)) return '';
-        if (!ALL_INTERFACES.has(host)) return host;
+        const mode = modeOf(state.effectiveHost, state.effectiveExtras);
+        if (mode === 'extra') return present(state.effectiveExtras)[0];
+        if (mode !== 'all') return '';
+        if (!ALL_INTERFACES.has(state.effectiveHost)) return state.effectiveHost;
         return state.addresses[0]?.address || '';
     }
 
@@ -103,8 +123,14 @@
             ]);
             const server = config?.data?.server || {};
             const host = String(server.host || '127.0.0.1');
-            if (!state.configLoaded) state.effectiveHost = host;
+            const extras = (Array.isArray(server.extra_hosts) ? server.extra_hosts : [])
+                .map((h) => String(h).trim()).filter(Boolean);
+            if (!state.configLoaded) {
+                state.effectiveHost = host;
+                state.effectiveExtras = extras;
+            }
             state.savedHost = host;
+            state.savedExtras = extras;
             state.port = Number(server.port) || 8765;
             state.addresses = Array.isArray(addresses) ? addresses : [];
             state.configLoaded = true;
@@ -114,39 +140,55 @@
         renderAccess();
     }
 
+    function statusCopy(mode) {
+        const host = state.effectiveHost || '127.0.0.1';
+        const ips = present(state.effectiveExtras);
+        if (mode === 'all') {
+            return ['Acepta conexiones de otros equipos',
+                `G-Mini escucha en ${host} (todas las redes de este PC). Cada dispositivo necesita un código de emparejamiento y todas las rutas exigen token.`];
+        }
+        if (mode === 'extra') {
+            const viaTailscale = ips.every(isTailscaleIp);
+            return [viaTailscale ? 'Acepta conexiones por Tailscale' : 'Acepta conexiones en direcciones elegidas',
+                `G-Mini escucha en 127.0.0.1 y en ${ips.join(', ')}. ${viaTailscale ? 'Solo los equipos de tu red Tailscale pueden llegar. ' : ''}Cada dispositivo necesita un código y todas las rutas exigen token.`];
+        }
+        if (mode === 'extra-missing') {
+            return ['Solo este equipo por ahora',
+                `Está configurado para escuchar también en ${state.effectiveExtras.join(', ')}, pero esa dirección no está activa en este equipo (¿Tailscale apagado?). Enciéndelo y reinicia G-Mini.`];
+        }
+        return ['Solo este equipo',
+            `G-Mini escucha en ${host}: un teléfono u otra PC no llega a este equipo, salvo que uses tu propio túnel o proxy. Para emparejar desde otro dispositivo, permite conexiones en las opciones avanzadas.`];
+    }
+
     function renderAccess() {
         const box = $('access-status');
         if (!box) return;
-        const open = !isLoopback(state.effectiveHost);
+        const mode = modeOf(state.effectiveHost, state.effectiveExtras);
+        const open = mode === 'all' || mode === 'extra';
         box.className = `access-status ${open ? 'is-open' : 'is-local'}`;
         box.replaceChildren();
         const tile = el('span', 'access-status-icon');
         tile.innerHTML = icon(open ? 'network' : 'shield');
+        const [title, body] = statusCopy(mode);
         const text = el('div', 'access-status-text');
-        if (open) {
-            text.append(
-                el('strong', '', 'Acepta conexiones de otros equipos'),
-                el('span', '', `G-Mini escucha en ${state.effectiveHost} (todas las redes de este PC). Cada dispositivo necesita un código de emparejamiento y todas las rutas exigen token.`),
-            );
-        } else {
-            text.append(
-                el('strong', '', 'Solo este equipo'),
-                el('span', '', `G-Mini escucha en ${state.effectiveHost || '127.0.0.1'}: un teléfono u otra PC no llega a este equipo, salvo que uses tu propio túnel o proxy. Para emparejar desde otro dispositivo, permite conexiones en las opciones avanzadas.`),
-            );
-        }
+        text.append(el('strong', '', title), el('span', '', body));
         box.append(tile, text);
 
+        // Direcciones útiles para el otro equipo: todas con 0.0.0.0, solo las extra si no.
         const list = $('access-addresses');
         if (list) {
+            const shown = mode === 'all'
+                ? state.addresses
+                : present(state.effectiveExtras).map((ip) => state.addresses.find((a) => a.address === ip));
             list.replaceChildren();
-            list.hidden = !open || !state.addresses.length;
-            state.addresses.forEach((item, index) => {
+            list.hidden = !open || !shown.length;
+            shown.forEach((item, index) => {
                 const chip = el('span', `access-address${item.tailscale ? ' is-tailscale' : ''}`);
                 chip.append(
                     el('span', 'access-address-kind', item.tailscale ? 'Tailscale' : 'Red local'),
                     el('code', '', `${item.address}:${state.port}`),
                 );
-                if (index === 0 && item.tailscale) chip.appendChild(el('span', 'access-address-note', 'recomendada'));
+                if (index === 0 && item.tailscale && mode === 'all') chip.appendChild(el('span', 'access-address-note', 'recomendada'));
                 chip.title = item.name;
                 list.appendChild(chip);
             });
@@ -155,56 +197,31 @@
         renderRestart();
     }
 
-    function renderAdvanced() {
-        const body = $('access-advanced-body');
-        if (!body) return;
-        body.replaceChildren();
-        // Lo guardado manda: si ya se pidió abrir, se ofrece volver atrás.
-        const localOnly = isLoopback(state.savedHost);
-        if (!localOnly) {
-            const row = el('div', 'access-advanced-row');
-            row.appendChild(el('p', 'setting-help-text', 'Vuelve a aceptar solo conexiones de este mismo equipo. Los dispositivos emparejados conservan su acceso, pero no podrán llegar hasta que lo vuelvas a permitir.'));
-            const back = el('button', 'btn-secondary btn-panel-action');
-            back.type = 'button';
-            back.innerHTML = `${icon('shield')}<span>Volver a solo este equipo</span>`;
-            back.addEventListener('click', () => saveHost('127.0.0.1'));
-            row.appendChild(back);
-            body.appendChild(row);
-            return;
-        }
-        const tailscale = state.addresses.find((a) => a.tailscale);
-        if (!state.confirming) {
-            const row = el('div', 'access-advanced-row');
-            row.appendChild(el('p', 'setting-help-text', tailscale
-                ? `Para que otros dispositivos lleguen a este PC. Con Tailscale (${tailscale.address}) la conexión viaja por tu red privada entre equipos.`
-                : 'Para que otros dispositivos lleguen a este PC. Lo más seguro es instalar Tailscale en los dos equipos y usar su dirección.'));
-            const allow = el('button', 'btn-secondary btn-panel-action');
-            allow.type = 'button';
-            allow.innerHTML = `${icon('network')}<span>Permitir conexiones de otros equipos</span>`;
-            allow.addEventListener('click', () => {
-                state.confirming = true;
-                renderAdvanced();
-                $('btn-access-confirm')?.focus();
-            });
-            row.appendChild(allow);
-            body.appendChild(row);
-            return;
-        }
-        const warn = el('div', 'access-warning');
-        warn.setAttribute('role', 'alert');
-        warn.innerHTML = icon('triangle-alert');
+    function advancedRow(text, label, iconName, onClick) {
+        const row = el('div', 'access-advanced-row');
+        row.appendChild(el('p', 'setting-help-text', text));
+        const button = el('button', 'btn-secondary btn-panel-action');
+        button.type = 'button';
+        button.innerHTML = `${icon(iconName)}<span>${label}</span>`;
+        button.addEventListener('click', onClick);
+        row.appendChild(button);
+        return row;
+    }
+
+    /** Confirmación: con Tailscale es informativa; con 0.0.0.0, advertencia. */
+    function confirmBlock({ warning, title, text, confirmLabel, onConfirm }) {
+        const box = el('div', warning ? 'access-warning' : 'access-note');
+        box.setAttribute('role', warning ? 'alert' : 'note');
+        box.innerHTML = icon(warning ? 'triangle-alert' : 'info');
         const words = el('div', 'access-warning-text');
-        words.append(
-            el('strong', '', 'G-Mini escuchará en todas las redes de este PC (0.0.0.0).'),
-            el('span', '', 'Todas las rutas exigen token y cada dispositivo necesita un código, pero úsalo solo en redes de confianza: tu casa, tu oficina o Tailscale. En una Wi-Fi pública cualquiera podría intentar conectarse. Windows puede pedirte que permitas el acceso en el firewall.'),
-        );
-        warn.appendChild(words);
+        words.append(el('strong', '', title), el('span', '', text));
+        box.appendChild(words);
         const actions = el('div', 'connector-buttons');
         const confirm = el('button', 'btn-primary-accent');
         confirm.type = 'button';
         confirm.id = 'btn-access-confirm';
-        confirm.innerHTML = `${icon('check')}<span>Sí, permitir conexiones</span>`;
-        confirm.addEventListener('click', () => saveHost('0.0.0.0'));
+        confirm.innerHTML = `${icon('check')}<span>${confirmLabel}</span>`;
+        confirm.addEventListener('click', onConfirm);
         const cancel = el('button', 'btn-secondary btn-panel-action', 'Cancelar');
         cancel.type = 'button';
         cancel.addEventListener('click', () => {
@@ -212,16 +229,65 @@
             renderAdvanced();
         });
         actions.append(confirm, cancel);
-        body.append(warn, actions);
+        return [box, actions];
     }
 
-    async function saveHost(host) {
-        const ok = await window.settingsManager?._saveConfigValue?.('server', 'host', host);
-        if (!ok) {
-            toast('No se pudo guardar la dirección de escucha.', true);
+    function renderAdvanced() {
+        const body = $('access-advanced-body');
+        if (!body) return;
+        body.replaceChildren();
+        // Lo guardado manda: si ya se pidió abrir, se ofrece volver atrás.
+        if (modeOf(state.savedHost, state.savedExtras) !== 'local') {
+            body.appendChild(advancedRow(
+                'Vuelve a aceptar solo conexiones de este mismo equipo. Los dispositivos emparejados conservan su acceso, pero no podrán llegar hasta que lo vuelvas a permitir.',
+                'Volver a solo este equipo', 'shield', () => saveAccess('127.0.0.1', []),
+            ));
+            return;
+        }
+        const ts = tailscale();
+        if (!state.confirming) {
+            body.appendChild(ts
+                ? advancedRow(`Para que tus otros equipos con Tailscale lleguen a este PC por ${ts.address}. Las demás redes siguen cerradas.`,
+                    'Permitir conexiones por Tailscale', 'network', () => startConfirm())
+                : advancedRow('Para que otros dispositivos lleguen a este PC. Lo más seguro es instalar Tailscale en los dos equipos: así solo tu red privada puede llegar.',
+                    'Permitir conexiones de otros equipos', 'network', () => startConfirm()));
+            return;
+        }
+        body.append(...(ts
+            ? confirmBlock({
+                warning: false,
+                title: `G-Mini escuchará también en ${ts.address} (Tailscale).`,
+                text: 'Solo los equipos de tu red Tailscale podrán llegar; el resto de redes sigue cerrado. Cada dispositivo necesita un código y todas las rutas exigen token.',
+                confirmLabel: 'Sí, permitir por Tailscale',
+                onConfirm: () => saveAccess('127.0.0.1', [ts.address]),
+            })
+            : confirmBlock({
+                warning: true,
+                title: 'G-Mini escuchará en todas las redes de este PC (0.0.0.0).',
+                text: 'Todas las rutas exigen token y cada dispositivo necesita un código, pero úsalo solo en redes de confianza: tu casa, tu oficina o Tailscale. En una Wi-Fi pública cualquiera podría intentar conectarse. Windows puede pedirte que permitas el acceso en el firewall.',
+                confirmLabel: 'Sí, permitir conexiones',
+                onConfirm: () => saveAccess('0.0.0.0', []),
+            })));
+    }
+
+    function startConfirm() {
+        state.confirming = true;
+        renderAdvanced();
+        $('btn-access-confirm')?.focus();
+    }
+
+    /** Guarda los dos valores juntos: el modo depende de host y de extra_hosts. */
+    async function saveAccess(host, extras) {
+        const settings = window.settingsManager;
+        const okHost = await settings?._saveConfigValue?.('server', 'host', host);
+        const okExtras = okHost && await settings?._saveConfigValue?.('server', 'extra_hosts', extras);
+        if (!okHost || !okExtras) {
+            toast('No se pudo guardar cómo escucha G-Mini.', true);
+            await loadAccess();
             return;
         }
         state.savedHost = host;
+        state.savedExtras = extras;
         state.confirming = false;
         renderAccess();
         $('btn-access-restart')?.focus();
@@ -230,14 +296,18 @@
     function renderRestart() {
         const bar = $('access-restart');
         if (!bar) return;
-        const pending = state.configLoaded && state.savedHost !== state.effectiveHost;
+        const pending = state.configLoaded
+            && (state.savedHost !== state.effectiveHost || !sameList(state.savedExtras, state.effectiveExtras));
         bar.hidden = !pending;
         const text = $('access-restart-text');
-        if (text && pending) {
-            text.textContent = isLoopback(state.savedHost)
-                ? 'Guardado: al reiniciar, G-Mini aceptará solo conexiones de este equipo.'
-                : 'Guardado: al reiniciar, G-Mini aceptará conexiones de otros equipos.';
-        }
+        if (!text || !pending) return;
+        const mode = modeOf(state.savedHost, state.savedExtras);
+        text.textContent = {
+            local: 'Guardado: al reiniciar, G-Mini aceptará solo conexiones de este equipo.',
+            extra: `Guardado: al reiniciar, G-Mini aceptará conexiones por ${state.savedExtras.join(', ')}.`,
+            'extra-missing': `Guardado: al reiniciar, G-Mini escuchará también en ${state.savedExtras.join(', ')} si esa dirección está activa.`,
+            all: 'Guardado: al reiniciar, G-Mini aceptará conexiones de otros equipos en todas las redes.',
+        }[mode];
     }
 
     // ── Código de emparejamiento ───────────────────────────────
