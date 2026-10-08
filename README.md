@@ -14,10 +14,12 @@ ChatGPT, o modelos locales.
 
 ## Descargar
 
-Instalador para Windows 10 y 11 y AppImage para Linux en
+Instalador para Windows 10 y 11 y, para Linux, AppImage, .deb y .rpm en
 [Releases](https://github.com/angelgabrieljacintohuayllasco/G-Mini-Agent/releases/latest).
 La primera vez que la abres, la app prepara su propio Python con los
-componentes del núcleo (unos 500 MB) y no toca el que ya tengas.
+componentes del núcleo (unos 600 MB) y no toca el que ya tengas; al
+desinstalarla en Windows ese Python se borra y tus datos se conservan si
+quieres.
 
 ## Qué hace
 
@@ -38,6 +40,8 @@ componentes del núcleo (unos 500 MB) y no toca el que ya tengas.
 |---|---|
 | [G-Mini-Agent-Server](https://github.com/angelgabrieljacintohuayllasco/G-Mini-Agent-Server) | CLI `gmini` para hablar con un G-Mini desde la terminal (otra PC, un VPS, scripts) e imagen Docker del núcleo en modo servidor |
 | [G-Mini-Agent-Extension](https://github.com/angelgabrieljacintohuayllasco/G-Mini-Agent-Extension) | Extensión para Chrome, Edge, Brave, Opera, Vivaldi y Firefox: el agente usa tu navegador con tus sesiones, conectado solo a tu app local |
+| [G-Mini-Agent-Linux](https://github.com/angelgabrieljacintohuayllasco/G-Mini-Agent-Linux) | G-Mini OS: ISOs live de Arch y Debian con G-Mini Agent listo para usar o instalar en disco, y paquete `g-mini-agent-bin` para Arch |
+| [G-Mini-Agent-Home](https://github.com/angelgabrieljacintohuayllasco/G-Mini-Agent-Home) | El compañero físico: una carita animada con ESP32, Arduino o Raspberry Pi que te escucha y te responde, con carcasas imprimibles y hologramas |
 
 ## Proveedores de IA
 
