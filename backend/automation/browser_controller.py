@@ -413,7 +413,7 @@ class BrowserController:
             self._mode = "human"
             logger.info(
                 f"[BrowserController] Extensión conectada al perfil "
-                f"'{profile['display_name']}' ✓"
+                f"'{profile['display_name']}'"
             )
             return self._remember_session({
                 "mode": "human",

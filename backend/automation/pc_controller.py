@@ -252,7 +252,7 @@ class AutomationEngine:
         if self._kill_switch_active:
             return
         if self._kill_switch_combo and self._kill_switch_combo.issubset(self._pressed_keys):
-            logger.warning("⚠️ KILL SWITCH ACTIVADO — Deteniendo automatización")
+            logger.warning("KILL SWITCH ACTIVADO: se detiene la automatización")
             self._kill_switch_active = True
             self._enabled = False
             self._log_action("kill_switch", combo=list(self._kill_switch_combo))

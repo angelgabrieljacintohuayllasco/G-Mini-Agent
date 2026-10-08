@@ -1786,7 +1786,7 @@ class AgentCore:
         has_desktop_fallback_guidance = False
 
         for r in results:
-            status_icon = "✓" if r["success"] else "✗"
+            status_icon = "[OK]" if r["success"] else "[FALLO]"
             action_feedback_parts.append(f"{status_icon} {r['action']}: {r.get('message', '')}")
             if not r["success"]:
                 has_action_failures = True
@@ -1799,7 +1799,7 @@ class AgentCore:
 
             if r.get("task_complete") and r.get("success"):
                 task_completed = True
-                logger.info(f"✅ Tarea completada: {r.get('message', '')}")
+                logger.info(f"Tarea completada: {r.get('message', '')}")
 
             if (
                 action_name in {
@@ -2959,7 +2959,7 @@ class AgentCore:
                 break
 
             try:
-                logger.info(f"🔄 Loop iteración {iteration}/{max_iterations}")
+                logger.info(f"Loop iteración {iteration}/{max_iterations}")
                 await self._set_agent_status(sid, AgentStatus.THINKING)
 
                 llm_messages = self._memory.get_llm_messages()
