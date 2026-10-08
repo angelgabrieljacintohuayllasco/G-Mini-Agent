@@ -13,6 +13,10 @@ app:
   start_hidden_to_tray: false
   debug: false
   mode: "normal"          # normal | programador | marketero | asesor_ventas | investigador | pentester | tutor | padre_digital | hermano_protector | gamer | creador
+  shortcuts:
+    toggle_window: "Alt+G"
+    toggle_overlay: "Alt+Shift+G"
+    quit: "Ctrl+Shift+Q"
 
 modes:
   custom: {}
