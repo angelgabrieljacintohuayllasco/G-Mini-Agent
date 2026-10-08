@@ -645,6 +645,7 @@ async def create_scheduler_job(req: ScheduledJobCreateRequest):
             retry_backoff_seconds=req.retry_backoff_seconds,
             retry_backoff_multiplier=req.retry_backoff_multiplier,
             enabled=req.enabled,
+            timezone_name=req.timezone,
         )
         return ScheduledJobMutationResponse(
             success=True,

@@ -136,7 +136,7 @@ async def create_task(*, prompt: str, title: str = "", schedule: Any = None, not
         try:
             job = await get_scheduler().create_job(
                 name=f"Tarea: {title}"[:120], task_type="agent_prompt", payload={"task_id": task_id},
-                enabled=True, **trigger,
+                enabled=True, timezone_name=sched.get("timezone") or None, **trigger,
             )
         except Exception:
             await _update(task_id, status="failed", error="No se pudo programar la tarea")

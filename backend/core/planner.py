@@ -2265,6 +2265,7 @@ class ActionPlanner:
                         retry_backoff_seconds=int(action.params.get("retry_backoff_seconds", 30)),
                         retry_backoff_multiplier=float(action.params.get("retry_backoff_multiplier", 2.0)),
                         enabled=_coerce_bool(action.params.get("enabled", True), default=True),
+                        timezone_name=str(action.params.get("timezone", "")).strip() or None,
                     )
                     result["success"] = True
                     result["data"] = data

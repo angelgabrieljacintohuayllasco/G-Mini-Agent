@@ -65,6 +65,21 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _job_zone(name: str | None):
+    """Zona en la que se interpreta un cron: la del job, app.timezone o la del equipo."""
+    from zoneinfo import ZoneInfo
+
+    for candidate in (name, config.get("app", "timezone", default="")):
+        candidate = str(candidate or "").strip()
+        if not candidate:
+            continue
+        try:
+            return ZoneInfo(candidate)
+        except Exception:
+            logger.warning(f"Zona horaria desconocida, se ignora: {candidate}")
+    return datetime.now().astimezone().tzinfo
+
+
 def _serialize_dt(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
@@ -312,8 +327,10 @@ class SchedulerService:
         retry_backoff_seconds: int = DEFAULT_RETRY_BACKOFF_SECONDS,
         retry_backoff_multiplier: float = DEFAULT_RETRY_BACKOFF_MULTIPLIER,
         enabled: bool = True,
+        timezone_name: str | None = None,
     ) -> dict[str, Any]:
         normalized_task_type = str(task_type or "").strip().lower()
+        timezone_name = str(timezone_name or "").strip()
         normalized_trigger = str(trigger_type or "").strip().lower()
         normalized_trigger_config = self._normalize_trigger_config(
             trigger_type=normalized_trigger,
@@ -347,6 +364,7 @@ class SchedulerService:
             cron_expression=cron_expression,
             heartbeat_interval_seconds=normalized_trigger_config["heartbeat_interval_seconds"],
             from_dt=now,
+            tz_name=timezone_name,
         ) if enabled else None
 
         job_id = f"job_{uuid.uuid4().hex[:12]}"
@@ -359,8 +377,8 @@ class SchedulerService:
                     webhook_secret, heartbeat_key, heartbeat_interval_seconds,
                     enabled, max_retries, retry_backoff_seconds,
                     retry_backoff_multiplier, retry_attempt, next_run_at,
-                    last_signal_at, last_run_at, last_error, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    last_signal_at, last_run_at, last_error, created_at, updated_at, timezone
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
@@ -386,6 +404,7 @@ class SchedulerService:
                     "",
                     _serialize_dt(now),
                     _serialize_dt(now),
+                    timezone_name,
                 ),
             )
             await db.commit()
@@ -408,8 +427,10 @@ class SchedulerService:
         retry_backoff_seconds: int | None = None,
         retry_backoff_multiplier: float | None = None,
         enabled: bool | None = None,
+        timezone_name: str | None = None,
     ) -> dict[str, Any]:
         current = await self.get_job(job_id)
+        zone = str(timezone_name).strip() if timezone_name is not None else current.get("timezone", "")
         current_trigger_config = self._normalize_trigger_config(
             trigger_type=current["trigger_type"],
             event_name=current.get("event_name"),
@@ -478,6 +499,7 @@ class SchedulerService:
             cron_expression=merged["cron_expression"],
             heartbeat_interval_seconds=merged["heartbeat_interval_seconds"],
             from_dt=_utcnow(),
+            tz_name=zone,
         ) if merged["enabled"] else None
 
         async with aiosqlite.connect(self._db_path) as db:
@@ -488,7 +510,7 @@ class SchedulerService:
                     event_name = ?, webhook_path = ?, webhook_secret = ?,
                     heartbeat_key = ?, heartbeat_interval_seconds = ?, enabled = ?,
                     max_retries = ?, retry_backoff_seconds = ?, retry_backoff_multiplier = ?,
-                    retry_attempt = 0, next_run_at = ?, updated_at = ?, last_error = ''
+                    retry_attempt = 0, next_run_at = ?, updated_at = ?, last_error = '', timezone = ?
                 WHERE job_id = ?
                 """,
                 (
@@ -507,6 +529,7 @@ class SchedulerService:
                     normalized_retry_policy["retry_backoff_multiplier"],
                     _serialize_dt(next_run),
                     _serialize_dt(_utcnow()),
+                    zone,
                     job_id,
                 ),
             )
@@ -878,6 +901,7 @@ class SchedulerService:
                 cron_expression=job.get("cron_expression"),
                 heartbeat_interval_seconds=job.get("heartbeat_interval_seconds"),
                 from_dt=finished_at,
+                tz_name=job.get("timezone"),
             ) if job.get("enabled") else None
             current_retry_attempt = int(job.get("retry_attempt") or 0)
             max_retries = int(job.get("max_retries") or 0)
@@ -1123,6 +1147,7 @@ class SchedulerService:
                 cron_expression=row.get("cron_expression"),
                 heartbeat_interval_seconds=row.get("heartbeat_interval_seconds"),
                 from_dt=recovered_at,
+                tz_name=row.get("timezone"),
             ) if bool(row.get("enabled")) else None
 
             current_retry_attempt = int(row.get("retry_attempt") or 0)
@@ -1289,6 +1314,7 @@ class SchedulerService:
                 "ALTER TABLE scheduled_jobs ADD COLUMN heartbeat_interval_seconds INTEGER"
             ),
             "last_signal_at": "ALTER TABLE scheduled_jobs ADD COLUMN last_signal_at TEXT",
+            "timezone": "ALTER TABLE scheduled_jobs ADD COLUMN timezone TEXT DEFAULT ''",
         }
         for column_name, ddl in desired_columns.items():
             if column_name not in existing_columns:
@@ -1452,14 +1478,17 @@ class SchedulerService:
         cron_expression: str | None,
         heartbeat_interval_seconds: int | None,
         from_dt: datetime,
+        tz_name: str | None = None,
     ) -> datetime | None:
         if trigger_type == "interval":
             return from_dt + timedelta(seconds=int(interval_seconds or 0))
         if trigger_type == "cron":
             if croniter is None:
                 raise RuntimeError("croniter no esta disponible para calcular la siguiente ejecucion.")
-            iterator = croniter(str(cron_expression), from_dt)
-            return iterator.get_next(datetime)
+            # "0 7 * * *" son las 7 de la zona del usuario, no de UTC.
+            local_from = from_dt.astimezone(_job_zone(tz_name))
+            iterator = croniter(str(cron_expression), local_from)
+            return iterator.get_next(datetime).astimezone(timezone.utc)
         if trigger_type in {"heartbeat", "event", "webhook"}:
             return None
         return None
@@ -1505,6 +1534,7 @@ class SchedulerService:
             "last_error": row["last_error"] or "",
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+            "timezone": row.get("timezone") or "",
         }
 
     @staticmethod

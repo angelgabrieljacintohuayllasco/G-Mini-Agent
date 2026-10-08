@@ -439,6 +439,7 @@ class ScheduledJobCreateRequest(BaseModel):
     max_retries: int = 0
     retry_backoff_seconds: int = 30
     retry_backoff_multiplier: float = 2.0
+    timezone: str | None = None  # IANA, p. ej. America/Lima; vacío = la del equipo
 
 
 class ScheduledJobUpdateRequest(BaseModel):
