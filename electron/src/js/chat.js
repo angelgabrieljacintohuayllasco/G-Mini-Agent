@@ -448,6 +448,13 @@ class ChatManager {
         }
 
         if (done) {
+            // Respuesta completa en un solo evento (comandos "/", estado de sub-agentes):
+            // se pinta antes de cerrar. El cierre normal del streaming llega sin texto.
+            if (text) {
+                if (!this.isStreaming) this.startStreaming();
+                this.streamingText += text;
+                this._updateStreamingContent();
+            }
             this.finishStreaming();
             return;
         }
