@@ -80,8 +80,13 @@
                 <div class="status-chips">
                     <span id="mode-label" class="model-label" title="Modo del agente">modo: ---</span>
                     <span id="model-label" class="model-label" title="Modelo activo">---</span>
+                    <span id="wake-chip" class="wake-chip" hidden><span class="wake-chip-dot" aria-hidden="true"></span>Micrófono abierto</span>
                 </div>
                 <div class="agent-control-group" role="group" aria-label="Control del agente">
+                    <button id="btn-wake" class="agent-control-btn agent-voice-btn agent-wake-btn" type="button" aria-pressed="false" title="Manos libres" aria-label="Manos libres">
+                        <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-mic-vocal"></use></svg>
+                        <span class="agent-wake-dot" aria-hidden="true"></span>
+                    </button>
                     <button id="btn-tts-mute" class="agent-control-btn agent-voice-btn" type="button" aria-pressed="false" title="Silenciar la voz del agente" aria-label="Silenciar la voz del agente" hidden>
                         <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-volume-2"></use></svg>
                     </button>
@@ -1260,6 +1265,16 @@
                             <button id="btn-save-voice" class="btn-secondary">Guardar voz y personaje</button>
                         </div>
                     </div>
+
+                    <div class="setting-group" id="wake-settings">
+                        <label>Manos libres</label>
+                        <label class="setting-toggle">
+                            <input type="checkbox" id="cb-wake-word" aria-describedby="wake-settings-help">
+                            <span>Abrir la voz al oír «Oye <span data-agent-name>G-Mini</span>»</span>
+                        </label>
+                        <div id="wake-settings-help" class="setting-help-text">Mientras esté activo, el micrófono queda abierto y la barra lo indica. El núcleo solo transcribe frases cortas para buscar el nombre y descarta el resto. Lo que digas después del nombre se envía como mensaje. Se guarda al instante.</div>
+                        <div id="wake-settings-status" class="setting-help-text" role="status"></div>
+                    </div>
                 </div>
 
                 <!-- ═══ PROMPTS ═══ -->
@@ -1664,5 +1679,6 @@
     <script src="js/palette.js"></script>
     <script src="js/app.js"></script>
     <script src="js/slash.js"></script>
+    <script src="js/wake.js"></script>
 </body>
 </html>

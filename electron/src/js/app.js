@@ -1320,7 +1320,33 @@
         }
     });
 
+    // Manos libres (wake.js): abrir la voz como el botón, sin cerrarla si ya está abierta.
+    window.gminiVoiceControls = {
+        async open() {
+            if (voiceRealtime.active || voiceRealtime.starting) return voiceRealtime.active;
+            await _toggleRealtimeVoice();
+            return voiceRealtime.active;
+        },
+    };
+
     window.gminiComposer = {
+        /** Envía un texto como mensaje del usuario sin tocar el borrador del compositor. */
+        send(text) {
+            const clean = String(text || '').trim();
+            if (!clean) return false;
+            if (isGenerating) {
+                chatManager._toast('El agente sigue respondiendo; repite el pedido cuando termine.');
+                return false;
+            }
+            if (!ws.connected) {
+                chatManager.addSystemMessage('No hay conexion con el backend. Intenta de nuevo.');
+                return false;
+            }
+            chatManager.addUserMessage(clean);
+            ws.sendMessage(clean);
+            overlayBuffer = '';
+            return true;
+        },
         setText(text) {
             updateComposerValue(text);
             userInput.focus();

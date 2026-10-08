@@ -751,7 +751,8 @@ kbd {
     background: var(--border);
 }
 
-#btn-tts-mute[hidden] + .agent-control-sep {
+/* Sin ningún botón de voz visible, el separador sobra. */
+.agent-control-group:not(:has(.agent-voice-btn:not([hidden]))) .agent-control-sep {
     display: none;
 }
 
@@ -5377,6 +5378,102 @@ select option {
 .slash-usage-args {
     font-family: var(--font-mono);
     color: var(--text-secondary);
+}
+
+/* ── Manos libres ("Oye G-Mini") ───────────────────────────── */
+.agent-wake-btn {
+    position: relative;
+}
+
+.agent-wake-btn.is-on {
+    color: var(--accent-text);
+}
+
+.agent-wake-btn.is-listening {
+    background: var(--accent-soft);
+}
+
+.agent-wake-btn.has-error {
+    color: var(--warning);
+}
+
+.agent-wake-btn.is-starting .icon {
+    opacity: 0.55;
+}
+
+/* Punto de "grabando" mientras el micrófono está abierto para la palabra de activación. */
+.agent-wake-dot {
+    position: absolute;
+    top: 3px;
+    right: 4px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--error);
+    box-shadow: 0 0 0 2px var(--bg-secondary);
+    opacity: 0;
+    transform: scale(0.6);
+    transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
+}
+
+.agent-wake-btn.is-listening .agent-wake-dot {
+    opacity: 1;
+    transform: none;
+    animation: wake-dot 2.4s var(--ease-in-out) infinite;
+}
+
+@keyframes wake-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+}
+
+.wake-chip {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+    height: 22px;
+    padding: 0 var(--space-2);
+    border: 1px solid color-mix(in srgb, var(--error) 35%, var(--border));
+    border-radius: var(--radius-pill);
+    background: color-mix(in srgb, var(--error) 8%, transparent);
+    color: var(--text-primary);
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-medium);
+    white-space: nowrap;
+}
+
+.wake-chip-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--error);
+    animation: wake-dot 2.4s var(--ease-in-out) infinite;
+}
+
+@media (max-width: 720px) {
+    .wake-chip {
+        display: none;
+    }
+}
+
+/* El orbe acusa recibo de "Oye G-Mini": anillo que se abre dos veces. */
+.status-dot.is-heard {
+    --orb: var(--accent);
+}
+
+.status-dot.is-heard::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    animation: orb-heard 0.9s var(--ease-out) 2 both;
+}
+
+@keyframes orb-heard {
+    from { opacity: 0.95; transform: scale(0.9); }
+    to { opacity: 0; transform: scale(2.6); }
 }
 
 /* ── Configuración > Voz: catálogo con muestra ─────────────── */

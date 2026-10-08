@@ -113,6 +113,12 @@ class GminiWebSocket {
         this.socket.emit('user:realtime_audio', { audio: audioB64 });
     }
 
+    /** Manos libres: trozo PCM16 16 kHz del micrófono para buscar "oye G-Mini". */
+    sendWakeAudio(audioB64) {
+        if (!this.connected) return;
+        this.socket.emit('user:wake_audio', { audio: audioB64 });
+    }
+
     stopRealtimeVoice() {
         if (!this.connected) return;
         this.socket.emit('user:realtime_stop', {});
