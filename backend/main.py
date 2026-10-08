@@ -15,6 +15,12 @@ from pathlib import Path
 CODE_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(CODE_ROOT))
 
+# Antes de cualquier import que pueda traer winrt y su msvcp140.dll vieja
+# (Whisper se caía al crear el modelo; ver backend/utils/msvc_runtime.py).
+from backend.utils.msvc_runtime import preload_msvc_runtime  # noqa: E402
+
+preload_msvc_runtime()
+
 import socketio
 import uvicorn
 from fastapi import FastAPI, WebSocket

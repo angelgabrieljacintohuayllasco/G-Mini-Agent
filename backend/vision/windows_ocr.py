@@ -12,6 +12,11 @@ import io
 import sys
 from typing import Any
 
+from backend.utils.msvc_runtime import preload_msvc_runtime
+
+# winrt trae una msvcp140.dll vieja: la nueva tiene que entrar antes (ver msvc_runtime).
+preload_msvc_runtime()
+
 
 def available() -> bool:
     if sys.platform != "win32":
