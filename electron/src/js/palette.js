@@ -8,7 +8,7 @@
  */
 
 const PALETTE_GROUP_ORDER = [
-    'General', 'Conversaciones', 'Agente', 'Vista', 'Configuración',
+    'General', 'Conversaciones', 'Agente', 'Comandos del chat', 'Vista', 'Configuración',
     'Apariencia', 'Modos', 'Proveedor', 'Modelo',
 ];
 
@@ -150,7 +150,7 @@ class CommandPalette {
             scored.sort((a, b) => b.score - a.score);
         } else {
             // Sin búsqueda: por grupos y sin listas largas (modelos y modos aparecen al buscar).
-            const caps = { Conversaciones: 6, Modelo: 0, Proveedor: 0, Modos: 0 };
+            const caps = { Conversaciones: 6, 'Comandos del chat': 0, Modelo: 0, Proveedor: 0, Modos: 0 };
             const order = (group) => {
                 const idx = PALETTE_GROUP_ORDER.indexOf(group);
                 return idx < 0 ? PALETTE_GROUP_ORDER.length : idx;

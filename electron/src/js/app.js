@@ -938,6 +938,8 @@
     function updateComposerValue(value) {
         userInput.value = String(value || '');
         syncComposer();
+        // Asignar .value no dispara 'input': la lista de comandos "/" se entera aquí.
+        window.gminiSlash?.refresh();
     }
 
     // Altura automática, contador y estado del botón enviar.
