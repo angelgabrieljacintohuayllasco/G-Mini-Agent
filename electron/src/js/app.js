@@ -1126,6 +1126,7 @@
     // Con una sesión abierta por un mensaje escrito, pulsar suma el micrófono a
     // esa sesión (no abre otra); con el micrófono abierto, termina la conversación.
     async function _toggleRealtimeVoice() {
+        if (voiceRealtime.starting) return;  // B8: el primer clic sigue abriendo el micrófono
         if (voiceRealtime.active) {
             await voiceRealtime.stop();
         } else {
@@ -1140,14 +1141,20 @@
         if (!btnRealtime) return;
         const simulated = _realtimeMode === 'simulated';
         const micOn = voiceRealtime.active;
-        const listening = voiceRealtime.sessionOpen && !micOn;
+        const starting = voiceRealtime.starting;
+        const listening = voiceRealtime.sessionOpen && !micOn && !starting;
+        btnRealtime.classList.toggle('is-starting', starting);
+        btnRealtime.setAttribute('aria-busy', starting ? 'true' : 'false');
         btnRealtime.classList.toggle('realtime-active', micOn);
         btnRealtime.classList.toggle('realtime-simulated', micOn && simulated);
         btnRealtime.classList.toggle('realtime-listening', listening);
         btnRealtime.setAttribute('aria-pressed', micOn ? 'true' : (listening ? 'mixed' : 'false'));
         let icon = simulated ? SVG_MIC_SIMULATED : SVG_WAVEFORM;
         let label = simulated ? 'Conversación por voz (dictado, modelo y voz)' : 'Conversación en tiempo real';
-        if (micOn) {
+        if (starting) {
+            icon = ICON('loader-circle');
+            label = 'Abriendo el micrófono...';
+        } else if (micOn) {
             icon = SVG_RECORD;
             label = 'Terminar la conversación de voz';
         } else if (listening) {
@@ -1158,7 +1165,7 @@
         btnRealtime.title = label;
         btnRealtime.setAttribute('aria-label', label);
         // Una sesión abierta se muestra aunque el modelo de texto no sea de voz.
-        if (micOn || voiceRealtime.sessionOpen) btnRealtime.style.display = '';
+        if (micOn || starting || voiceRealtime.sessionOpen) btnRealtime.style.display = '';
         else if (!_realtimeMode) btnRealtime.style.display = 'none';
         _pushSkinVoiceState({ active: micOn, available: !!_realtimeMode || voiceRealtime.sessionOpen });
     }
@@ -1167,6 +1174,7 @@
     voiceRealtime.onChange((state) => {
         if (state.active || state.sessionOpen) _startMouthPusher();
         else _stopMouthPusher();
+        syncRealtimeButton();
     });
 
     if (btnRealtime) {

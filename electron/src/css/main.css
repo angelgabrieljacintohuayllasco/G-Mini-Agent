@@ -1952,6 +1952,16 @@ body.executing-task .status-bar::after,
     animation: rec-pulse 1.4s var(--ease-in-out) infinite;
 }
 
+/* Abriendo el micrófono: no admite otro clic hasta resolver el permiso. */
+.btn-small.is-starting {
+    color: var(--accent-text);
+    cursor: progress;
+}
+
+.btn-small.is-starting .icon {
+    animation: spin 0.9s linear infinite;
+}
+
 /* Sesión de voz abierta por un mensaje escrito: suena, pero el micrófono sigue cerrado. */
 .btn-small.realtime-listening {
     background: var(--accent-soft);

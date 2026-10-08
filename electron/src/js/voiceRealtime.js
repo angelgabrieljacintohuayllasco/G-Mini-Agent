@@ -27,6 +27,8 @@ class VoiceRealtime {
         /** @type {Uint8Array|null} byte sobrante de PCM16 cuando un chunk llega impar */
         this._pcmCarry = null;
         this._active = false;           // micrófono capturando
+        this._starting = false;         // getUserMedia pendiente (B8)
+        this._startToken = 0;           // invalida un arranque que se canceló a medias
         this._sessionOpen = false;      // el núcleo tiene una sesión de voz abierta
         this._sessionAuto = false;      // la abrió un mensaje escrito: solo reproducción
         this._closeWhenDrained = false; // cerrar el audio cuando termine lo encolado
@@ -48,12 +50,19 @@ class VoiceRealtime {
      */
     async start(provider = 'openai', voice = '', mode = 'native') {
         if (this._active) return true;
+        // B8: un segundo clic llega mientras getUserMedia sigue esperando; sin
+        // esta marca se abría otra captura (y otra sesión) encima de la primera.
+        if (this._starting) return false;
+        this._starting = true;
+        const token = ++this._startToken;
+        this._notify();
 
         this._provider = provider;
         this._mode = mode;
 
+        let stream;
         try {
-            this._stream = await navigator.mediaDevices.getUserMedia({
+            stream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     channelCount: 1,
                     sampleRate: this._sampleRate,
@@ -64,8 +73,19 @@ class VoiceRealtime {
             });
         } catch (err) {
             console.error('[VoiceRealtime] Mic access error:', err);
+            if (token === this._startToken) {
+                this._starting = false;
+                this._notify();
+            }
             return false;
         }
+
+        // Se canceló mientras se esperaba el permiso (stop, fin de sesión o socket caído).
+        if (token !== this._startToken) {
+            stream.getTracks().forEach((t) => t.stop());
+            return false;
+        }
+        this._stream = stream;
 
         try {
             this._captureCtx = new AudioContext({ sampleRate: this._sampleRate });
@@ -89,6 +109,7 @@ class VoiceRealtime {
 
             this._ensurePlayback();
             this._active = true;
+            this._starting = false;
 
             // Si un mensaje escrito ya abrió la sesión en el núcleo (B7), el
             // micrófono se suma a esa sesión: no se pide una segunda.
@@ -101,7 +122,9 @@ class VoiceRealtime {
             return true;
         } catch (err) {
             console.error('[VoiceRealtime] Setup error:', err);
-            this._cleanup();
+            this._starting = false;
+            this._cleanupCapture();
+            this._notify();
             return false;
         }
     }
@@ -110,7 +133,9 @@ class VoiceRealtime {
      * Detiene la sesión de voz en tiempo real.
      */
     async stop() {
-        if (!this._active && !this._sessionOpen) return;
+        if (!this._active && !this._sessionOpen && !this._starting) return;
+        this._startToken += 1;
+        this._starting = false;
         this._active = false;
         this._sessionOpen = false;
         this._sessionAuto = false;
@@ -145,6 +170,8 @@ class VoiceRealtime {
      */
     release(reason = '') {
         const hadMic = this._active;
+        this._startToken += 1;
+        this._starting = false;
         this._active = false;
         this._sessionOpen = false;
         this._sessionAuto = false;
@@ -161,7 +188,9 @@ class VoiceRealtime {
     }
 
     _notify() {
-        const state = { active: this._active, sessionOpen: this._sessionOpen, auto: this._sessionAuto };
+        const state = {
+            active: this._active, starting: this._starting, sessionOpen: this._sessionOpen, auto: this._sessionAuto,
+        };
         this._listeners.forEach((cb) => {
             try { cb(state); } catch (err) { console.warn('[VoiceRealtime] Error en un oyente:', err); }
         });
@@ -396,6 +425,11 @@ class VoiceRealtime {
     /** Micrófono capturando. @returns {boolean} */
     get active() {
         return this._active;
+    }
+
+    /** Esperando el permiso del micrófono. @returns {boolean} */
+    get starting() {
+        return this._starting;
     }
 
     /** Hay una sesión de voz abierta en el núcleo (con o sin micrófono). @returns {boolean} */
