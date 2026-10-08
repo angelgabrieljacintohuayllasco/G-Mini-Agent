@@ -26,7 +26,7 @@ jobs:
       matrix:
         include:
           - { name: windows, os: windows-latest, script: "dist:win", files: "electron/dist/*.exe" }
-          - { name: linux, os: ubuntu-latest, script: "dist:linux", files: "electron/dist/*.AppImage" }
+          - { name: linux, os: ubuntu-latest, script: "dist:linux", files: "electron/dist/*.AppImage\nelectron/dist/*.deb\nelectron/dist/*.rpm" }
     steps:
       - uses: actions/checkout@v7
         with:
@@ -37,6 +37,10 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: electron/package-lock.json
+
+      - name: rpmbuild para el paquete .rpm
+        if: matrix.name == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
 
       - name: Dependencias de la interfaz
         working-directory: electron

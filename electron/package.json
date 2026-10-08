@@ -107,7 +107,9 @@
     },
     "linux": {
       "target": [
-        "AppImage"
+        "AppImage",
+        "deb",
+        "rpm"
       ],
       "icon": "assets/icon.png",
       "category": "Utility",
@@ -120,10 +122,24 @@
           ]
         }
       ],
-      "artifactName": "G-Mini-Agent-${version}.${ext}"
+      "artifactName": "G-Mini-Agent-${version}.${ext}",
+      "maintainer": "G-Mini Agent <angelgabrieljacintohuayllasco@gmail.com>",
+      "synopsis": "Agente de IA de escritorio",
+      "description": "Agente de IA que ve tu pantalla, usa el mouse, el teclado y el navegador, recuerda lo que le cuentas y habla. La primera vez prepara su propio Python con uv."
+    },
+    "deb": {
+      "artifactName": "g-mini-agent_${version}_${arch}.${ext}",
+      "packageName": "g-mini-agent"
+    },
+    "rpm": {
+      "artifactName": "g-mini-agent-${version}.${arch}.${ext}",
+      "packageName": "g-mini-agent"
     }
   },
-  "author": "G-Mini Agent",
+  "author": {
+    "name": "G-Mini Agent",
+    "email": "angelgabrieljacintohuayllasco@gmail.com"
+  },
   "homepage": "https://github.com/angelgabrieljacintohuayllasco/G-Mini-Agent",
   "license": "MIT"
 }
