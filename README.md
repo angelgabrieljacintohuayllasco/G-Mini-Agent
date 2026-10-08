@@ -78,7 +78,9 @@ curl -fsSL https://raw.githubusercontent.com/angelgabrieljacintohuayllasco/G-Min
 ```
 
 `--tailscale` escucha solo en la IP de Tailscale; sin opciones queda en
-`127.0.0.1` y `--host 0.0.0.0` lo abre a la red. Volver a correrlo actualiza.
+`127.0.0.1` y `--host 0.0.0.0` lo abre a la red. `--voz` agrega Whisper para
+dispositivos con micrófono y la palabra de activación. Volver a correrlo
+actualiza.
 A mano, en cualquier sistema:
 
 ```bash

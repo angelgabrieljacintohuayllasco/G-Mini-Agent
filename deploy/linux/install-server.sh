@@ -5,6 +5,7 @@
 #   bash install-server.sh                 # escucha en 127.0.0.1:8765
 #   bash install-server.sh --tailscale     # escucha en la IP de Tailscale
 #   bash install-server.sh --host 0.0.0.0  # toda la red (todas las rutas piden token)
+#   bash install-server.sh --voz           # además Whisper, para dispositivos con micrófono
 #
 # Volver a correrlo actualiza el código y reinicia el servicio.
 set -euo pipefail
@@ -19,6 +20,7 @@ UNIT_DIR="$HOME/.config/systemd/user"
 PYTHON_VERSION="${GMINI_PYTHON:-3.13}"
 HOST="127.0.0.1"
 PORT="8765"
+VOICE="${GMINI_VOICE:-0}"
 
 say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31mError:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -32,7 +34,8 @@ while [ $# -gt 0 ]; do
       HOST="$(tailscale ip -4 | head -n1)"
       [ -n "$HOST" ] || fail "Tailscale no tiene IP; ¿está conectado?"
       shift ;;
-    -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
+    --voz|--voice) VOICE=1; shift ;;
+    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
     *) fail "opción desconocida: $1" ;;
   esac
 done
@@ -65,6 +68,10 @@ if [ ! -x "$APP_DIR/.venv/bin/python" ]; then
 fi
 say "Instalando dependencias del modo servidor"
 VIRTUAL_ENV="$APP_DIR/.venv" "$UV" pip install --quiet -r "$APP_DIR/backend/requirements-server.txt"
+if [ "$VOICE" = "1" ]; then
+  say "Instalando Whisper para reconocer voz (dispositivos y palabra de activación)"
+  VIRTUAL_ENV="$APP_DIR/.venv" "$UV" pip install --quiet "faster-whisper>=1.0.0"
+fi
 
 mkdir -p "$DATA_DIR" "$CONF_DIR" "$UNIT_DIR"
 chmod 700 "$CONF_DIR"
