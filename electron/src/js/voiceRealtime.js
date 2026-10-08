@@ -26,7 +26,10 @@ class VoiceRealtime {
         this._currentSource = null;
         /** @type {Uint8Array|null} byte sobrante de PCM16 cuando un chunk llega impar */
         this._pcmCarry = null;
-        this._active = false;
+        this._active = false;           // micrófono capturando
+        this._sessionOpen = false;      // el núcleo tiene una sesión de voz abierta
+        this._sessionAuto = false;      // la abrió un mensaje escrito: solo reproducción
+        this._listeners = new Set();
         this._provider = 'openai';
         this._mode = 'native';  // 'native' | 'simulated'
 
@@ -43,9 +46,7 @@ class VoiceRealtime {
      * @returns {Promise<boolean>}
      */
     async start(provider = 'openai', voice = '', mode = 'native') {
-        if (this._active) {
-            await this.stop();
-        }
+        if (this._active) return true;
 
         this._provider = provider;
         this._mode = mode;
@@ -85,21 +86,17 @@ class VoiceRealtime {
             source.connect(this._processor);
             this._processor.connect(this._captureCtx.destination);
 
-            // Playback context
-            this._playbackCtx = new AudioContext({ sampleRate: 24000 });
-            this._playbackAnalyser = this._playbackCtx.createAnalyser();
-            this._playbackAnalyser.fftSize = 256;
-            this._playbackAnalyser.smoothingTimeConstant = 0.6;
-            this._analyserBuffer = new Uint8Array(this._playbackAnalyser.fftSize);
-            this._playQueue = [];
-            this._playing = false;
-
+            this._ensurePlayback();
             this._active = true;
 
-            // Tell backend to start RT session
-            ws.startRealtimeVoice(this._provider, voice, this._mode);
+            // Si un mensaje escrito ya abrió la sesión en el núcleo (B7), el
+            // micrófono se suma a esa sesión: no se pide una segunda.
+            const attach = this._sessionOpen;
+            if (!attach) ws.startRealtimeVoice(this._provider, voice, this._mode);
+            this._sessionAuto = false;
+            this._notify();
 
-            console.log(`[VoiceRealtime] Started — provider=${provider}`);
+            console.log(`[VoiceRealtime] ${attach ? 'Micrófono sobre la sesión abierta' : 'Iniciada'} — provider=${provider}`);
             return true;
         } catch (err) {
             console.error('[VoiceRealtime] Setup error:', err);
@@ -112,14 +109,51 @@ class VoiceRealtime {
      * Detiene la sesión de voz en tiempo real.
      */
     async stop() {
-        if (!this._active) return;
+        if (!this._active && !this._sessionOpen) return;
         this._active = false;
+        this._sessionOpen = false;
+        this._sessionAuto = false;
 
-        // Tell backend to stop RT session
+        // Termina la conversación: micrófono y sesión del núcleo.
         ws.stopRealtimeVoice();
 
         this._cleanup();
+        this._notify();
         console.log('[VoiceRealtime] Stopped');
+    }
+
+    /**
+     * El núcleo confirmó una sesión de voz (agent:status realtime_active).
+     * auto=true: la abrió un mensaje escrito; el audio suena sin abrir el micrófono.
+     */
+    markSessionOpen({ auto = false, mode = '', provider = '' } = {}) {
+        this._sessionOpen = true;
+        // Con el micrófono ya abierto la sesión es la nuestra aunque llegue auto.
+        this._sessionAuto = !this._active && !!auto;
+        if (mode) this._mode = mode;
+        if (provider) this._provider = provider;
+        this._ensurePlayback();
+        this._notify();
+    }
+
+    /** El núcleo cerró la sesión (agent:status realtime_stopped). */
+    markSessionClosed() {
+        this._sessionOpen = false;
+        this._sessionAuto = false;
+        this._notify();
+    }
+
+    /** cb(estado) cada vez que cambia micrófono o sesión. Devuelve la función para quitarlo. */
+    onChange(cb) {
+        this._listeners.add(cb);
+        return () => this._listeners.delete(cb);
+    }
+
+    _notify() {
+        const state = { active: this._active, sessionOpen: this._sessionOpen, auto: this._sessionAuto };
+        this._listeners.forEach((cb) => {
+            try { cb(state); } catch (err) { console.warn('[VoiceRealtime] Error en un oyente:', err); }
+        });
     }
 
     /**
@@ -129,7 +163,8 @@ class VoiceRealtime {
      * @returns {number} Duración estimada en ms del chunk (para lipsync hints)
      */
     playAudioChunk(audioB64, format = 'pcm16') {
-        if (!this._playbackCtx) return 0;
+        // Sin micrófono también suena: sesión abierta por un mensaje escrito (B7).
+        if (!this._ensurePlayback()) return 0;
 
         try {
             const raw = atob(audioB64);
@@ -200,6 +235,28 @@ class VoiceRealtime {
     }
 
     // ── Private ───────────────────────────────────
+
+    /** Contexto de reproducción a 24 kHz, creado al primer audio y reutilizado. */
+    _ensurePlayback() {
+        if (!this._playbackCtx || this._playbackCtx.state === 'closed') {
+            try {
+                this._playbackCtx = new AudioContext({ sampleRate: 24000 });
+                this._playbackAnalyser = this._playbackCtx.createAnalyser();
+                this._playbackAnalyser.fftSize = 256;
+                this._playbackAnalyser.smoothingTimeConstant = 0.6;
+                this._analyserBuffer = new Uint8Array(this._playbackAnalyser.fftSize);
+                this._playQueue = [];
+                this._playing = false;
+                this._currentSource = null;
+            } catch (err) {
+                console.error('[VoiceRealtime] No se pudo crear el contexto de audio:', err);
+                this._playbackCtx = null;
+                return null;
+            }
+        }
+        if (this._playbackCtx.state === 'suspended') this._playbackCtx.resume().catch(() => {});
+        return this._playbackCtx;
+    }
 
     _drainPlayQueue() {
         if (this._playing || this._playQueue.length === 0 || !this._playbackCtx) return;
@@ -301,9 +358,19 @@ class VoiceRealtime {
         return btoa(binary);
     }
 
-    /** @returns {boolean} */
+    /** Micrófono capturando. @returns {boolean} */
     get active() {
         return this._active;
+    }
+
+    /** Hay una sesión de voz abierta en el núcleo (con o sin micrófono). @returns {boolean} */
+    get sessionOpen() {
+        return this._sessionOpen;
+    }
+
+    /** La sesión la abrió un mensaje escrito y el micrófono sigue cerrado. @returns {boolean} */
+    get autoSession() {
+        return this._sessionAuto;
     }
 
     /** @returns {string} */

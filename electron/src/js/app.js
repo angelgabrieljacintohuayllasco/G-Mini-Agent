@@ -572,8 +572,9 @@
 
     ws.on('agent:audio', (data) => {
         if (!data) return;
-        // Realtime streaming audio — reproducir directamente
-        if (data.stream && data.audio && typeof voiceRealtime !== 'undefined' && voiceRealtime.active) {
+        // Audio en vivo de la sesión de voz. Suena aunque el micrófono esté
+        // cerrado: un mensaje escrito puede abrir la sesión Live (B7).
+        if (data.stream && data.audio && typeof voiceRealtime !== 'undefined') {
             const durationMs = voiceRealtime.playAudioChunk(data.audio, data.format || 'pcm16');
             if (durationMs > 0) {
                 pushOverlayCharacterRuntime({
@@ -1124,35 +1125,51 @@
 
     // Arranca/detiene la conversacion en tiempo real. Reutilizable desde el
     // boton de la ventana principal y desde el boton mic del avatar (skinWindow).
+    // Con una sesión abierta por un mensaje escrito, pulsar suma el micrófono a
+    // esa sesión (no abre otra); con el micrófono abierto, termina la conversación.
     async function _toggleRealtimeVoice() {
         if (voiceRealtime.active) {
             await voiceRealtime.stop();
-            _stopMouthPusher();
-            if (btnRealtime) {
-                btnRealtime.classList.remove('realtime-active', 'realtime-simulated');
-                _setButtonIcon(btnRealtime, _realtimeMode === 'simulated' ? SVG_MIC_SIMULATED : SVG_WAVEFORM);
-                btnRealtime.title = _realtimeMode === 'simulated'
-                    ? 'Conversación por voz (STT → Modelo → TTS)'
-                    : 'Conversación en tiempo real';
-            }
-            _pushSkinVoiceState({ active: false, available: !!_realtimeMode });
         } else {
-            // Enviar mode al backend para que sepa qué pipeline usar
             const provider = _realtimeProvider || settingsManager?.currentProvider || '';
-            const started = await voiceRealtime.start(provider, _realtimeVoice, _realtimeMode);
-            if (started) {
-                if (btnRealtime) {
-                    btnRealtime.classList.add('realtime-active');
-                    if (_realtimeMode === 'simulated') {
-                        btnRealtime.classList.add('realtime-simulated');
-                    }
-                    _setButtonIcon(btnRealtime, SVG_RECORD);
-                }
-                _startMouthPusher();
-                _pushSkinVoiceState({ active: true, available: !!_realtimeMode });
-            }
+            await voiceRealtime.start(provider, _realtimeVoice, _realtimeMode || 'native');
         }
+        syncRealtimeButton();
     }
+
+    /** El botón refleja el estado real: sin sesión, sesión solo audio o micrófono abierto. */
+    function syncRealtimeButton() {
+        if (!btnRealtime) return;
+        const simulated = _realtimeMode === 'simulated';
+        const micOn = voiceRealtime.active;
+        const listening = voiceRealtime.sessionOpen && !micOn;
+        btnRealtime.classList.toggle('realtime-active', micOn);
+        btnRealtime.classList.toggle('realtime-simulated', micOn && simulated);
+        btnRealtime.classList.toggle('realtime-listening', listening);
+        btnRealtime.setAttribute('aria-pressed', micOn ? 'true' : (listening ? 'mixed' : 'false'));
+        let icon = simulated ? SVG_MIC_SIMULATED : SVG_WAVEFORM;
+        let label = simulated ? 'Conversación por voz (dictado, modelo y voz)' : 'Conversación en tiempo real';
+        if (micOn) {
+            icon = SVG_RECORD;
+            label = 'Terminar la conversación de voz';
+        } else if (listening) {
+            icon = SVG_MIC;
+            label = 'Sesión de voz abierta, solo escuchas. Pulsa para hablar';
+        }
+        _setButtonIcon(btnRealtime, icon);
+        btnRealtime.title = label;
+        btnRealtime.setAttribute('aria-label', label);
+        // Una sesión abierta se muestra aunque el modelo de texto no sea de voz.
+        if (micOn || voiceRealtime.sessionOpen) btnRealtime.style.display = '';
+        else if (!_realtimeMode) btnRealtime.style.display = 'none';
+        _pushSkinVoiceState({ active: micOn, available: !!_realtimeMode || voiceRealtime.sessionOpen });
+    }
+
+    // La boca del avatar sigue el audio en vivo mientras haya sesión, con o sin micrófono.
+    voiceRealtime.onChange((state) => {
+        if (state.active || state.sessionOpen) _startMouthPusher();
+        else _stopMouthPusher();
+    });
 
     if (btnRealtime) {
         // Ocultar por defecto hasta que el backend confirme soporte RT
@@ -1199,21 +1216,11 @@
             _realtimeProvider = data.provider || '';
             _realtimeMode = data.mode || 'native';
             btnRealtime.style.display = '';
-
-            // Actualizar apariencia según modo
-            if (_realtimeMode === 'simulated') {
-                _setButtonIcon(btnRealtime, SVG_MIC_SIMULATED);
-                btnRealtime.title = 'Conversación por voz (STT → Modelo → TTS)';
-            } else {
-                _setButtonIcon(btnRealtime, SVG_WAVEFORM);
-                btnRealtime.title = 'Conversación en tiempo real';
-            }
-
             _updateVoiceSelector(data.voices || []);
 
             // Guardar capacidades del modelo para el botón de video
             _modelSupportsVideo = !!data.supports_video;
-            _pushSkinVoiceState({ active: voiceRealtime.active, available: true });
+            syncRealtimeButton();
         } else {
             _realtimeProvider = '';
             _realtimeMode = '';
@@ -1225,13 +1232,10 @@
                 btnVideoStream.style.display = 'none';
             }
             // Si estaba activo, detener
-            if (voiceRealtime.active) {
-                voiceRealtime.stop();
-                _stopMouthPusher();
-                btnRealtime.classList.remove('realtime-active', 'realtime-simulated');
-                _setButtonIcon(btnRealtime, SVG_WAVEFORM);
+            if (voiceRealtime.active || voiceRealtime.sessionOpen) {
+                void voiceRealtime.stop();
             }
-            _pushSkinVoiceState({ active: false, available: false });
+            syncRealtimeButton();
         }
     });
 
@@ -1251,25 +1255,17 @@
     ws.on('agent:status', (data) => {
         const status = data?.status || '';
         if (status === 'realtime_active') {
-            if (btnRealtime) {
-                btnRealtime.classList.add('realtime-active');
-                if (data?.mode === 'simulated') {
-                    btnRealtime.classList.add('realtime-simulated');
-                }
-                _setButtonIcon(btnRealtime, SVG_RECORD);
-            }
+            // auto: la abrió un mensaje escrito; el audio suena sin micrófono (B7).
+            voiceRealtime.markSessionOpen({ auto: !!data?.auto, mode: data?.mode, provider: data?.provider });
+            if (data?.mode && !_realtimeMode) _realtimeMode = data.mode;
+            syncRealtimeButton();
             // Mostrar botón de video si el modelo tiene live_api: true (siempre soporta video)
             if (btnVideoStream && _modelSupportsVideo) {
                 btnVideoStream.style.display = '';
             }
         } else if (status === 'realtime_stopped') {
-            if (btnRealtime) {
-                btnRealtime.classList.remove('realtime-active', 'realtime-simulated');
-                _setButtonIcon(btnRealtime, _realtimeMode === 'simulated' ? SVG_MIC_SIMULATED : SVG_WAVEFORM);
-                btnRealtime.title = _realtimeMode === 'simulated'
-                    ? 'Conversación por voz (STT → Modelo → TTS)'
-                    : 'Conversación en tiempo real';
-            }
+            voiceRealtime.markSessionClosed();
+            syncRealtimeButton();
             // Ocultar y resetear botón de video stream
             if (btnVideoStream) {
                 btnVideoStream.style.display = 'none';
@@ -1289,7 +1285,7 @@
 
     if (btnVideoStream) {
         btnVideoStream.addEventListener('click', () => {
-            if (!voiceRealtime.active) return;
+            if (!voiceRealtime.active && !voiceRealtime.sessionOpen) return;
             _videoStreamActive = !_videoStreamActive;
             ws.toggleScreenStream(_videoStreamActive);
             btnVideoStream.classList.toggle('video-stream-active', _videoStreamActive);

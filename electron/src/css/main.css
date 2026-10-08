@@ -1952,6 +1952,12 @@ body.executing-task .status-bar::after,
     animation: rec-pulse 1.4s var(--ease-in-out) infinite;
 }
 
+/* Sesión de voz abierta por un mensaje escrito: suena, pero el micrófono sigue cerrado. */
+.btn-small.realtime-listening {
+    background: var(--accent-soft);
+    color: var(--accent-text);
+}
+
 .btn-small.realtime-active.realtime-simulated {
     background: var(--warning-soft);
     color: var(--warning);
