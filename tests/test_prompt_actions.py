@@ -19,6 +19,7 @@ PARAMS = {
     "query_text", "element_type", "expected_text", "verify_text", "duration_ms", "interval_seconds", "server_id",
     "timeout_seconds", "account_id", "payment_account_id", "max_retries", "retry_backoff_seconds",
     "retry_backoff_multiplier", "skill_id", "app_label", "event_name", "webhook_path", "heartbeat_key",
+    "project_instructions_files",
 }
 
 

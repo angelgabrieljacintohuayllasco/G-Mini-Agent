@@ -331,6 +331,7 @@ class PolicyEngine:
             "connector_list",
             "remote_list",
             "remote_task_status",
+            "project_instructions",
             "screen_read_text",
             "screen_locate_text",
             "screen_list_monitors",

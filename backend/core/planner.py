@@ -2677,6 +2677,19 @@ class ActionPlanner:
                         f"tipos: {', '.join(data['detected_kinds']) or 'desconocido'}"
                     )
 
+                case "project_instructions":
+                    if not self._workspace:
+                        result["message"] = "Workspace manager no disponible"
+                        return result
+                    data = self._workspace.project_instructions(str(action.params.get("path", "")).strip() or None)
+                    names = [f["file"] for f in data["files"]]
+                    result["success"] = bool(names)
+                    result["data"] = data
+                    result["message"] = (
+                        f"Instrucciones del proyecto: {', '.join(names)}" if names
+                        else f"El proyecto {data['project_root']} no tiene GMINI.md, AGENTS.md ni CLAUDE.md"
+                    )
+
                 case "git_status":
                     if not self._workspace:
                         result["message"] = "Workspace manager no disponible"

@@ -65,6 +65,12 @@ _CREDENTIAL_PATH_FRAGMENTS: tuple[str, ...] = (
 )
 
 
+# Archivos donde un repositorio deja instrucciones para agentes (como CLAUDE.md
+# en Claude Code o AGENTS.md); se leen con project_instructions.
+PROJECT_INSTRUCTION_FILES: tuple[str, ...] = ("GMINI.md", "AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md")
+MAX_PROJECT_INSTRUCTIONS_CHARS = 12_000
+
+
 def credential_read_reason(resolved: Path) -> str | None:
     """Motivo si la ruta es un almacén de credenciales; None si se puede leer."""
     normalized = "/" + str(resolved).replace("\\", "/").lower().lstrip("/") + "/"
@@ -543,6 +549,23 @@ class WorkspaceManager:
             data["is_dir"] = resolved.is_dir()
         return data
 
+    def project_instructions(self, path: str | None = None) -> dict[str, Any]:
+        """Instrucciones que el repositorio deja para agentes (GMINI.md, AGENTS.md, CLAUDE.md...)."""
+        project_root = Path(self.find_project_root(path)["path"])
+        files: list[dict[str, Any]] = []
+        budget = MAX_PROJECT_INSTRUCTIONS_CHARS
+        for name in PROJECT_INSTRUCTION_FILES:
+            candidate = (project_root / name).resolve()
+            if not candidate.is_file():
+                continue
+            self._check_read_access(candidate)
+            content = candidate.read_text(encoding="utf-8", errors="replace")
+            files.append({"file": name, "text": content[:budget], "truncated": len(content) > budget})
+            budget -= min(len(content), budget)
+            if budget <= 0:
+                break
+        return {"project_root": str(project_root), "files": files}
+
     def find_project_root(self, path: str | None = None) -> dict[str, Any]:
         resolved = self.resolve_path(path)
         start = resolved if resolved.is_dir() else resolved.parent
@@ -822,6 +845,9 @@ class WorkspaceManager:
         snapshot: dict[str, Any] = {
             "project_root": str(project_root),
             "relative_project_root": self._relative_path(project_root),
+            "project_instructions_files": [
+                name for name in PROJECT_INSTRUCTION_FILES if (project_root / name).is_file()
+            ],
             "markers": manifests,
             "detected_kinds": self._detect_project_kinds(manifests),
             "entries": listing["entries"],
