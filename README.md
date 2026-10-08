@@ -23,7 +23,7 @@ componentes del núcleo (unos 500 MB) y no toca el que ya tengas.
 
 | Área | Qué incluye |
 |---|---|
-| Ver y actuar | Capturas y OCR, detección de elementos de interfaz, control de mouse y teclado, navegador (extensión propia y browser-use), Android por ADB, terminal y archivos con permisos. |
+| Ver y actuar | Capturas y OCR (el que trae Windows, sin instalar nada), control de mouse y teclado con un sub-agente de computer use (Gemini, Claude, OpenAI o cualquier modelo con visión), navegador (extensión propia y browser-use), Android por ADB, terminal y archivos con permisos. |
 | Pensar | 30 proveedores con un solo router y fallback real, sub-agentes con el modelo adecuado para cada tarea, planificación paso a paso, modo plan (propone sin ejecutar). |
 | Recordar | Memoria de largo plazo con embeddings: perfil del usuario en cada conversación, recuerdos relacionados con cada mensaje y modo aprendiz que anota preferencias y lecciones al terminar cada turno. |
 | Aprender | Skills en formato estándar SKILL.md (incluidas, importadas desde GitHub o escritas por el propio agente con tu aprobación) y skills con herramientas ejecutables. |
