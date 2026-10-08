@@ -24,7 +24,7 @@ componentes del núcleo (unos 500 MB) y no toca el que ya tengas.
 | Área | Qué incluye |
 |---|---|
 | Ver y actuar | Capturas y OCR (el que trae Windows, sin instalar nada), control de mouse y teclado con un sub-agente de computer use (Gemini, Claude, OpenAI o cualquier modelo con visión), navegador (extensión propia y browser-use), Android por ADB, terminal y archivos con permisos. |
-| Pensar | 30 proveedores con un solo router y fallback real, sub-agentes con el modelo adecuado para cada tarea, planificación paso a paso, modo plan (propone sin ejecutar). |
+| Pensar | 31 proveedores con un solo router y fallback real, sub-agentes con el modelo adecuado para cada tarea, planificación paso a paso, modo plan (propone sin ejecutar). |
 | Recordar | Memoria de largo plazo con embeddings: perfil del usuario en cada conversación, recuerdos relacionados con cada mensaje y modo aprendiz que anota preferencias y lecciones al terminar cada turno. |
 | Aprender | Skills en formato estándar SKILL.md (incluidas, importadas desde GitHub o escritas por el propio agente con tu aprobación) y skills con herramientas ejecutables. |
 | Conectarse | Servidores MCP, conectores de datos (clima, dólar oficial del BCRP, feriados, Wikipedia, RSS, lector web, GitHub, PyPI/npm) y gateway con WhatsApp, Telegram, Discord y Slack. |
@@ -38,7 +38,7 @@ componentes del núcleo (unos 500 MB) y no toca el que ya tengas.
 |---|---|
 | Con API key | OpenAI, Anthropic, Google AI Studio, xAI, DeepSeek, Groq, Mistral, Perplexity, OpenRouter, Cohere, Moonshot, Qwen, Z.ai, MiniMax, Cerebras, SambaNova, Venice, Together, Fireworks, DeepInfra, NVIDIA NIM, Hugging Face, GitHub Models, Azure OpenAI |
 | Google Cloud | Vertex AI con tu sesión de `gcloud` (ADC) o una cuenta de servicio: sin API key |
-| Tu suscripción | Claude Pro/Max vía Claude Code (`claude -p`) y ChatGPT vía Codex CLI (`codex exec`), aislados de tu configuración personal del CLI |
+| Tu suscripción | Claude Pro/Max vía Claude Code (`claude -p`), ChatGPT vía Codex CLI (`codex exec`) y tu cuenta de Google vía Gemini CLI (`gemini -p`), aislados de tu configuración personal del CLI |
 | Local | Ollama, LM Studio y cualquier servidor compatible con OpenAI (vLLM, llama.cpp, LocalAI) |
 
 El catálogo de modelos está en [`data/models.yaml`](data/models.yaml). Las keys se
