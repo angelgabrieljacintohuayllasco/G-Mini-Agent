@@ -32,6 +32,13 @@ componentes del núcleo (unos 500 MB) y no toca el que ya tengas.
 | Trabajar 24/7 | Tareas programadas, tareas en segundo plano por API, consolidación de memoria con el agente inactivo y avisos por el gateway. |
 | Tener nombre | Le pones el nombre y la personalidad que quieras en el asistente inicial o en el chat (`/nombre`). |
 
+## Proyectos relacionados
+
+| Repositorio | Qué es |
+|---|---|
+| [G-Mini-Agent-Server](https://github.com/angelgabrieljacintohuayllasco/G-Mini-Agent-Server) | CLI `gmini` para hablar con un G-Mini desde la terminal (otra PC, un VPS, scripts) e imagen Docker del núcleo en modo servidor |
+| [G-Mini-Agent-Extension](https://github.com/angelgabrieljacintohuayllasco/G-Mini-Agent-Extension) | Extensión para Chrome, Edge, Brave, Opera, Vivaldi y Firefox: el agente usa tu navegador con tus sesiones, conectado solo a tu app local |
+
 ## Proveedores de IA
 
 | Tipo | Proveedores |
