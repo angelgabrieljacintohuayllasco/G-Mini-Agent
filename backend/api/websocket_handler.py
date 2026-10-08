@@ -150,6 +150,12 @@ async def connect(sid: str, environ: dict, auth: Any = None) -> None:
 @sio.event
 async def disconnect(sid: str) -> None:
     _wake_detectors.pop(sid, None)
+    try:
+        from backend.core.canvas import get_canvas_service
+
+        get_canvas_service().unsubscribe_all(sid)
+    except Exception as exc:
+        logger.debug(f"No se pudo limpiar las suscripciones de canvas de {sid}: {exc}")
     logger.info(f"Cliente desconectado: {sid}")
     try:
         from backend.core.gateway_service import get_gateway
@@ -960,8 +966,9 @@ async def node_invoke_result(sid: str, data: dict) -> None:
 async def canvas_subscribe(sid: str, data: dict) -> None:
     """Suscribe un cliente a actualizaciones en vivo de un canvas."""
     try:
-        from backend.core.canvas import get_canvas_service
-        svc = get_canvas_service()
+        from backend.core.canvas import ensure_canvas_service
+
+        svc = await ensure_canvas_service()  # carga los guardados y conecta los avisos en vivo
         canvas_id = data.get("canvas_id", "")
         svc.subscribe(canvas_id, sid)
         canvas = await svc.get_canvas(canvas_id)
@@ -980,7 +987,10 @@ async def canvas_unsubscribe(sid: str, data: dict) -> None:
         canvas_id = data.get("canvas_id", "")
         svc.unsubscribe(canvas_id, sid)
     except Exception as exc:
-        logger.debug# ── Asistente inicial ────────────────────────────────────────────────
+        logger.debug(f"Error en canvas_unsubscribe: {exc}")
+
+
+# ── Asistente inicial ────────────────────────────────────────────────
 # Las respuestas pueden tocar el keyring y recargar providers: van en un hilo.
 
 

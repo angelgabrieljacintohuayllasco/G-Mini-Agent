@@ -58,3 +58,20 @@ async def test_canvases_survive_a_restart(fresh_canvas):
     canvas_module._canvas_service = None  # como si el núcleo se reiniciara
     listed = await run("canvas_list")
     assert listed["data"]["canvases"][0]["canvas_id"] == created["data"]["canvas_id"]
+
+
+async def test_socket_subscription_gets_snapshot_and_live_updates(fresh_canvas, monkeypatch):
+    from backend.api import websocket_handler
+
+    sent = []
+
+    async def emit(event, data=None, to=None, **kwargs):
+        sent.append((event, to))
+
+    monkeypatch.setattr(websocket_handler.sio, "emit", emit)
+    created = await run("canvas_create", title="Estado", type="status", data={"status": "empezando"})
+    canvas_module._canvas_service = None  # la app abre la pestaña tras reiniciar el núcleo
+    await websocket_handler.canvas_subscribe("sid-ui", {"canvas_id": created["data"]["canvas_id"]})
+    assert ("canvas:snapshot", "sid-ui") in sent
+    await run("canvas_update", canvas_id=created["data"]["canvas_id"], data={"status": "listo"})
+    assert ("canvas:updated", "sid-ui") in sent
