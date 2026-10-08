@@ -1112,6 +1112,28 @@ class SettingsManager {
         ) || Math.abs(normalizedDraft.tts_speed - normalizedPersisted.tts_speed) > 0.0001;
     }
 
+    /**
+     * Voz elegida en el catálogo: se guarda al instante en la clave de ese motor.
+     * Para Gemini también se actualizan el borrador y el selector antiguo, así
+     * "Guardar voz y personaje" no la pisa con un valor viejo.
+     */
+    async applyVoiceChoice(engine, provider, voiceId) {
+        const keys = { edge: 'edge_voice', openai: 'openai_voice', google: 'google_voice' };
+        const key = keys[provider];
+        if (!key || !voiceId) return false;
+        const ok = await this._saveConfigValue('voice', key, voiceId);
+        if (ok && provider === 'google') {
+            const select = this.voiceGoogleVoiceSelect;
+            if (select && !Array.from(select.options).some((o) => o.value === voiceId)) {
+                select.appendChild(new Option(voiceId, voiceId));
+            }
+            if (select) select.value = voiceId;
+            if (this.voiceMetadata?.settings) this.voiceMetadata.settings.google_voice = voiceId;
+            this._updateVoiceDraft({ google_voice: voiceId }, `voice-catalog:${engine}`);
+        }
+        return ok;
+    }
+
     _updateVoiceDraft(patch, reason = 'unknown') {
         const before = this._cloneVoiceDebug(this.voiceDraft || this._readVoiceDraftFromControls());
         const base = this.voiceDraft ? this._normalizeVoiceDraft(this.voiceDraft) : this._readVoiceDraftFromControls();
@@ -1340,9 +1362,12 @@ class SettingsManager {
         if (this.voiceGoogleConfig) {
             this.voiceGoogleConfig.classList.toggle('hidden', provider !== 'google');
         }
+        // Edge, OpenAI y Gemini usan el catálogo con muestra (voices.js); el
+        // selector antiguo de voces de Google queda oculto porque lo reemplaza.
         if (this.voiceGoogleVoiceConfig) {
-            this.voiceGoogleVoiceConfig.classList.toggle('hidden', provider !== 'google');
+            this.voiceGoogleVoiceConfig.classList.toggle('hidden', !!window.gminiVoices || provider !== 'google');
         }
+        window.gminiVoices?.setEngine(selectedEngine, provider);
         if (this.voiceElevenlabsConfig) {
             this.voiceElevenlabsConfig.classList.toggle('hidden', selectedEngine !== 'elevenlabs');
         }

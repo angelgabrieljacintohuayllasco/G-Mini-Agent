@@ -1026,6 +1026,28 @@
                         <div id="voice-runtime-status" class="setting-help-text"></div>
                     </div>
 
+                    <div class="setting-group" id="voice-catalog-group" hidden>
+                        <label id="voice-catalog-label">Voz del agente</label>
+                        <div class="voice-catalog-toolbar">
+                            <div class="sidebar-search voice-search" role="search">
+                                <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-search"></use></svg>
+                                <input id="voice-catalog-filter" type="text" placeholder="Filtrar por nombre, país o tono" aria-label="Filtrar voces" autocomplete="off" spellcheck="false">
+                            </div>
+                            <div class="voice-locale-field">
+                                <select id="voice-catalog-locale" class="setting-select" aria-label="Idioma de las voces">
+                                    <option value="es">Español</option>
+                                    <option value="en">Inglés</option>
+                                    <option value="pt">Portugués</option>
+                                    <option value="fr">Francés</option>
+                                    <option value="it">Italiano</option>
+                                    <option value="de">Alemán</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div id="voice-catalog" class="voice-catalog" role="radiogroup" aria-labelledby="voice-catalog-label"></div>
+                        <div id="voice-catalog-meta" class="setting-help-text" role="status"></div>
+                    </div>
+
                     <div id="voice-google-voice-config" class="setting-group hidden">
                         <label>Voz Google TTS</label>
                         <select id="select-google-voice" class="setting-select">
@@ -1561,6 +1583,7 @@
     <script src="js/settings.js"></script>
     <script src="js/voiceRealtime.js"></script>
     <script src="js/tts-player.js"></script>
+    <script src="js/voices.js"></script>
     <script src="js/onboarding.js"></script>
     <script src="js/identity.js"></script>
     <script src="js/memory.js"></script>
