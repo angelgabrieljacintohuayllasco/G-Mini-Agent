@@ -358,6 +358,8 @@ window.gminiPalette = commandPalette;
     const settingsPages = [
         ['general', 'General', 'sliders-horizontal', ['tema', 'ventana', 'atajos', 'monitor', 'autonomia']],
         ['personality', 'Personalidad', 'bot', ['nombre', 'identidad', 'acento']],
+        ['memory', 'Memoria', 'brain', ['recuerdos', 'olvidar', 'preferencias']],
+        ['skills', 'Skills', 'wrench', ['instalar', 'packs', 'curador', 'variables']],
         ['connectors', 'Conectores', 'plug', ['clima', 'tipo de cambio', 'feriados', 'rss', 'github', 'noticias']],
         ['model', 'Modelo IA', 'cpu', ['proveedor', 'api key', 'claves', 'embeddings', 'temperatura']],
         ['voice', 'Voz y personaje', 'mic', ['tts', 'avatar', 'skin', 'voz']],
