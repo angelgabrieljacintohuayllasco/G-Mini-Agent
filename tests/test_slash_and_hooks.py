@@ -84,7 +84,9 @@ def test_list_commands_for_the_palette(tmp_path, monkeypatch):
     (tmp_path / "resumir.md").write_text("# Resume un texto\n$ARGUMENTS", encoding="utf-8")
     items = {c["name"]: c for c in slash_commands.list_commands()}
     assert items["plan"]["usage"] == "/plan <tarea>" and not items["plan"]["custom"]
-    assert items["resumir"] == {"name": "resumir", "usage": "/resumir", "description": "Resume un texto", "custom": True}
+    assert items["resumir"] == {"name": "resumir", "usage": "/resumir", "description": "Resume un texto", "custom": True,
+                                "aliases": []}
+    assert items["ayuda"]["aliases"] == ["help"] and "new" in items["nuevo"]["aliases"]
 
 
 def test_shipped_commands_exist():

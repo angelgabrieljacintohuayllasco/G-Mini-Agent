@@ -64,9 +64,11 @@ def _describe_custom(path: Path) -> str:
 
 def list_commands() -> list[dict[str, Any]]:
     """Comandos para la paleta de la interfaz: los incluidos y los de data/commands."""
-    items = [{"name": name, "usage": usage, "description": text, "custom": False}
+    items = [{"name": name, "usage": usage, "description": text, "custom": False,
+              "aliases": sorted(alias for alias, target in _ALIASES.items() if target == name)}
              for name, (_fn, usage, text) in _BUILTINS.items()]
-    items += [{"name": name, "usage": f"/{name}", "description": _describe_custom(path), "custom": True}
+    items += [{"name": name, "usage": f"/{name}", "description": _describe_custom(path), "custom": True,
+               "aliases": []}
               for name, path in _custom_commands().items()]
     return items
 
