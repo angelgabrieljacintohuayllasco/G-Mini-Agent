@@ -82,6 +82,10 @@
                     <span id="model-label" class="model-label" title="Modelo activo">---</span>
                 </div>
                 <div class="agent-control-group" role="group" aria-label="Control del agente">
+                    <button id="btn-tts-mute" class="agent-control-btn agent-voice-btn" type="button" aria-pressed="false" title="Silenciar la voz del agente" aria-label="Silenciar la voz del agente" hidden>
+                        <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-volume-2"></use></svg>
+                    </button>
+                    <span class="agent-control-sep" aria-hidden="true"></span>
                     <button id="btn-agent-start" class="agent-control-btn" type="button" title="Reanudar" aria-label="Reanudar agente" disabled>
                         <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-play"></use></svg>
                     </button>
@@ -1556,6 +1560,7 @@
     <script src="js/overlay-effects.js"></script>
     <script src="js/settings.js"></script>
     <script src="js/voiceRealtime.js"></script>
+    <script src="js/tts-player.js"></script>
     <script src="js/onboarding.js"></script>
     <script src="js/identity.js"></script>
     <script src="js/memory.js"></script>

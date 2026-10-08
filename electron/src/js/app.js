@@ -174,58 +174,57 @@
         }
     }
 
-    let _ttsAudioCtx = null;
-    let _ttsAnalyser = null;
-    let _ttsAnalyserBuffer = null;
+    // ── Voz del agente (TTS del núcleo) ───────────────
+    // Los clips completos suenan en cola en chat y en avatar (B3). En modo
+    // avatar la amplitud de lo que suena mueve la boca del personaje.
+    const ttsPlayer = window.gminiTtsPlayer;
+    const btnTtsMute = document.getElementById('btn-tts-mute');
     let _ttsMouthTimer = null;
+    let _autoTtsEnabled = false;
 
-    function _base64ToArrayBuffer(b64) {
-        const raw = atob(b64);
-        const bytes = new Uint8Array(raw.length);
-        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-        return bytes.buffer;
-    }
-
-    async function _playSkinTtsAudio(audioB64) {
-        try {
-            if (!_ttsAudioCtx) {
-                _ttsAudioCtx = new AudioContext();
-            }
-            const audioBuffer = await _ttsAudioCtx.decodeAudioData(_base64ToArrayBuffer(audioB64));
-            const source = _ttsAudioCtx.createBufferSource();
-            source.buffer = audioBuffer;
-
-            if (!_ttsAnalyser) {
-                _ttsAnalyser = _ttsAudioCtx.createAnalyser();
-                _ttsAnalyser.fftSize = 256;
-                _ttsAnalyser.smoothingTimeConstant = 0.6;
-                _ttsAnalyserBuffer = new Uint8Array(_ttsAnalyser.fftSize);
-            }
-            source.connect(_ttsAnalyser);
-            _ttsAnalyser.connect(_ttsAudioCtx.destination);
-
-            if (_ttsMouthTimer) clearInterval(_ttsMouthTimer);
+    function _syncTtsMouth(state) {
+        const speaking = state.playing && !state.preview && _skinMode === 'skin';
+        if (speaking && !_ttsMouthTimer) {
             _ttsMouthTimer = setInterval(() => {
-                _ttsAnalyser.getByteTimeDomainData(_ttsAnalyserBuffer);
-                let sumSquares = 0;
-                for (let i = 0; i < _ttsAnalyserBuffer.length; i++) {
-                    const norm = (_ttsAnalyserBuffer[i] - 128) / 128;
-                    sumSquares += norm * norm;
-                }
-                const rms = Math.sqrt(sumSquares / _ttsAnalyserBuffer.length);
-                pushOverlayCharacterRuntime({ status: agentRuntimeState, mouth: Math.min(1, rms * 4) });
+                pushOverlayCharacterRuntime({ status: agentRuntimeState, mouth: ttsPlayer.level() });
             }, 50);
-
-            source.onended = () => {
-                clearInterval(_ttsMouthTimer);
-                _ttsMouthTimer = null;
-                pushOverlayCharacterRuntime({ status: agentRuntimeState, mouth: 0 });
-            };
-            source.start();
-        } catch (err) {
-            console.warn('[Skin] No se pudo reproducir audio TTS:', err);
+        } else if (!speaking && _ttsMouthTimer) {
+            clearInterval(_ttsMouthTimer);
+            _ttsMouthTimer = null;
+            pushOverlayCharacterRuntime({ status: agentRuntimeState, mouth: 0 });
         }
     }
+
+    function _syncTtsMuteButton(state = ttsPlayer.state()) {
+        if (!btnTtsMute) return;
+        btnTtsMute.hidden = !(_autoTtsEnabled || state.playing || state.muted);
+        btnTtsMute.setAttribute('aria-pressed', state.muted ? 'true' : 'false');
+        btnTtsMute.classList.toggle('is-speaking', state.playing && !state.preview);
+        const label = state.muted ? 'Activar la voz del agente' : 'Silenciar la voz del agente';
+        btnTtsMute.title = label;
+        btnTtsMute.setAttribute('aria-label', label);
+        _setButtonIcon(btnTtsMute, ICON(state.muted ? 'volume-x' : 'volume-2'));
+    }
+
+    ttsPlayer.onChange((state) => {
+        _syncTtsMouth(state);
+        _syncTtsMuteButton(state);
+    });
+
+    btnTtsMute?.addEventListener('click', () => {
+        const next = !ttsPlayer.muted;
+        ttsPlayer.setMuted(next);
+        if (next) webSpeech.cancel();
+    });
+
+    // Configuración avisa si voice.auto_tts está activo: el botón solo se ofrece entonces.
+    window.gminiVoiceOutput = {
+        setAutoTts(enabled) {
+            _autoTtsEnabled = !!enabled;
+            _syncTtsMuteButton();
+        },
+    };
+    _syncTtsMuteButton();
 
     // ── Initialize modules ────────────────────────────
     // Cada módulo arranca aislado: si uno falla, el resto (y ws.connect) sigue.
@@ -368,6 +367,7 @@
         pushOverlayCharacterRuntime({ status: 'idle', visemes: [], audioHintMs: 0 });
         // Sin conexión no queda ninguna burbuja "escribiendo" colgada (S3).
         chatManager.hideTyping();
+        ttsPlayer.stop();
         if (chatManager.isStreaming) chatManager.finishStreaming();
         // B23: la sesión de voz del backend murió con la conexión; soltar el micrófono.
         if (typeof voiceRealtime !== 'undefined' && voiceRealtime.active) {
@@ -557,6 +557,7 @@
         if (typeof voiceRealtime !== 'undefined' && voiceRealtime.active) {
             voiceRealtime.clearPlayback();
         }
+        ttsPlayer.stop();
         webSpeech.cancel();
     });
 
@@ -582,9 +583,9 @@
             }
             return;
         }
-        // Non-realtime TTS — en modo avatar reproducir con boca animada
-        if (_skinMode === 'skin' && data.audio) {
-            void _playSkinTtsAudio(data.audio);
+        // Clip completo del TTS del núcleo: suena en cola en chat y en avatar (B3).
+        if (data.audio) {
+            void ttsPlayer.enqueue(data.audio);
         }
         const durationMs = Number.isFinite(Number(data?.duration))
             ? Math.max(0, Math.round(Number(data.duration) * 1000))
@@ -599,7 +600,7 @@
     // con speechSynthesis (voces del SO, cero latencia de red). Se encola nativamente.
     ws.on('agent:speak', (data) => {
         const text = String(data?.text || '').trim();
-        if (text) webSpeech.speak(text);
+        if (text && !ttsPlayer.muted) webSpeech.speak(text);
     });
 
     ws.on('agent:lipsync', (data) => {

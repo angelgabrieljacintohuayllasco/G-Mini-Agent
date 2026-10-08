@@ -1153,6 +1153,7 @@ class SettingsManager {
         }
         const cbAuto = document.getElementById('cb-auto-tts');
         if (cbAuto) cbAuto.checked = !!draft.auto_tts;
+        window.gminiVoiceOutput?.setAutoTts(!!draft.auto_tts);
         const cbEnabled = document.getElementById('cb-voice-enabled');
         if (cbEnabled) cbEnabled.checked = !!draft.enabled;
         this._voiceDebug('draft:apply-controls', {

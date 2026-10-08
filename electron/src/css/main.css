@@ -743,6 +743,35 @@ kbd {
     color: var(--accent-text);
 }
 
+/* Voz del agente: separador visible solo junto al botón de silencio. */
+.agent-control-sep {
+    width: 1px;
+    height: 14px;
+    margin: 0 2px;
+    background: var(--border);
+}
+
+#btn-tts-mute[hidden] + .agent-control-sep {
+    display: none;
+}
+
+.agent-voice-btn.is-speaking {
+    color: var(--accent-text);
+}
+
+.agent-voice-btn.is-speaking .icon {
+    animation: voice-pulse 1.2s var(--ease-in-out) infinite;
+}
+
+.agent-voice-btn[aria-pressed="true"] {
+    color: var(--text-muted);
+}
+
+@keyframes voice-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+}
+
 .agent-control-btn.stop.active {
     color: var(--error);
 }
