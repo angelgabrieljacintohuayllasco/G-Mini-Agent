@@ -236,6 +236,15 @@ def main(argv: list[str] | None = None):
     logger.info(f"Iniciando servidor en {host}:{port}" + (" (headless)" if args.headless else ""))
     app = create_app()
 
+    from backend.security.local_auth import extra_hosts
+
+    extras = [h for h in extra_hosts() if h != str(host)] if not args.host else []
+    if extras:
+        # 127.0.0.1 para la app y además las IPs de server.extra_hosts (p. ej. Tailscale),
+        # sin abrir el núcleo a toda la red como haría 0.0.0.0.
+        server = uvicorn.Server(uvicorn.Config(app, log_level="info", access_log=False))
+        server.run(sockets=_listen_sockets([str(host), *extras], int(port)))
+        return
     uvicorn.run(
         app,
         host=host,
@@ -243,6 +252,30 @@ def main(argv: list[str] | None = None):
         log_level="info",
         access_log=False,
     )
+
+
+def _listen_sockets(hosts: list[str], port: int) -> list:
+    import socket
+
+    sockets = []
+    for bind in hosts:
+        family = socket.AF_INET6 if ":" in bind else socket.AF_INET
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        if os.name != "nt":  # en Windows SO_REUSEADDR deja a otro proceso robar el puerto
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((bind, port))
+            sock.listen(2048)
+        except OSError as exc:
+            sock.close()
+            if bind in ("127.0.0.1", "localhost", "::1"):
+                raise
+            logger.warning(f"No pude escuchar en {bind}:{port} ({exc}); sigo solo en el resto")
+            continue
+        sock.set_inheritable(True)
+        logger.info(f"Escuchando también en {bind}:{port}" if sockets else f"Escuchando en {bind}:{port}")
+        sockets.append(sock)
+    return sockets
 
 
 if __name__ == "__main__":

@@ -321,6 +321,21 @@ async def claim_pairing(request: Request):
             "agent_name": _agent_identity()["name"], "scopes": device.scopes}
 
 
+@router.post("/tokens", status_code=201)
+async def create_api_token(request: Request):
+    """Token para scripts e integraciones; se muestra una sola vez."""
+    _require(request, "admin")
+    body = await _json_body(request)
+    label = " ".join(str(body.get("label") or "").split())[:80]
+    if not label:
+        raise ApiError(422, "validation_error", "Falta 'label' (para qué es el token).")
+    scopes = body.get("scopes") or ["chat", "tasks"]
+    if not isinstance(scopes, list) or any(s not in local_auth.ALL_SCOPES for s in scopes):
+        raise ApiError(422, "validation_error", f"scopes válidos: {', '.join(local_auth.ALL_SCOPES)}")
+    token, record = local_auth.issue_device_token(label, kind="api", device_type="api", scopes=scopes)
+    return {"token": token, "id": record.id, "name": record.name, "scopes": record.scopes}
+
+
 @router.get("/devices")
 async def list_devices(request: Request):
     _require(request, "admin")

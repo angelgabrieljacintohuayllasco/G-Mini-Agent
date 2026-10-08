@@ -65,6 +65,8 @@ Authorization: Bearer <token>
 
 3. Revocar: `DELETE /api/v1/devices/{device_id}`. Listar: `GET /api/v1/devices`.
 
+4. Tokens de API para scripts: `POST /api/v1/tokens` (scope `admin`) `{"label": "respaldo nocturno", "scopes": ["chat", "tasks"]}` → `201 {"token": "gm_api_...", "id": "api_...", "name": "...", "scopes": [...]}`. El token se muestra una sola vez; se lista y se revoca como un dispositivo.
+
 ### 1.2 Alcances (scopes)
 
 | Scope | Permite |

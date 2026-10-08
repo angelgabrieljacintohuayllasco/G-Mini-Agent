@@ -280,3 +280,42 @@ def test_timestamps_carry_their_zone():
     assert value.startswith("2026-10-07T21:42:59") and (value.endswith("Z") or value[-6] in "+-")
     assert _iso_with_zone("2026-10-07T21:42:59+00:00") == "2026-10-07T21:42:59+00:00"
     assert _iso_with_zone(None) is None and _iso_with_zone("ayer") == "ayer"
+
+
+def test_api_tokens_are_created_once_and_respect_scopes(client):
+    created = client.post("/api/v1/tokens", headers=AUTH, json={"label": "respaldo nocturno", "scopes": ["tasks"]})
+    assert created.status_code == 201
+    data = created.json()
+    assert data["token"].startswith("gm_api_") and data["scopes"] == ["tasks"]
+    me = client.get("/api/v1/me", headers={**LOCAL_HOST, "Authorization": f"Bearer {data['token']}"})
+    assert me.status_code == 200 and me.json()["scopes"] == ["tasks"]
+    denied = client.post("/api/v1/chat", headers={**LOCAL_HOST, "Authorization": f"Bearer {data['token']}"},
+                         json={"message": "hola"})
+    assert denied.status_code == 403
+    bad = client.post("/api/v1/tokens", headers=AUTH, json={"label": "x", "scopes": ["root"]})
+    assert bad.status_code == 422
+
+
+def test_extra_hosts_are_allowed_and_bound(monkeypatch):
+    import socket
+
+    from backend.main import _listen_sockets
+    from backend.security import local_auth
+
+    real_get = local_auth.config.get
+    monkeypatch.setattr(local_auth.config, "get", lambda *k, default=None: (
+        ["100.71.158.20"] if k == ("server", "extra_hosts") else real_get(*k, default=default)))
+    monkeypatch.delenv("GMINI_BIND_PORT", raising=False)
+    port = local_auth._server_port()
+    assert f"100.71.158.20:{port}" in local_auth.allowed_hosts()
+
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    free_port = probe.getsockname()[1]
+    probe.close()
+    sockets = _listen_sockets(["127.0.0.1", "203.0.113.5"], free_port)  # la segunda IP no es de este equipo
+    try:
+        assert len(sockets) == 1 and sockets[0].getsockname()[1] == free_port
+    finally:
+        for sock in sockets:
+            sock.close()

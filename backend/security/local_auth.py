@@ -312,9 +312,17 @@ def claim_pairing_code(
 
 # ── Validación de peticiones ─────────────────────────────────────────────
 
+def extra_hosts() -> list[str]:
+    """IPs extra donde escucha el núcleo además de 127.0.0.1 (p. ej. la de Tailscale)."""
+    raw = config.get("server", "extra_hosts", default=[]) or []
+    return [str(h).strip() for h in raw if str(h).strip()] if isinstance(raw, list) else []
+
+
 def allowed_hosts() -> set[str]:
     port = _server_port()
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+    for host in extra_hosts():  # quien entra por Tailscale manda Host: 100.x.y.z:puerto
+        hosts.add(f"[{host}]:{port}" if ":" in host else f"{host}:{port}")
     extra = config.get("server", "allowed_hosts", default=[]) or []
     if isinstance(extra, list):
         hosts.update(str(h).strip().lower() for h in extra if str(h).strip())
