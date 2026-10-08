@@ -19,8 +19,8 @@
     "three": "^0.170.0"
   },
   "devDependencies": {
-    "electron": "^30.1.0",
-    "electron-builder": "^24.13.3"
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "com.gmini.agent",
@@ -127,7 +127,9 @@
       "synopsis": "Agente de IA de escritorio",
       "description": "Agente de IA que ve tu pantalla, usa el mouse, el teclado y el navegador, recuerda lo que le cuentas y habla. La primera vez prepara su propio Python con uv.",
       "desktop": {
-        "StartupWMClass": "gmini-agent-ui"
+        "entry": {
+          "StartupWMClass": "gmini-agent-ui"
+        }
       }
     },
     "deb": {
