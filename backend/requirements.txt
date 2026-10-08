@@ -86,10 +86,8 @@ faster-whisper>=1.0.0
 # Real-Time Voice
 websockets>=12.0
 
-# Audio I/O
-sounddevice>=0.4.6
+# Audio (leer y escribir WAV; el micrófono lo captura la interfaz)
 soundfile>=0.12.1
-webrtcvad-wheels>=2.0.14   # mismo módulo webrtcvad, con wheels (sin compilar)
 
 # ═══ Phase 6: Gateway (Slack) ═══
 slack-sdk>=3.27.0
