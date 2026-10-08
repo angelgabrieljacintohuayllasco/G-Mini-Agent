@@ -332,6 +332,7 @@ class PolicyEngine:
             "remote_list",
             "remote_task_status",
             "project_instructions",
+            "canvas_list",
             "screen_read_text",
             "screen_locate_text",
             "screen_list_monitors",
@@ -346,6 +347,10 @@ class PolicyEngine:
 
         if action_type == "connector_call":
             return self._review_connector_call(action)
+
+        if action_type in {"canvas_create", "canvas_update"}:
+            return self._review(action, "observe", "interactive", "low", 0.90,
+                                "muestra un tablero o vista en la pestaña Canvas de G-Mini")
 
         if action_type == "remote_delegate":
             return self._review(action, "development", "system", "medium", 0.78,

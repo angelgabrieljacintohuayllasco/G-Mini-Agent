@@ -528,6 +528,20 @@ def get_canvas_service() -> CanvasService:
     return _canvas_service
 
 
+async def ensure_canvas_service() -> CanvasService:
+    """Servicio listo para usar: tablas creadas, canvases cargados y Socket.IO para avisar a la interfaz."""
+    svc = get_canvas_service()
+    if svc._sio is None:
+        try:
+            from backend.api.websocket_handler import sio
+
+            svc._sio = sio
+        except Exception as exc:  # pragma: no cover - sin servidor de sockets (tests, CLI)
+            logger.debug(f"Canvas sin Socket.IO: {exc}")
+    await svc.initialize()
+    return svc
+
+
 def set_canvas_service(service: CanvasService) -> None:
     global _canvas_service
     _canvas_service = service

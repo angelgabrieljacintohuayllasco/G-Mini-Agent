@@ -2677,6 +2677,49 @@ class ActionPlanner:
                         f"tipos: {', '.join(data['detected_kinds']) or 'desconocido'}"
                     )
 
+                case "canvas_list" | "canvas_create" | "canvas_update":
+                    from backend.core.canvas import CanvasType, ensure_canvas_service
+
+                    svc = await ensure_canvas_service()
+                    if action.type == "canvas_list":
+                        items = [{"canvas_id": c["canvas_id"], "title": c["title"], "type": c["canvas_type"],
+                                  "version": c["version"], "updated_at": c["updated_at"]}
+                                 for c in await svc.list_canvases()]
+                        result["success"] = True
+                        result["data"] = {"canvases": items}
+                        result["message"] = f"{len(items)} canvas"
+                        return result
+                    data = action.params.get("data")
+                    if data is not None and not isinstance(data, dict):
+                        result["message"] = "data debe ser un objeto JSON"
+                        return result
+                    content = action.params.get("content")
+                    if content is not None and len(str(content)) > 200_000:
+                        result["message"] = "content supera 200.000 caracteres"
+                        return result
+                    if action.type == "canvas_create":
+                        kind = str(action.params.get("type", action.params.get("canvas_type", "custom")) or "custom")
+                        if kind not in {t.value for t in CanvasType}:
+                            result["message"] = f"Tipo de canvas inválido: {kind}"
+                            return result
+                        canvas = await svc.create_canvas(
+                            title=str(action.params.get("title", "") or "Sin título")[:120], canvas_type=kind,
+                            data=data, content=str(content) if content is not None else None, created_by="agent",
+                        )
+                    else:
+                        canvas = await svc.update_canvas(
+                            str(action.params.get("canvas_id", "")).strip(), data=data,
+                            content=str(content) if content is not None else None,
+                            title=str(action.params["title"])[:120] if action.params.get("title") else None,
+                        )
+                        if canvas is None:
+                            result["message"] = "No existe ese canvas (usa canvas_list)"
+                            return result
+                    result["success"] = True
+                    result["data"] = {"canvas_id": canvas.canvas_id, "title": canvas.title,
+                                      "type": canvas.canvas_type, "version": canvas.version}
+                    result["message"] = f"Canvas '{canvas.title}' (v{canvas.version}) listo en la pestaña Canvas"
+
                 case "project_instructions":
                     if not self._workspace:
                         result["message"] = "Workspace manager no disponible"

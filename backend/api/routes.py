@@ -2092,17 +2092,17 @@ async def run_automation(automation_id: str):
 
 @router.get("/canvas")
 async def list_canvases(canvas_type: str | None = None, pinned_only: bool = False):
-    from backend.core.canvas import get_canvas_service
-    svc = get_canvas_service()
+    from backend.core.canvas import ensure_canvas_service
+    svc = await ensure_canvas_service()
     canvases = await svc.list_canvases(canvas_type=canvas_type, pinned_only=pinned_only)
     return {"ok": True, "canvases": canvases, "total": len(canvases)}
 
 
 @router.post("/canvas")
 async def create_canvas(request: Request):
-    from backend.core.canvas import get_canvas_service
+    from backend.core.canvas import ensure_canvas_service
     body = await request.json()
-    svc = get_canvas_service()
+    svc = await ensure_canvas_service()
     canvas = await svc.create_canvas(
         title=body.get("title", "Sin título"),
         canvas_type=body.get("canvas_type", "custom"),
@@ -2115,8 +2115,8 @@ async def create_canvas(request: Request):
 
 @router.get("/canvas/{canvas_id}")
 async def get_canvas(canvas_id: str):
-    from backend.core.canvas import get_canvas_service
-    svc = get_canvas_service()
+    from backend.core.canvas import ensure_canvas_service
+    svc = await ensure_canvas_service()
     canvas = await svc.get_canvas(canvas_id)
     if not canvas:
         raise HTTPException(status_code=404, detail="Canvas no encontrado")
@@ -2125,9 +2125,9 @@ async def get_canvas(canvas_id: str):
 
 @router.put("/canvas/{canvas_id}")
 async def update_canvas(canvas_id: str, request: Request):
-    from backend.core.canvas import get_canvas_service
+    from backend.core.canvas import ensure_canvas_service
     body = await request.json()
-    svc = get_canvas_service()
+    svc = await ensure_canvas_service()
     canvas = await svc.update_canvas(
         canvas_id,
         data=body.get("data"),
@@ -2141,8 +2141,8 @@ async def update_canvas(canvas_id: str, request: Request):
 
 @router.delete("/canvas/{canvas_id}")
 async def delete_canvas(canvas_id: str):
-    from backend.core.canvas import get_canvas_service
-    svc = get_canvas_service()
+    from backend.core.canvas import ensure_canvas_service
+    svc = await ensure_canvas_service()
     ok = await svc.delete_canvas(canvas_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Canvas no encontrado")
@@ -2151,9 +2151,9 @@ async def delete_canvas(canvas_id: str):
 
 @router.put("/canvas/{canvas_id}/pin")
 async def pin_canvas(canvas_id: str, request: Request):
-    from backend.core.canvas import get_canvas_service
+    from backend.core.canvas import ensure_canvas_service
     body = await request.json()
-    svc = get_canvas_service()
+    svc = await ensure_canvas_service()
     ok = await svc.pin_canvas(canvas_id, body.get("pinned", True))
     if not ok:
         raise HTTPException(status_code=404, detail="Canvas no encontrado")
@@ -2162,16 +2162,16 @@ async def pin_canvas(canvas_id: str, request: Request):
 
 @router.get("/canvas/{canvas_id}/versions")
 async def get_canvas_versions(canvas_id: str, limit: int = 20):
-    from backend.core.canvas import get_canvas_service
-    svc = get_canvas_service()
+    from backend.core.canvas import ensure_canvas_service
+    svc = await ensure_canvas_service()
     versions = await svc.get_versions(canvas_id, limit=limit)
     return {"ok": True, "versions": versions}
 
 
 @router.get("/canvas/{canvas_id}/versions/{version}")
 async def get_canvas_version_content(canvas_id: str, version: int):
-    from backend.core.canvas import get_canvas_service
-    svc = get_canvas_service()
+    from backend.core.canvas import ensure_canvas_service
+    svc = await ensure_canvas_service()
     ver = await svc.get_version_content(canvas_id, version)
     if not ver:
         raise HTTPException(status_code=404, detail="Versión no encontrada")
@@ -2180,8 +2180,8 @@ async def get_canvas_version_content(canvas_id: str, version: int):
 
 @router.post("/canvas/{canvas_id}/restore/{version}")
 async def restore_canvas_version(canvas_id: str, version: int):
-    from backend.core.canvas import get_canvas_service
-    svc = get_canvas_service()
+    from backend.core.canvas import ensure_canvas_service
+    svc = await ensure_canvas_service()
     canvas = await svc.restore_version(canvas_id, version)
     if not canvas:
         raise HTTPException(status_code=404, detail="Canvas o versión no encontrada")

@@ -181,6 +181,9 @@ Con un Android conectado por ADB (depuracion USB) usa `adb_status`, `adb_screens
 - Si la verificacion muestra que la tarea no se completo, puedes delegar de nuevo con instrucciones mas especificas.
 - Para localizar elementos en pantalla sin interactuar, usa `screen_locate_text(text=...)`.
 
+### Canvas (tableros que se actualizan)
+Para mostrar el avance de una tarea larga, una tabla, metricas o una lista que vas actualizando, usa `canvas_create(title=..., type=status|dashboard|monitor|list|table, data={...})` y luego `canvas_update(canvas_id=..., data={...})`. Datos por tipo: status {status, details, status_class}; dashboard {cards: [{label, value, change}]}; monitor {metrics: [{name, percent, value}]}; list {items: [{text, meta}]}; table {columns: [...], rows: [[...]]}. `canvas_list()` muestra los que hay. Se ve en la pestaña Canvas del panel lateral. Sin emojis.
+
 ### Tareas de terminal
 Usa `terminal_run(...)` y `terminal_list()` cuando una operacion sea mas confiable o directa desde shell.
 
