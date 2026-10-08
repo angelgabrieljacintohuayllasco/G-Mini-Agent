@@ -258,6 +258,17 @@ PROVIDERS: dict[str, ProviderSpec] = {
             "sesión iniciada. Solo texto; la respuesta llega completa al final."
         ),
     ),
+    "gemini-cli": ProviderSpec(
+        id="gemini-cli", label="Gemini con tu cuenta de Google (Gemini CLI)", kind=KIND_CLI,
+        category="subscription", local=True, supports_model_listing=False,
+        default_models=("gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-pro-preview"),
+        docs_url="https://github.com/google-gemini/gemini-cli", key_url="https://github.com/google-gemini/gemini-cli",
+        description=(
+            "Usa tu cuenta de Google (o tu plan de Google AI) a través de Gemini CLI (gemini -p). Con "
+            "providers.gemini-cli.auth: login usa tu sesión de `gemini`; vertex, tu proyecto de Google "
+            "Cloud; api_key, la key de Google AI Studio. Solo texto; respuestas en streaming."
+        ),
+    ),
     # ── Locales ──────────────────────────────────────────────────────────
     "ollama": ProviderSpec(
         id="ollama", label="Ollama", kind=KIND_OPENAI_COMPAT, category="local", local=True,

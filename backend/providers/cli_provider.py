@@ -1,15 +1,19 @@
 """
 G-Mini Agent — Proveedores por suscripción vía los CLIs oficiales.
 
-Usan tu plan de Claude (Claude Code) o de ChatGPT (Codex CLI) en lugar de una
-API key: G-Mini ejecuta el CLI oficial en modo no interactivo y lee la
-respuesta. Para que tu configuración personal del CLI no se mezcle con G-Mini
-(CLAUDE.md, memoria, hooks, servidores MCP, AGENTS.md):
+Usan tu plan de Claude (Claude Code), de ChatGPT (Codex CLI) o tu cuenta de
+Google (Gemini CLI) en lugar de una API key: G-Mini ejecuta el CLI oficial en
+modo no interactivo y lee la respuesta. Para que tu configuración personal del
+CLI no se mezcle con G-Mini (CLAUDE.md, memoria, hooks, servidores MCP,
+AGENTS.md, extensiones):
 
 - Claude: sin herramientas (--tools ""), sin fuentes de configuración y sin
   persistir la sesión.
 - Codex: sin config de usuario, sandbox de solo lectura, sesión efímera.
-- Ambos corren en una carpeta temporal vacía y reciben el prompt por stdin
+- Gemini: modo plan (solo lectura), sin extensiones y con un prompt de sistema
+  corto (GEMINI_SYSTEM_MD). Con auth "login" usa tu sesión de Google; con
+  "vertex" o "api_key", una carpeta de configuración propia de G-Mini.
+- Todos corren en una carpeta temporal vacía y reciben el prompt por stdin
   (en Windows el shim .cmd corta la línea de comandos a 8191 caracteres).
 
 Solo texto: las imágenes y archivos adjuntos no se envían por esta vía.
@@ -45,6 +49,7 @@ _GUIDE = (
 CLI_FLAVORS: dict[str, dict[str, Any]] = {
     "claude-cli": {"binary": "claude", "label": "Claude Code"},
     "codex-cli": {"binary": "codex", "label": "Codex CLI"},
+    "gemini-cli": {"binary": "gemini", "label": "Gemini CLI"},
 }
 
 
@@ -115,11 +120,62 @@ class CLIProvider(LLMProvider):
             if model and model != "default":
                 cmd += ["--model", model]
             return cmd
+        if self.name == "gemini-cli":
+            # -p se agrega al texto que llega por stdin; el prompt completo va por stdin.
+            cmd = [executable, "-p", "Responde siguiendo el bloque sistema.", "-o", "stream-json",
+                   "--approval-mode", "plan", "--skip-trust", "-e", "none"]
+            if model and model != "default":
+                cmd += ["-m", model]
+            return cmd
         cmd = [executable, "exec", "--json", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config",
                "-s", "read-only"]
         if model and model != "default":
             cmd += ["-m", model]
         return cmd + ["-"]
+
+    # ── Gemini CLI: autenticación ───────────────────────────────────
+
+    def _gemini_env(self, workdir: str) -> dict[str, str]:
+        """Variables para Gemini CLI según providers.gemini-cli.auth (login | vertex | api_key | auto)."""
+        guide = os.path.join(workdir, "gmini-system.md")
+        with open(guide, "w", encoding="utf-8") as handle:
+            handle.write(_GUIDE + "\n")
+        env = {"GEMINI_SYSTEM_MD": guide}
+
+        mode = str(config.get("providers", self.name, "auth", default="auto") or "auto").strip().lower()
+        user_login = os.path.isfile(os.path.join(os.path.expanduser("~"), ".gemini", "oauth_creds.json"))
+        api_key = config.get_api_key("google_api") if mode in ("auto", "api_key") else None
+        if mode == "auto":
+            mode = "login" if user_login else ("api_key" if api_key else "vertex")
+        if mode == "login":
+            return env  # la sesión de Google que el usuario abrió con `gemini`
+
+        from backend.config import ROOT_DIR
+
+        home = ROOT_DIR / "data" / "runtime" / "gemini-cli"
+        (home / ".gemini").mkdir(parents=True, exist_ok=True)
+        auth_type = "gemini-api-key" if mode == "api_key" else "vertex-ai"
+        (home / ".gemini" / "settings.json").write_text(
+            json.dumps({"security": {"auth": {"selectedType": auth_type}}}), encoding="utf-8")
+        env["GEMINI_CLI_HOME"] = str(home)
+        if mode == "api_key":
+            if not api_key:
+                raise ProviderError(self.name, "Falta la API key de Google (google_api) para Gemini CLI.",
+                                    retriable=False)
+            env["GEMINI_API_KEY"] = api_key
+            return env
+
+        from backend.providers import gcp_auth
+
+        settings = gcp_auth.resolve_vertex_settings(config.get("providers", "vertex", default={}) or {})
+        if not settings.project:
+            raise ProviderError(self.name, "Gemini CLI con Vertex necesita un proyecto de Google Cloud "
+                                "(gcloud config set project) o inicia sesión con `gemini`.", retriable=False)
+        env.update({"GOOGLE_GENAI_USE_VERTEXAI": "true", "GOOGLE_CLOUD_PROJECT": settings.project,
+                    "GOOGLE_CLOUD_LOCATION": settings.location or "global"})
+        if settings.credentials_file:
+            env["GOOGLE_APPLICATION_CREDENTIALS"] = settings.credentials_file
+        return env
 
     # ── Ejecución ───────────────────────────────────────────────────
 
@@ -132,6 +188,8 @@ class CLIProvider(LLMProvider):
         workdir = tempfile.mkdtemp(prefix="gmini-cli-")
         env = {**os.environ, "NO_COLOR": "1"}
         env.pop("GMINI_SESSION_TOKEN", None)
+        if self.name == "gemini-cli":
+            env.update(await asyncio.to_thread(self._gemini_env, workdir))
         process = await asyncio.create_subprocess_exec(
             *self._command(executable, model), cwd=workdir, env=env,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -196,6 +254,17 @@ class CLIProvider(LLMProvider):
                         raise ProviderError(self.name, str(event.get("result") or "Error de Claude Code"),
                                             model=model, retriable=False)
                     self._last_usage = _claude_usage(event)
+            elif self.name == "gemini-cli":
+                if event.get("type") == "message" and event.get("role") == "assistant":
+                    text = str(event.get("content") or "")
+                    if text:
+                        yield text
+                elif event.get("type") == "error" or (event.get("type") == "result"
+                                                       and event.get("status") not in (None, "success")):
+                    detail = event.get("message") or (event.get("error") or {}).get("message") or "Error de Gemini CLI"
+                    raise ProviderError(self.name, str(detail), model=model, retriable=False)
+                elif event.get("type") == "result":
+                    self._last_usage = _gemini_usage(event)
             else:
                 text = _codex_text(event)
                 if text:
@@ -240,6 +309,15 @@ def _claude_usage(event: dict[str, Any]) -> dict[str, Any]:
         + int(usage.get("cache_creation_input_tokens") or 0),
         "output_tokens": int(usage.get("output_tokens") or 0),
         "thinking_tokens": int((usage.get("output_tokens_details") or {}).get("thinking_tokens") or 0),
+    }
+
+
+def _gemini_usage(event: dict[str, Any]) -> dict[str, Any]:
+    stats = event.get("stats") or {}
+    return {
+        "input_tokens": int(stats.get("input_tokens") or 0),
+        "output_tokens": int(stats.get("output_tokens") or 0),
+        "thinking_tokens": 0,
     }
 
 
