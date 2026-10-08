@@ -3653,20 +3653,29 @@ select option {
 .code-status-icon.is-error { color: var(--error); }
 
 .canvas-render-area {
+    display: flex;
     flex: 1;
+    flex-direction: column;
     min-height: 200px;
-    overflow: auto;
+    overflow: hidden;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background: var(--bg-primary);
 }
 
-.canvas-render-area iframe {
+/* El documento del canvas trae su propio fondo (tokens del tema actual) y se desplaza solo. */
+.canvas-frame {
     display: block;
+    flex: 1;
     width: 100%;
-    min-height: 320px;
+    min-height: 300px;
     border: 0;
-    background: #ffffff;
+    background: transparent;
+}
+
+/* El visor no se encoge por debajo del iframe: si falta alto, se desplaza el panel. */
+#code-view-canvas .code-section-grow {
+    flex: 1 0 auto;
 }
 
 .canvas-placeholder {

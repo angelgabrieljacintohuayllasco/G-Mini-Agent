@@ -7,6 +7,76 @@ const CODE_ICONS = {
     cross: '<svg class="icon code-status-icon is-error" aria-hidden="true"><use href="assets/icons.svg#i-circle-x"></use></svg>',
 };
 
+/**
+ * Hoja base del documento de un canvas (va dentro del iframe). Los valores
+ * salen de los tokens de la app al momento de pintar, así el canvas sigue el
+ * tema y el acento; las clases son las de las plantillas de backend/core/canvas.py.
+ */
+const CANVAS_TOKENS = [
+    '--bg-primary', '--bg-secondary', '--bg-elevated', '--bg-hover', '--tint-1', '--tint-2',
+    '--border', '--border-strong', '--text-primary', '--text-secondary', '--text-muted',
+    '--accent', '--accent-text', '--accent-soft', '--success', '--warning', '--error', '--info',
+    '--success-soft', '--warning-soft', '--error-soft', '--info-soft',
+    '--radius-sm', '--radius', '--radius-lg', '--font', '--font-mono', '--font-scale',
+];
+const CANVAS_BASE_CSS = `
+*, *::before, *::after { box-sizing: border-box; }
+html { background: var(--bg-primary); color: var(--text-primary); font-family: var(--font); font-size: calc(14px * var(--font-scale, 1)); line-height: 1.5; }
+body { margin: 0; padding: 16px 18px 20px; overflow-wrap: anywhere; }
+h1, h2, h3 { margin: 0 0 12px; font-size: 1.07rem; font-weight: 600; letter-spacing: -0.005em; }
+p { margin: 0 0 8px; }
+a { color: var(--accent-text); }
+img, svg, video { max-width: 100%; height: auto; }
+pre, code { font-family: var(--font-mono); font-size: 0.86rem; }
+pre { margin: 0; padding: 10px 12px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-secondary); white-space: pre-wrap; }
+hr { border: 0; border-top: 1px solid var(--border); }
+
+.canvas-status { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.status-indicator { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px 4px 10px; border-radius: 999px; background: var(--tint-2); color: var(--text-secondary); font-weight: 600; }
+.status-indicator::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.status-indicator:is(.ok, .success, .online, .up, .good, .green, .active, .running, .healthy) { background: var(--success-soft); color: var(--success); }
+.status-indicator:is(.warning, .warn, .degraded, .pending, .yellow, .slow) { background: var(--warning-soft); color: var(--warning); }
+.status-indicator:is(.error, .danger, .down, .offline, .critical, .failed, .red, .bad) { background: var(--error-soft); color: var(--error); }
+.status-indicator:is(.info, .neutral, .blue, .idle) { background: var(--info-soft); color: var(--info); }
+.status-details { color: var(--text-secondary); white-space: pre-wrap; }
+.status-updated { font-size: 0.86rem; color: var(--text-muted); }
+
+.dashboard-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.dashboard-card { padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elevated); }
+.card-label { font-size: 0.86rem; color: var(--text-muted); }
+.card-value { margin-top: 4px; font-size: 1.6rem; font-weight: 600; line-height: 1.15; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.card-change { margin-top: 4px; font-size: 0.86rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.card-change:empty { display: none; }
+.card-change:is(.positive, .up, .increase, .good, .success) { color: var(--success); }
+.card-change:is(.negative, .down, .decrease, .bad, .error, .danger) { color: var(--error); }
+.card-change:is(.warning, .warn) { color: var(--warning); }
+
+.monitor-metrics { display: flex; flex-direction: column; gap: 12px; }
+.monitor-row { display: grid; grid-template-columns: minmax(80px, 32%) 1fr minmax(48px, auto); align-items: center; gap: 12px; }
+.metric-name { overflow: hidden; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+.metric-bar { height: 8px; overflow: hidden; border-radius: 999px; background: var(--tint-2); }
+.metric-fill { height: 100%; max-width: 100%; border-radius: inherit; background: var(--accent); }
+.metric-value { font-family: var(--font-mono); font-size: 0.86rem; text-align: right; font-variant-numeric: tabular-nums; }
+
+.canvas-items { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.canvas-item { display: flex; align-items: baseline; gap: 10px; padding: 9px 2px; border-bottom: 1px solid var(--border); }
+.canvas-item:last-child { border-bottom: 0; }
+.item-icon { flex: 0 0 auto; color: var(--text-muted); }
+.item-icon:empty { display: none; }
+.item-text { flex: 1; min-width: 0; }
+.item-meta { flex: 0 0 auto; font-size: 0.86rem; color: var(--text-muted); white-space: nowrap; }
+.canvas-item:is(.done, .completed, .ok, .success) .item-icon { color: var(--success); }
+.canvas-item:is(.done, .completed) .item-text { color: var(--text-secondary); }
+.canvas-item:is(.warning, .pending) .item-icon { color: var(--warning); }
+.canvas-item:is(.error, .failed) :is(.item-icon, .item-text) { color: var(--error); }
+
+.canvas-table { overflow-x: auto; }
+.canvas-table table, .canvas-custom table { width: 100%; border-collapse: collapse; font-size: 0.93rem; }
+.canvas-table th, .canvas-custom th { position: sticky; top: 0; background: var(--bg-elevated); color: var(--text-secondary); font-weight: 600; text-align: left; }
+.canvas-table th, .canvas-table td, .canvas-custom th, .canvas-custom td { padding: 8px 10px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.canvas-table tbody tr:hover, .canvas-custom tbody tr:hover { background: var(--bg-hover); }
+`;
+
 class CodeManager {
     constructor() {
         this.apiBase = 'http://127.0.0.1:8765/api';
@@ -139,6 +209,8 @@ class CodeManager {
         // Canvas state
         this.canvasLoaded = false;
         this.canvases = [];
+        this.canvasSubscribed = '';     // canvas con actualizaciones en vivo (canvas_subscribe)
+        this.renderedCanvas = null;     // lo que muestra el iframe ahora
         this.selectedCanvasId = '';
         this.canvasVersions = [];
 
@@ -163,7 +235,63 @@ class CodeManager {
         this.dags = [];
     }
 
+    /**
+     * Canvas en vivo: canvas:updated y canvas:snapshot llegan solo a quien se
+     * suscribió a ese canvas; canvas:created y canvas:deleted, a todos.
+     */
+    _bindCanvasLive() {
+        if (typeof ws === 'undefined') return;
+        const apply = (canvas) => {
+            if (!canvas || !canvas.canvas_id) return;
+            const index = this.canvases.findIndex((c) => c.canvas_id === canvas.canvas_id);
+            if (index >= 0) {
+                this.canvases[index] = { ...this.canvases[index], ...canvas };
+                this.renderCanvasList();
+            }
+            if (canvas.canvas_id !== this.selectedCanvasId) return;
+            // El snapshot al suscribirse repite lo que ya trajo el GET: no se vuelve a pintar.
+            const shown = this.renderedCanvas;
+            if (shown && shown.canvas_id === canvas.canvas_id && shown.version === canvas.version && shown.content === canvas.content) return;
+            this.renderCanvasViewer(canvas);
+            this.loadCanvasVersions();
+        };
+        ws.on('canvas:updated', apply);
+        ws.on('canvas:snapshot', apply);
+        ws.on('canvas:created', () => {
+            if (this.canvasLoaded) this.loadCanvas();
+        });
+        ws.on('canvas:deleted', (canvas) => {
+            if (!this.canvasLoaded) return;
+            if (canvas?.canvas_id && canvas.canvas_id === this.selectedCanvasId) this.selectedCanvasId = '';
+            this.loadCanvas();
+        });
+        // Al reconectar, el núcleo ya no tiene la suscripción: se pide de nuevo.
+        ws.on('connected', () => {
+            const id = this.canvasSubscribed;
+            this.canvasSubscribed = '';
+            if (id) this._subscribeCanvas(id);
+        });
+        // Otro tema o acento: el canvas abierto se repinta con los colores nuevos.
+        const repaint = () => {
+            if (this.renderedCanvas) this.renderCanvasViewer(this.renderedCanvas);
+        };
+        new MutationObserver(repaint).observe(document.documentElement, {
+            attributes: true, attributeFilter: ['data-theme', 'data-accent', 'data-density', 'style'],
+        });
+        window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', repaint);
+    }
+
+    _subscribeCanvas(canvasId) {
+        if (typeof ws === 'undefined') return;
+        const next = canvasId || '';
+        if (next === this.canvasSubscribed) return;
+        if (this.canvasSubscribed) ws.unsubscribeCanvas(this.canvasSubscribed);
+        this.canvasSubscribed = next;
+        if (next) ws.subscribeCanvas(next);
+    }
+
     init() {
+        this._bindCanvasLive();
         this.btnToggle?.addEventListener('click', () => this.togglePanel());
         this.btnClose?.addEventListener('click', () => this.togglePanel(false));
         this.btnRefresh?.addEventListener('click', () => this.refreshActiveView());
@@ -1357,6 +1485,7 @@ class CodeManager {
                 await this.loadCanvasContent(this.selectedCanvasId);
             } else {
                 this.selectedCanvasId = '';
+                this._subscribeCanvas('');
                 this.renderCanvasViewer(null);
                 this.canvasVersions = [];
                 this.renderCanvasVersions();
@@ -1398,29 +1527,68 @@ class CodeManager {
     }
 
     async loadCanvasContent(canvasId) {
-        if (!canvasId) { this.renderCanvasViewer(null); return; }
+        if (!canvasId) {
+            this._subscribeCanvas('');
+            this.renderCanvasViewer(null);
+            return;
+        }
         try {
             const data = await this.fetchJson(`/canvas/${encodeURIComponent(canvasId)}`);
             this.renderCanvasViewer(data.canvas || null);
+            this._subscribeCanvas(canvasId);
         } catch (error) {
             this.renderCanvasViewer(null);
             this.setCanvasStatus(error.message || 'No se pudo cargar el canvas.', true);
         }
     }
 
+    /**
+     * El HTML del canvas (canvas.content, ya renderizado por el núcleo) va en un
+     * iframe con sandbox vacío: sin allow-scripts ni allow-same-origin no ejecuta
+     * nada ni puede tocar la ventana principal, y el CSP de la app (frame-src
+     * 'none') impide que navegue a otra página.
+     */
     renderCanvasViewer(canvas) {
         if (this.canvasCurrentTitle) {
             this.canvasCurrentTitle.textContent = canvas ? (canvas.title || canvas.canvas_id) : 'Selecciona un canvas';
         }
-        if (this.canvasRenderArea) {
-            if (canvas && canvas.html_content) {
-                this.canvasRenderArea.innerHTML = canvas.html_content;
-            } else if (canvas && canvas.content) {
-                this.canvasRenderArea.innerHTML = `<pre style="white-space:pre-wrap;color:var(--text-secondary);font-size:12px;">${this.escapeHtml(typeof canvas.content === 'string' ? canvas.content : JSON.stringify(canvas.content, null, 2))}</pre>`;
-            } else {
-                this.canvasRenderArea.innerHTML = '<div class="canvas-placeholder">Selecciona un canvas de la lista.</div>';
-            }
+        if (!this.canvasRenderArea) return;
+        this.renderedCanvas = canvas || null;
+        const content = canvas ? canvas.content : null;
+        if (!canvas || content == null || content === '') {
+            const placeholder = document.createElement('div');
+            placeholder.className = 'canvas-placeholder';
+            placeholder.textContent = canvas ? 'Este canvas todavía no tiene contenido.' : 'Selecciona un canvas de la lista.';
+            this.canvasRenderArea.replaceChildren(placeholder);
+            return;
         }
+        const html = typeof content === 'string'
+            ? content
+            : `<pre>${this.escapeHtml(JSON.stringify(content, null, 2))}</pre>`;
+        let frame = this.canvasRenderArea.querySelector('iframe.canvas-frame');
+        if (!frame) {
+            frame = document.createElement('iframe');
+            frame.className = 'canvas-frame';
+            frame.setAttribute('sandbox', '');
+            frame.setAttribute('referrerpolicy', 'no-referrer');
+            this.canvasRenderArea.replaceChildren(frame);
+        }
+        frame.title = `Canvas: ${canvas.title || canvas.canvas_id}`;
+        frame.srcdoc = this.buildCanvasDocument(html);
+    }
+
+    buildCanvasDocument(html) {
+        const root = getComputedStyle(document.documentElement);
+        const vars = CANVAS_TOKENS
+            .map((name) => [name, root.getPropertyValue(name).trim()])
+            .filter(([, value]) => value)
+            .map(([name, value]) => `${name}: ${value};`)
+            .join(' ');
+        const scheme = (root.getPropertyValue('color-scheme') || '').trim() || 'dark';
+        return '<!doctype html><html lang="es"><head><meta charset="utf-8">'
+            + `<meta name="color-scheme" content="${scheme}">`
+            + `<style>:root { ${vars} color-scheme: ${scheme}; }${CANVAS_BASE_CSS}</style>`
+            + `</head><body>${html}</body></html>`;
     }
 
     async loadCanvasVersions() {

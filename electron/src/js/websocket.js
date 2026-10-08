@@ -123,6 +123,17 @@ class GminiWebSocket {
         this.socket.emit('user:screen_stream_toggle', { enable });
     }
 
+    /** Actualizaciones en vivo de un canvas (canvas:snapshot y canvas:updated). */
+    subscribeCanvas(canvasId) {
+        if (!this.connected || !canvasId) return;
+        this.socket.emit('canvas_subscribe', { canvas_id: canvasId });
+    }
+
+    unsubscribeCanvas(canvasId) {
+        if (!this.connected || !canvasId) return;
+        this.socket.emit('canvas_unsubscribe', { canvas_id: canvasId });
+    }
+
     checkRealtimeAvailable(provider = '', model = '') {
         if (!this.connected) return;
         this.socket.emit('user:check_realtime', { provider, model });
