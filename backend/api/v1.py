@@ -436,13 +436,27 @@ async def synthesize_for_device(text: str, voice: str | None = None) -> bytes:
     return audio
 
 
-async def _transcribe(audio: bytes) -> str:
+async def _transcribe(audio: bytes, prompt: str | None = None) -> str:
     engine = getattr(_agent(), "voice", None)
     if engine is None:
         raise ApiError(503, "provider_unavailable", "La voz no está inicializada.")
     if not audio:
         raise ApiError(422, "validation_error", "El cuerpo debe traer el audio (WAV).")
-    return (await engine.transcribe(audio)).strip()
+    return (await (engine.transcribe(audio, prompt=prompt) if prompt else engine.transcribe(audio))).strip()
+
+
+@router.post("/voice/wake")
+async def voice_wake(request: Request):
+    """Clip corto (WAV) -> si empieza con la palabra de activación y qué se pidió después."""
+    _require(request, "voice")
+    from backend.voice.wake_word import match_wake, wake_phrases
+
+    name = _agent_identity()["name"]
+    transcript = await _transcribe(await request.body(), prompt=f"Oye {name}.")
+    extra = config.get("voice", "wake_word", "phrases", default=[]) or []
+    hit = match_wake(transcript, wake_phrases(name, list(extra)))
+    return {"wake": bool(hit), "phrase": hit[0] if hit else "", "command": hit[1] if hit else "",
+            "transcript": transcript}
 
 
 @router.post("/voice/tts")

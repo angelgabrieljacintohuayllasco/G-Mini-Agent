@@ -11,7 +11,7 @@ from typing import Any
 import socketio
 from loguru import logger
 
-from backend.config import ROOT_DIR
+from backend.config import ROOT_DIR, config
 from backend.api.schemas import (
     AgentMessage,
     AgentApprovalEvent,
@@ -149,6 +149,7 @@ async def connect(sid: str, environ: dict, auth: Any = None) -> None:
 
 @sio.event
 async def disconnect(sid: str) -> None:
+    _wake_detectors.pop(sid, None)
     logger.info(f"Cliente desconectado: {sid}")
     try:
         from backend.core.gateway_service import get_gateway
@@ -349,6 +350,48 @@ async def handle_realtime_audio(sid: str, data: dict) -> None:
         await _agent_core.send_realtime_audio(audio_bytes)
     except Exception as exc:
         logger.error(f"Error procesando audio real-time: {exc}")
+
+
+_wake_detectors: dict[str, object] = {}
+
+
+def _wake_detector(sid: str):
+    from backend.core.identity import agent_name
+    from backend.voice.wake_word import WakeWordDetector, wake_phrases
+
+    detector = _wake_detectors.get(sid)
+    if detector is None:
+        engine = getattr(_agent_core, "voice", None)
+        if engine is None:
+            return None
+        extra = config.get("voice", "wake_word", "phrases", default=[]) or []
+        name = agent_name()
+        detector = WakeWordDetector(engine.transcribe, wake_phrases(name, list(extra)), prompt=f"Oye {name}.")
+        _wake_detectors[sid] = detector
+    return detector
+
+
+@sio.on("user:wake_audio")
+async def handle_wake_audio(sid: str, data: dict) -> None:
+    """Manos libres: trozos PCM16 16 kHz del micrófono para detectar "oye G-Mini"."""
+    if _agent_core is None or not config.get("voice", "wake_word", "enabled", default=False):
+        return
+    audio_b64 = (data or {}).get("audio")
+    if not audio_b64:
+        return
+    try:
+        import base64
+
+        detector = _wake_detector(sid)
+        if detector is None:
+            return
+        hit = await detector.feed(base64.b64decode(audio_b64))
+        if hit:
+            phrase, command, transcript = hit
+            logger.info(f"Palabra de activación: {phrase!r} (pedido: {command[:60]!r})")
+            await sio.emit("agent:wake", {"phrase": phrase, "command": command, "transcript": transcript}, to=sid)
+    except Exception as exc:
+        logger.error(f"Error en la palabra de activación: {exc}")
 
 
 @sio.on("user:realtime_start")

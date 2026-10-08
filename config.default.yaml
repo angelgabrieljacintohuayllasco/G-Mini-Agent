@@ -463,6 +463,9 @@ security:
 
 voice:
   enabled: false            # Se activa en Fase 3
+  wake_word:                # Manos libres: "oye G-Mini" (o el nombre del agente) abre la voz
+    enabled: false
+    phrases: []             # Frases extra, por ejemplo ["oye luna"]
   auto_tts: false           # Sintetizar voz automáticamente en cada respuesta
   # Presupuesto de tokens para la voz simulada (STT→LLM→TTS).
   # CRITICO con modelos de razonamiento (gemini-3.x thinking): los tokens de

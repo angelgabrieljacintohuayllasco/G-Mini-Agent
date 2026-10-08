@@ -791,10 +791,11 @@ class VoiceEngine:
             if audio:
                 yield audio
 
-    async def transcribe(self, audio_bytes: bytes) -> str:
+    async def transcribe(self, audio_bytes: bytes, prompt: str | None = None) -> str:
         """
         Transcribe audio a texto.
-        Acepta audio WAV/MP3/OGG bytes.
+        Acepta audio WAV/MP3/OGG bytes. prompt orienta a Whisper con palabras que
+        no conoce (por ejemplo el nombre del agente: "G-Mini" sale como "hemi ni").
         """
         if self._stt_loading is not None and not self._stt_loading.done():
             await self._stt_loading  # el primer uso espera la carga en segundo plano
@@ -813,6 +814,7 @@ class VoiceEngine:
                     language=None if language == "auto" else language,
                     beam_size=5,
                     vad_filter=True,
+                    initial_prompt=prompt or None,
                 )
                 return " ".join([segment.text.strip() for segment in segments])
 
