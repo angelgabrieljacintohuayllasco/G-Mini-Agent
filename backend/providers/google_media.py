@@ -99,7 +99,7 @@ def _get_configured_model(media_type: str) -> str | None:
     key_map = {"image": "image_model", "video": "video_model", "music": "music_model"}
     key = key_map.get(media_type)
     if key:
-        return config.get("generative_models", key, default=None)
+        return str(config.get("generative_models", key, default="") or "").strip() or None  # "" = el predeterminado
     return None
 
 

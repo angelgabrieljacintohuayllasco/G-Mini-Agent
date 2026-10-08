@@ -126,6 +126,11 @@ vision:
   retry_backoff_multiplier: 2.0
   max_screenshot_width: 1920   # Ancho máximo de screenshot enviado al LLM (0 = sin límite)
 
+generative_models:          # generate_image / generate_video / generate_music ("" = el predeterminado)
+  image_model: ""
+  video_model: ""
+  music_model: ""
+
 computer_use:
   enabled: true                                          # Sub-agente de computer use activo
   model: "gemini-2.5-computer-use-preview-10-2025"       # Modelo con soporte nativo computer_use
