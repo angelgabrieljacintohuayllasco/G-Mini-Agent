@@ -111,7 +111,7 @@
         "deb",
         "rpm"
       ],
-      "icon": "assets/icon.png",
+      "icon": "assets/linux-icons",
       "category": "Utility",
       "extraResources": [
         {
