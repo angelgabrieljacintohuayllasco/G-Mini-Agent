@@ -45,7 +45,9 @@ const COMPUTER_USE_MODELS = {
     anthropic: ['claude-sonnet-4-6', 'claude-opus-4-6'],
     openai: ['computer-use-preview'],
 };
-const COMPUTER_USE_PROVIDER_LABELS = { google: 'Google', anthropic: 'Anthropic', openai: 'OpenAI' };
+const COMPUTER_USE_PROVIDER_LABELS = {
+    google: 'Google', anthropic: 'Anthropic', openai: 'OpenAI', generic: 'Modelo de chat con capturas',
+};
 
 class SettingsManager {
     constructor() {
@@ -3903,16 +3905,22 @@ class SettingsManager {
             const provider = String(cu.provider || 'google').toLowerCase();
             if (selProvider) {
                 selProvider.innerHTML = '';
-                for (const p of Object.keys(COMPUTER_USE_MODELS)) {
+                for (const p of [...Object.keys(COMPUTER_USE_MODELS), 'generic']) {
                     const opt = document.createElement('option');
                     opt.value = p;
                     opt.textContent = COMPUTER_USE_PROVIDER_LABELS[p] || p;
                     if (p === provider) opt.selected = true;
                     selProvider.appendChild(opt);
                 }
-                selProvider.onchange = () => this._populateComputerUseModels(selProvider.value, '');
+                selProvider.onchange = () => {
+                    // El modelo nativo guardado se conserva al pasar por "generic" y volver.
+                    if (selProvider.value !== 'generic') this._populateComputerUseModels(selProvider.value, '');
+                    this._updateComputerUseMode(selProvider.value);
+                };
             }
             this._populateComputerUseModels(provider, cu.model || '');
+            this._populateComputerUseGeneric(String(cu.generic_provider || ''), String(cu.generic_model || ''));
+            this._updateComputerUseMode(provider);
             if (inputMaxIter && cu.max_iterations) inputMaxIter.value = cu.max_iterations;
             if (inputTimeout && cu.timeout_seconds) inputTimeout.value = cu.timeout_seconds;
             if (inputDelay && cu.stabilization_delay_seconds) inputDelay.value = cu.stabilization_delay_seconds;
@@ -3937,6 +3945,55 @@ class SettingsManager {
         if (!selModel.value && selModel.options.length) selModel.selectedIndex = 0;
     }
 
+    /**
+     * Modo "generic": un modelo de chat con visión mira cada captura y responde
+     * la acción. Se elige a propósito o el núcleo lo usa solo cuando el nativo
+     * no está disponible; en los dos casos manda generic_provider/generic_model
+     * (vacíos = el modelo principal del chat).
+     */
+    _populateComputerUseGeneric(provider, model) {
+        const selProvider = document.getElementById('select-computer-use-generic-provider');
+        const selModel = document.getElementById('select-computer-use-generic-model');
+        if (!selProvider || !selModel) return;
+        selProvider.innerHTML = '';
+        selProvider.appendChild(new Option('El del chat (principal)', ''));
+        const providers = Object.keys(MODEL_OPTIONS).filter((p) => catalogModelIds(p).length > 0);
+        if (provider && !providers.includes(provider)) providers.unshift(provider);
+        providers.forEach((p) => selProvider.appendChild(new Option(PROVIDER_LABELS[p] || p, p)));
+        selProvider.value = provider;
+
+        const fillModels = (prov, selected) => {
+            selModel.innerHTML = '';
+            selModel.appendChild(new Option(prov ? 'El predeterminado de ese proveedor' : 'El modelo principal del chat', ''));
+            const ids = prov ? catalogModelIds(prov) : [];
+            if (selected && !ids.includes(selected)) ids.unshift(selected);
+            ids.forEach((m) => selModel.appendChild(new Option(m, m)));
+            selModel.value = selected;
+            selModel.disabled = !prov && !selected;
+        };
+        fillModels(provider, model);
+        selProvider.onchange = () => fillModels(selProvider.value, '');
+    }
+
+    _updateComputerUseMode(provider) {
+        const generic = provider === 'generic';
+        const nativeField = document.getElementById('computer-use-native-model');
+        if (nativeField) nativeField.hidden = generic;
+        const title = document.getElementById('computer-use-generic-title');
+        if (title) title.textContent = generic ? 'Modelo que mira las capturas' : 'Respaldo: modelo de chat con capturas';
+        const note = document.getElementById('computer-use-generic-note');
+        if (!note) return;
+        if (generic) {
+            note.textContent = 'El modelo mira cada captura de pantalla y responde la siguiente acción. Sirve cualquier modelo con visión; es más lento y menos preciso que un modelo nativo de computer use.';
+            return;
+        }
+        const label = COMPUTER_USE_PROVIDER_LABELS[provider] || provider;
+        const reason = provider === 'google'
+            ? 'falta la API key o el modelo no existe en tu proyecto de Vertex'
+            : `falta la API key de ${label} o el modelo no está disponible`;
+        note.textContent = `Si el modo nativo no está disponible (${reason}), G-Mini pasa solo a este modo: un modelo de chat mira cada captura y decide la siguiente acción. No hace falta cambiar nada.`;
+    }
+
     async _saveComputerUseConfig() {
         const enabled = document.getElementById('cb-computer-use-enabled')?.checked ?? true;
         const provider = document.getElementById('select-computer-use-provider')?.value || 'google';
@@ -3944,6 +4001,10 @@ class SettingsManager {
         const maxIter = parseInt(document.getElementById('input-computer-use-max-iter')?.value || '30', 10);
         const timeout = parseInt(document.getElementById('input-computer-use-timeout')?.value || '180', 10);
         const delay = parseFloat(document.getElementById('input-computer-use-delay')?.value || '3');
+        // Se leen antes del primer guardado: la sincronización que corre al abrir
+        // Configuración puede recargar esta sección a mitad y pisar los selects.
+        const genericProvider = document.getElementById('select-computer-use-generic-provider')?.value || '';
+        const genericModel = document.getElementById('select-computer-use-generic-model')?.value || '';
 
         await this._saveConfigValue('computer_use', 'enabled', enabled);
         await this._saveConfigValue('computer_use', 'provider', provider);
@@ -3951,6 +4012,8 @@ class SettingsManager {
         await this._saveConfigValue('computer_use', 'max_iterations', maxIter);
         await this._saveConfigValue('computer_use', 'timeout_seconds', timeout);
         await this._saveConfigValue('computer_use', 'stabilization_delay_seconds', delay);
+        await this._saveConfigValue('computer_use', 'generic_provider', genericProvider);
+        await this._saveConfigValue('computer_use', 'generic_model', genericModel);
 
         const btn = document.getElementById('btn-save-computer-use');
         if (btn) {

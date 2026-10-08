@@ -998,19 +998,36 @@
 
                     <div class="setting-group">
                         <label>Sub-agente Computer Use</label>
-                        <div class="setting-help-text">Sub-agente dedicado a la interacción de UI (clicks, typing, scrolling). El agente principal delega aquí cuando no usa MCPControl. Soporta varios proveedores: elige proveedor y modelo de computer use.</div>
+                        <div class="setting-help-text">Sub-agente dedicado a usar la interfaz (clics, escritura, desplazamiento). El agente principal le delega esas tareas cuando no usa MCPControl.</div>
                         <label class="setting-toggle">
                             <input type="checkbox" id="cb-computer-use-enabled" checked>
                             <span>Activar sub-agente computer use</span>
                         </label>
-                        <div style="display: flex; gap: 12px; margin-top: 8px;">
-                            <div style="flex: 1;">
-                                <label class="setting-subhead">Proveedor</label>
+                        <div class="cu-grid">
+                            <div class="cu-field">
+                                <label class="setting-subhead" for="select-computer-use-provider">Proveedor</label>
                                 <select id="select-computer-use-provider" class="setting-select"></select>
                             </div>
-                            <div style="flex: 2;">
-                                <label class="setting-subhead">Modelo</label>
+                            <div class="cu-field cu-field-wide" id="computer-use-native-model">
+                                <label class="setting-subhead" for="select-computer-use-model">Modelo nativo</label>
                                 <select id="select-computer-use-model" class="setting-select"></select>
+                            </div>
+                        </div>
+                        <div class="cu-generic" id="computer-use-generic">
+                            <div class="cu-generic-head">
+                                <svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-scan-text"></use></svg>
+                                <span id="computer-use-generic-title">Respaldo: modelo de chat con capturas</span>
+                            </div>
+                            <p id="computer-use-generic-note" class="setting-help-text"></p>
+                            <div class="cu-grid">
+                                <div class="cu-field">
+                                    <label class="setting-subhead" for="select-computer-use-generic-provider">Proveedor del modelo</label>
+                                    <select id="select-computer-use-generic-provider" class="setting-select" aria-describedby="computer-use-generic-note"></select>
+                                </div>
+                                <div class="cu-field cu-field-wide">
+                                    <label class="setting-subhead" for="select-computer-use-generic-model">Modelo</label>
+                                    <select id="select-computer-use-generic-model" class="setting-select"></select>
+                                </div>
                             </div>
                         </div>
                         <div style="display: flex; gap: 12px; margin-top: 8px;">

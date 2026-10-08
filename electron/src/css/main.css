@@ -4751,6 +4751,53 @@ select option {
     flex: 1 1 200px;
 }
 
+/* ── Modelo IA > Computer use ──────────────────────────────── */
+.cu-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+    gap: var(--space-3);
+    margin-top: var(--space-2);
+}
+
+.cu-field {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.cu-generic {
+    margin-top: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+}
+
+.cu-generic-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semibold);
+    color: var(--text-primary);
+}
+
+.cu-generic-head .icon {
+    width: 16px;
+    height: 16px;
+    color: var(--accent-text);
+}
+
+.cu-generic .setting-help-text {
+    margin: var(--space-1) 0 0;
+}
+
+@media (max-width: 560px) {
+    .cu-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* ── Configuración > Dispositivos (otros G-Mini) ───────────── */
 .remote-pair-form {
     display: grid;
