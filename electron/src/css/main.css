@@ -4751,6 +4751,316 @@ select option {
     flex: 1 1 200px;
 }
 
+/* ── Configuración > Conectores ────────────────────────────── */
+.connectors-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+}
+
+.connectors-search.sidebar-search {
+    flex: 1 1 240px;
+    margin: 0;
+}
+
+.connectors-summary {
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+}
+
+.connectors-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+}
+
+.connector-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.connector-group-title {
+    margin: 0;
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-semibold);
+    color: var(--text-muted);
+}
+
+.connector-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+    transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.connector-card:hover,
+.connector-card.expanded {
+    border-color: var(--border-strong);
+}
+
+.connector-head {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-3);
+}
+
+.connector-icon {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+    color: var(--accent-text);
+    transition: background-color var(--dur) var(--ease-out), color var(--dur) var(--ease-out);
+}
+
+.connector-icon .icon {
+    width: 18px;
+    height: 18px;
+}
+
+.connector-card.is-off .connector-icon {
+    background: var(--tint-2);
+    color: var(--text-muted);
+}
+
+.connector-main {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.connector-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.connector-name {
+    margin: 0;
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semibold);
+    color: var(--text-primary);
+}
+
+.connector-card.is-off .connector-name {
+    color: var(--text-secondary);
+}
+
+.connector-desc {
+    margin: 0;
+    font-size: var(--fs-xs);
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+
+.connector-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
+    margin-top: var(--space-1);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+}
+
+.connector-meta-warn {
+    color: var(--warning);
+}
+
+.connector-more {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+    padding: 2px var(--space-1);
+    border: 0;
+    border-radius: var(--radius-xs);
+    background: none;
+    color: var(--accent-text);
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-medium);
+    cursor: pointer;
+}
+
+.connector-more:hover {
+    background: var(--accent-soft);
+}
+
+.connector-more .icon {
+    width: 14px;
+    height: 14px;
+    transition: transform var(--dur) var(--ease-out);
+}
+
+.connector-card.expanded .connector-more .icon {
+    transform: rotate(90deg);
+}
+
+.connector-toggle {
+    margin-top: 2px;
+}
+
+.connector-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-3) var(--space-4) calc(var(--space-3) * 2 + 34px);
+    border-top: 1px solid var(--border);
+    animation: fade-in var(--dur) var(--ease-out) both;
+}
+
+.connector-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.connector-section-label {
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-semibold);
+    color: var(--text-muted);
+}
+
+.connector-fields {
+    gap: var(--space-3);
+}
+
+.connector-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+}
+
+.connector-field > label {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--fs-sm);
+    color: var(--text-primary);
+}
+
+.connector-secret-row {
+    display: flex;
+    gap: var(--space-2);
+}
+
+.connector-secret-row .api-key-input {
+    flex: 1;
+    min-width: 0;
+}
+
+.connector-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+}
+
+.connector-status {
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+}
+
+.connector-status.is-error {
+    color: var(--error);
+}
+
+.connector-buttons .is-loading .icon {
+    animation: spin 0.9s linear infinite;
+}
+
+.connector-result {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    font-size: var(--fs-xs);
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.connector-result .icon {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    margin-top: 2px;
+}
+
+.connector-result.is-ok {
+    background: var(--success-soft);
+    color: var(--success);
+}
+
+.connector-result.is-error {
+    background: var(--error-soft);
+    color: var(--error);
+}
+
+.connector-actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.connector-action {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px var(--space-2);
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+}
+
+.connector-action code {
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+}
+
+.connector-action-params {
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+}
+
+.connector-docs {
+    display: inline-flex;
+    align-self: flex-start;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--fs-xs);
+    color: var(--accent-text);
+    text-decoration: none;
+}
+
+.connector-docs:hover {
+    text-decoration: underline;
+}
+
+.connector-docs .icon {
+    width: 13px;
+    height: 13px;
+}
+
+@media (max-width: 560px) {
+    .connector-body {
+        padding-left: var(--space-3);
+    }
+}
+
 /* ── Compositor: comandos "/" ──────────────────────────────── */
 .slash-menu {
     position: absolute;
