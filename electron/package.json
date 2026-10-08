@@ -103,7 +103,8 @@
       "shortcutName": "G-Mini Agent",
       "uninstallDisplayName": "G-Mini Agent",
       "artifactName": "G-Mini-Agent-Setup-${version}.${ext}",
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "include": "installer/installer.nsh"
     },
     "linux": {
       "target": [
