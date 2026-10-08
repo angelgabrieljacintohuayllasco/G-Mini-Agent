@@ -10,7 +10,8 @@ from backend.core.planner import Action, ActionPlanner
 
 @pytest.fixture
 def fresh_canvas(tmp_path, monkeypatch):
-    monkeypatch.setattr(canvas_module, "DEFAULT_DB_PATH", tmp_path / "gateway.db")
+    # La config trae canvas.db_path: hay que redirigir la ruta resuelta, no solo el default.
+    monkeypatch.setattr(canvas_module.CanvasService, "_resolve_db_path", staticmethod(lambda: tmp_path / "gateway.db"))
     monkeypatch.setattr(canvas_module, "_canvas_service", None)
     yield tmp_path / "gateway.db"
     canvas_module._canvas_service = None
