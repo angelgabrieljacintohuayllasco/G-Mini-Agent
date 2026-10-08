@@ -335,6 +335,34 @@ async def revoke_device(device_id: str, request: Request):
     return {"ok": True}
 
 
+async def _session_exists(session_id: str) -> bool:
+    import aiosqlite
+
+    from backend.core import memory as memory_module
+
+    async with aiosqlite.connect(memory_module.DB_PATH) as db:
+        async with db.execute("SELECT 1 FROM sessions WHERE session_id = ?", (session_id,)) as cursor:
+            return await cursor.fetchone() is not None
+
+
+async def _select_session(session_id: Any) -> None:
+    """session_id: vacío = la conversación actual; "new" = una nueva; un id = retomar esa."""
+    wanted = str(session_id or "").strip()
+    if not wanted:
+        return
+    agent = _agent()
+    if wanted.lower() not in ("new", "nueva") and wanted == agent.memory.session_id:
+        return
+    if agent._session_context_lock.locked():
+        raise ApiError(409, "busy", "El agente está ocupado con otra conversación.")
+    if wanted.lower() in ("new", "nueva"):
+        await agent.new_session()
+        return
+    if not await _session_exists(wanted):
+        raise ApiError(404, "not_found", "No existe esa conversación.")
+    await agent.load_session(wanted)
+
+
 @router.post("/chat")
 async def chat(request: Request):
     _require(request, "chat")
@@ -343,6 +371,7 @@ async def chat(request: Request):
     if not message:
         raise ApiError(422, "validation_error", "Falta 'message'.")
     attachments = _attachments(body.get("attachments"))
+    await _select_session(body.get("session_id"))
     wants_stream = bool(body.get("stream")) or "text/event-stream" in request.headers.get("accept", "")
     if not wants_stream:
         result = await run_chat(message, attachments)
@@ -377,18 +406,34 @@ async def chat(request: Request):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+def _iso_with_zone(value: Any) -> Any:
+    """La memoria guarda hora local sin zona; la API la devuelve con su desfase (ISO 8601)."""
+    if not value:
+        return value
+    from datetime import datetime
+
+    try:
+        moment = datetime.fromisoformat(str(value))
+    except ValueError:
+        return value
+    if moment.tzinfo is None:
+        moment = moment.astimezone()  # sin zona = hora local del equipo
+    return moment.isoformat(timespec="seconds")
+
+
 @router.get("/sessions")
 async def list_sessions(request: Request, limit: int = Query(default=20, ge=1, le=200)):
     _require(request, "chat")
     sessions = await _agent().memory.list_sessions(limit=limit)
-    return {"items": [{"id": s["session_id"], "title": s["title"], "updated_at": s["updated_at"],
+    return {"items": [{"id": s["session_id"], "title": s["title"], "updated_at": _iso_with_zone(s["updated_at"]),
                        "message_count": s["message_count"]} for s in sessions]}
 
 
 @router.get("/sessions/{session_id}/messages")
 async def session_messages(session_id: str, request: Request, limit: int = Query(default=100, ge=1, le=1000)):
     _require(request, "chat")
-    return {"items": await _agent().memory.get_session_messages(session_id, limit=limit)}
+    items = await _agent().memory.get_session_messages(session_id, limit=limit)
+    return {"items": [{**item, "created_at": _iso_with_zone(item.get("created_at"))} for item in items]}
 
 
 @router.get("/agent/state")
@@ -482,6 +527,7 @@ async def voice_turn(request: Request):
     transcript = await _transcribe(await request.body())
     if not transcript:
         return {"transcript": "", "reply": "", "session_id": _agent().memory.session_id}
+    await _select_session(request.query_params.get("session_id"))
     result = await run_chat(transcript)
     reply = result.reply.strip()
     data: dict[str, Any] = {"transcript": transcript, "reply": reply, "session_id": result.session_id,

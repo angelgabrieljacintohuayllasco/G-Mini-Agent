@@ -109,6 +109,10 @@ Respuesta sin streaming:
  "notices": ["Acciones ejecutadas: ..."], "approval_pending": false}
 ```
 
+`session_id`: vacío o `null` sigue la conversación actual, `"new"` abre una
+nueva y el id de una conversación existente la retoma (`404 not_found` si no
+existe; `409 busy` si el agente está en medio de otro turno).
+
 `reply` es el último mensaje del agente en el turno (su conclusión), sin el
 marcado interno `[ACTION:...]`. `notices` trae avisos del sistema y
 `approval_pending: true` indica que hay acciones esperando aprobación.

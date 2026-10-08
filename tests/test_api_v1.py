@@ -101,6 +101,30 @@ def test_chat_collects_reply_and_actions(client, agent):
     assert agent.prompts == ["hola"]
 
 
+def test_chat_can_open_or_resume_a_conversation(client, agent, monkeypatch):
+    from backend.api import v1
+
+    calls = []
+
+    async def new_session():
+        calls.append("new")
+        return "ses_nueva"
+
+    async def load_session(session_id):
+        calls.append(session_id)
+
+    async def exists(session_id):
+        return session_id == "ses_vieja"
+
+    agent.new_session, agent.load_session = new_session, load_session
+    monkeypatch.setattr(v1, "_session_exists", exists)
+    assert client.post("/api/v1/chat", headers=AUTH, json={"message": "hola", "session_id": "new"}).status_code == 200
+    assert client.post("/api/v1/chat", headers=AUTH, json={"message": "hola", "session_id": "ses_vieja"}).status_code == 200
+    missing = client.post("/api/v1/chat", headers=AUTH, json={"message": "hola", "session_id": "ses_otra"})
+    assert missing.status_code == 404 and missing.json()["error"]["code"] == "not_found"
+    assert calls == ["new", "ses_vieja"]
+
+
 def test_chat_streams_server_sent_events(client):
     with client.stream("POST", "/api/v1/chat", headers=AUTH, json={"message": "hola", "stream": True}) as resp:
         body = "".join(resp.iter_text())
@@ -247,3 +271,12 @@ def test_reply_hides_action_markup_and_keeps_the_conclusion():
     assert "ACTION" not in streamed and "[" not in streamed
     assert streamed == "Voy a revisar. ListoLima"
     assert result.reply == "Lima" and result.segments == ["Voy a revisar. Listo", "Lima"]
+
+
+def test_timestamps_carry_their_zone():
+    from backend.api.v1 import _iso_with_zone
+
+    value = _iso_with_zone("2026-10-07T21:42:59.123456")
+    assert value.startswith("2026-10-07T21:42:59") and (value.endswith("Z") or value[-6] in "+-")
+    assert _iso_with_zone("2026-10-07T21:42:59+00:00") == "2026-10-07T21:42:59+00:00"
+    assert _iso_with_zone(None) is None and _iso_with_zone("ayer") == "ayer"
