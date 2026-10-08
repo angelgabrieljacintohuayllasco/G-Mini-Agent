@@ -221,8 +221,10 @@ class CLIProvider(LLMProvider):
             await asyncio.wait_for(process.wait(), 10)
             if process.returncode not in (0, None):
                 detail = (await stderr_task).decode("utf-8", errors="replace").strip()[-400:]
-                raise ProviderError(self.name, f"{self._flavor['label']} terminó con código {process.returncode}: "
-                                    f"{detail or 'sin detalle'}", model=model, retriable=False)
+                hint = _login_hint(self.name, detail)
+                message = f"{self._flavor['label']} terminó con código {process.returncode}: {detail or 'sin detalle'}"
+                raise ProviderError(self.name, f"{hint} ({detail[-200:]})" if hint else message, model=model,
+                                    retriable=False)
         except asyncio.TimeoutError:
             raise ProviderError(self.name, f"{self._flavor['label']} no respondió a tiempo.", model=model,
                                 retriable=True) from None
@@ -311,6 +313,22 @@ def _claude_usage(event: dict[str, Any]) -> dict[str, Any]:
         "output_tokens": int(usage.get("output_tokens") or 0),
         "thinking_tokens": int((usage.get("output_tokens_details") or {}).get("thinking_tokens") or 0),
     }
+
+
+_LOGIN_HINTS = {
+    "claude-cli": "Claude Code no tiene sesión: ejecuta `claude` una vez en esta máquina e inicia sesión.",
+    "codex-cli": "Codex no tiene sesión: ejecuta `codex login` una vez en esta máquina.",
+    "gemini-cli": (
+        "Gemini CLI no tiene sesión: ejecuta `gemini` una vez en esta máquina e inicia sesión con Google, "
+        "o usa providers.gemini-cli.auth: vertex o api_key."
+    ),
+}
+_LOGIN_MARKERS = ("auth method", "not logged in", "login", "authenticate", "unauthorized", "401", "credentials")
+
+
+def _login_hint(provider: str, detail: str) -> str:
+    text = (detail or "").lower()
+    return _LOGIN_HINTS.get(provider, "") if any(marker in text for marker in _LOGIN_MARKERS) else ""
 
 
 def _gemini_usage(event: dict[str, Any]) -> dict[str, Any]:

@@ -2852,11 +2852,14 @@ class AgentCore:
             logger.error(f"Todos los proveedores LLM fallaron: {exc}")
             await self._set_agent_status(sid, AgentStatus.ERROR)
             tried = ", ".join(exc.providers_tried) if exc.providers_tried else "ninguno"
+            detail = str(getattr(exc, "last_error", "") or "").strip()
+            # "[proveedor:modelo] mensaje" -> solo el mensaje, que ya dice qué hacer.
+            detail = re.sub(r"^\[[^\]]*\]\s*", "", detail)[:300]
             await self._emit_activity(
                 sid,
-                f"No se pudo conectar con ningún proveedor de IA. "
-                f"Proveedores intentados: {tried}. "
-                "Revisa las API keys en Ajustes o elige otro modelo.",
+                f"No se pudo conectar con ningún proveedor de IA (intentados: {tried}). "
+                + (f"{detail} " if detail else "")
+                + "Revisa los proveedores en Ajustes o elige otro modelo.",
                 "error",
             )
         except ValueError as exc:

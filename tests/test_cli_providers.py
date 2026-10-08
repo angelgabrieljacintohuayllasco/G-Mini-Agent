@@ -201,3 +201,8 @@ def test_registry_and_router_know_the_cli_providers():
         spec = registry.get_spec(pid)
         assert spec.kind == registry.KIND_CLI and not spec.to_dict()["requires_api_key"]
         assert isinstance(_build_provider(pid), CLIProvider)
+
+
+def test_login_errors_say_what_to_do():
+    assert "ejecuta `gemini`" in cli_provider._login_hint("gemini-cli", "Please set an Auth method in settings.json")
+    assert cli_provider._login_hint("gemini-cli", "quota exceeded") == ""
