@@ -241,6 +241,7 @@ class CLIProvider(LLMProvider):
         model: str,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        stream: bool = True,  # el router lo pasa por posición, como a los demás proveedores
         **kwargs,
     ) -> AsyncIterator[str]:
         self._last_usage = None

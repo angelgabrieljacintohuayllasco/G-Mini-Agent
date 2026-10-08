@@ -152,6 +152,17 @@ async def test_gemini_error_result_raises(fake_cli, monkeypatch, tmp_path):
         [c async for c in CLIProvider("gemini-cli").generate(MESSAGES, "")]
 
 
+async def test_the_router_streams_through_cli_providers(fake_cli, monkeypatch):
+    # El router pasa (messages, model, temperature, max_tokens, stream) por posición.
+    from backend.providers.router import ModelRouter
+
+    monkeypatch.setenv("FAKE_CLI_FLAVOR", "claude")
+    router = ModelRouter()
+    monkeypatch.setattr(router, "_fallback_chain", lambda *a, **k: [], raising=False)
+    chunks = [c async for c in router.generate(MESSAGES, model="haiku", provider_name="claude-cli")]
+    assert "".join(chunks) == "Hola Gabriel"
+
+
 @pytest.mark.parametrize("mode,match", [("crash", "sesion vencida"), ("error", "límite alcanzado")])
 async def test_failures_raise_provider_errors(fake_cli, monkeypatch, mode, match):
     monkeypatch.setenv("FAKE_CLI_FLAVOR", "claude")
