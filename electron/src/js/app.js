@@ -369,13 +369,11 @@
         chatManager.hideTyping();
         ttsPlayer.stop();
         if (chatManager.isStreaming) chatManager.finishStreaming();
-        // B23: la sesión de voz del backend murió con la conexión; soltar el micrófono.
-        if (typeof voiceRealtime !== 'undefined' && voiceRealtime.active) {
-            void voiceRealtime.stop();
-            _stopMouthPusher();
-            btnRealtime?.classList.remove('realtime-active', 'realtime-simulated');
-            _setButtonIcon(btnRealtime, _realtimeMode === 'simulated' ? SVG_MIC_SIMULATED : SVG_WAVEFORM);
-            _pushSkinVoiceState({ active: false, available: !!_realtimeMode });
+        // B5/B23: la sesión de voz murió con la conexión; soltar el micrófono.
+        if (typeof voiceRealtime !== 'undefined') {
+            voiceRealtime.release('disconnected');
+            resetScreenStream();
+            syncRealtimeButton();
         }
     });
 
@@ -1264,17 +1262,21 @@
                 btnVideoStream.style.display = '';
             }
         } else if (status === 'realtime_stopped') {
-            voiceRealtime.markSessionClosed();
+            // B5: la sesión terminó (closed | reconnect_failed | error). Los dos
+            // últimos ya llegan explicados al chat desde el núcleo.
+            voiceRealtime.release(data?.reason || '');
+            resetScreenStream();
             syncRealtimeButton();
-            // Ocultar y resetear botón de video stream
-            if (btnVideoStream) {
-                btnVideoStream.style.display = 'none';
-                btnVideoStream.classList.remove('video-stream-active');
-                _setButtonIcon(btnVideoStream, SVG_MONITOR);
-                _videoStreamActive = false;
-            }
         }
     });
+
+    function resetScreenStream() {
+        if (!btnVideoStream) return;
+        btnVideoStream.style.display = 'none';
+        btnVideoStream.classList.remove('video-stream-active');
+        _setButtonIcon(btnVideoStream, SVG_MONITOR);
+        _videoStreamActive = false;
+    }
 
     // ── Video stream toggle (btn-video-stream) ────────────────
     // Visible para cualquier modelo con live_api: true (siempre tienen video + Google Search)

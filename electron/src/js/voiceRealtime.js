@@ -29,6 +29,7 @@ class VoiceRealtime {
         this._active = false;           // micrófono capturando
         this._sessionOpen = false;      // el núcleo tiene una sesión de voz abierta
         this._sessionAuto = false;      // la abrió un mensaje escrito: solo reproducción
+        this._closeWhenDrained = false; // cerrar el audio cuando termine lo encolado
         this._listeners = new Set();
         this._provider = 'openai';
         this._mode = 'native';  // 'native' | 'simulated'
@@ -136,11 +137,21 @@ class VoiceRealtime {
         this._notify();
     }
 
-    /** El núcleo cerró la sesión (agent:status realtime_stopped). */
-    markSessionClosed() {
+    /**
+     * La sesión terminó del lado del núcleo (agent:status realtime_stopped con
+     * reason closed | reconnect_failed | error) o se cayó la conexión (B5).
+     * Se suelta el micrófono sin avisar al núcleo, que ya no tiene sesión; lo
+     * que ya llegó de audio termina de sonar y después se cierra el contexto.
+     */
+    release(reason = '') {
+        const hadMic = this._active;
+        this._active = false;
         this._sessionOpen = false;
         this._sessionAuto = false;
+        this._cleanupCapture();
+        this._closePlaybackWhenIdle();
         this._notify();
+        if (hadMic) console.log(`[VoiceRealtime] Micrófono liberado: la sesión terminó (${reason || 'sin motivo'})`);
     }
 
     /** cb(estado) cada vez que cambia micrófono o sesión. Devuelve la función para quitarlo. */
@@ -165,6 +176,7 @@ class VoiceRealtime {
     playAudioChunk(audioB64, format = 'pcm16') {
         // Sin micrófono también suena: sesión abierta por un mensaje escrito (B7).
         if (!this._ensurePlayback()) return 0;
+        if (this._sessionOpen) this._closeWhenDrained = false;
 
         try {
             const raw = atob(audioB64);
@@ -275,14 +287,27 @@ class VoiceRealtime {
         source.onended = () => {
             this._playing = false;
             this._currentSource = null;
+            if (this._closeWhenDrained && this._playQueue.length === 0) {
+                this._cleanupPlayback();
+                return;
+            }
             this._drainPlayQueue();
         };
         source.start();
     }
 
     _cleanup() {
+        this._cleanupCapture();
+        this._cleanupPlayback();
+    }
+
+    /** Suelta el micrófono: nodo de captura, contexto y pistas de getUserMedia. */
+    _cleanupCapture() {
         if (this._processor) {
             this._processor.onaudioprocess = null;
+            if (this._processor.port) {
+                try { this._processor.port.close(); } catch (_) { /* nodo sin puerto */ }
+            }
             try { this._processor.disconnect(); } catch (_) { /* noop */ }
             this._processor = null;
         }
@@ -294,6 +319,9 @@ class VoiceRealtime {
             this._stream.getTracks().forEach((t) => t.stop());
             this._stream = null;
         }
+    }
+
+    _cleanupPlayback() {
         if (this._playbackCtx) {
             try { this._playbackCtx.close(); } catch (_) { /* noop */ }
             this._playbackCtx = null;
@@ -304,6 +332,13 @@ class VoiceRealtime {
         this._playing = false;
         this._currentSource = null;
         this._pcmCarry = null;
+        this._closeWhenDrained = false;
+    }
+
+    /** Cierra el audio ya o, si aún suena algo, cuando termine lo encolado. */
+    _closePlaybackWhenIdle() {
+        if (!this._playing && this._playQueue.length === 0) this._cleanupPlayback();
+        else this._closeWhenDrained = true;
     }
 
     /**
