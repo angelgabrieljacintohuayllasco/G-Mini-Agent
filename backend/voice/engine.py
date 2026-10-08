@@ -214,6 +214,27 @@ def _wrap_pcm16_as_wav(audio_bytes: bytes, sample_rate: int = 24000) -> bytes:
         return buffer.getvalue()
 
 
+def _audio_for_whisper(audio_bytes: bytes):
+    """WAV/FLAC/OGG/MP3 -> float32 mono a 16 kHz con soundfile.
+
+    faster-whisper decodifica con PyAV y sus versiones nuevas rompieron la
+    llamada (`metadata_errors`); con el arreglo ya decodificado no depende de
+    eso. Si soundfile no reconoce el formato, se pasa el original.
+    """
+    try:
+        import numpy as np
+        import soundfile as sf
+
+        data, rate = sf.read(io.BytesIO(audio_bytes), dtype="float32", always_2d=True)
+        mono = data.mean(axis=1)
+        if rate != 16000 and len(mono):
+            count = int(len(mono) * 16000 / rate)
+            mono = np.interp(np.linspace(0, len(mono) - 1, count), np.arange(len(mono)), mono)
+        return np.ascontiguousarray(mono, dtype=np.float32)
+    except Exception:
+        return io.BytesIO(audio_bytes)
+
+
 class VoiceEngine:
     """
     Motor de voz del agente.
@@ -807,7 +828,7 @@ class VoiceEngine:
             loop = asyncio.get_running_loop()
 
             def _transcribe() -> str:
-                buf = io.BytesIO(audio_bytes)
+                buf = _audio_for_whisper(audio_bytes)
                 language = str(config.get("voice", "stt_language", default="es") or "es").strip().lower()
                 segments, _info = self._stt_model.transcribe(
                     buf,

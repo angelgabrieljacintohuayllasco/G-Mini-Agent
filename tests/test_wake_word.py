@@ -64,3 +64,18 @@ async def test_detector_passes_the_name_to_whisper():
     detector = WakeWordDetector(transcribe, wake_phrases("Luna"), prompt="Oye Luna.")
     hit = await detector.check_clip(_chunk(4000) * 10)
     assert seen["prompt"] == "Oye Luna." and hit[:2] == ("oye luna", "enciende la luz")
+
+
+def test_audio_is_decoded_for_whisper_without_pyav():
+    import io
+
+    import numpy as np
+    import soundfile as sf
+
+    from backend.voice.engine import _audio_for_whisper
+
+    buf = io.BytesIO()
+    sf.write(buf, np.zeros((8000, 2), dtype="float32"), 8000, format="WAV")  # 1 s estéreo a 8 kHz
+    audio = _audio_for_whisper(buf.getvalue())
+    assert audio.dtype == np.float32 and audio.ndim == 1 and len(audio) == 16000
+    assert not isinstance(_audio_for_whisper(b"no es audio"), np.ndarray)  # queda para PyAV
