@@ -1904,6 +1904,19 @@ function readSessionToken() {
     return SESSION_TOKEN;
 }
 
+// Electron 43+: sin defaultPath los diálogos abren siempre en Descargas y Windows
+// ya no recuerda la última carpeta. Se recuerda aquí, por tipo de diálogo.
+const lastDialogDirs = new Map();
+
+function dialogDefaultPath(kind, fallbackDir, fileName = '') {
+    const dir = lastDialogDirs.get(kind) || fallbackDir;
+    return fileName ? path.join(dir, fileName) : dir;
+}
+
+function rememberDialogDir(kind, chosenPath) {
+    if (chosenPath) lastDialogDirs.set(kind, path.dirname(chosenPath));
+}
+
 handleIpc('get-backend-url', () => BACKEND_URL);
 handleIpc('get-session-token', () => readSessionToken());
 
@@ -1985,9 +1998,10 @@ handleIpc('save-media-as', async (_, url, filename) => {
 
         const result = await dialog.showSaveDialog(mainWindow, {
             title: 'Guardar archivo generado',
-            defaultPath: suggested,
+            defaultPath: dialogDefaultPath('save-media', app.getPath('downloads'), path.basename(suggested)),
         });
         if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+        rememberDialogDir('save-media', result.filePath);
 
         let buf;
         if (url.startsWith('data:')) {
@@ -2028,10 +2042,11 @@ handleIpc('save-text-as', async (_, payload = {}) => {
             .slice(0, 120) || 'conversacion.md';
         const result = await dialog.showSaveDialog(mainWindow, {
             title: 'Exportar conversación',
-            defaultPath: path.join(app.getPath('documents'), suggested),
+            defaultPath: dialogDefaultPath('save-text', app.getPath('documents'), suggested),
             filters: SAVE_TEXT_FILTERS[payload.kind] || SAVE_TEXT_FILTERS.text,
         });
         if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+        rememberDialogDir('save-text', result.filePath);
         fs.writeFileSync(result.filePath, content, 'utf8');
         return { ok: true, path: result.filePath };
     } catch (err) {
@@ -2184,10 +2199,12 @@ handleIpc('skin:pick-file', async (_, kind) => {
         : [{ name: 'Imagen PNG', extensions: ['png'] }];
     const result = await dialog.showOpenDialog(mainWindow, {
         title: kind === 'model' ? 'Selecciona el modelo .vrm o .glb' : 'Selecciona la imagen PNG',
+        defaultPath: dialogDefaultPath('skin', app.getPath('downloads')),
         properties: ['openFile'],
         filters,
     });
     if (result.canceled || !result.filePaths.length) return null;
+    rememberDialogDir('skin', result.filePaths[0]);
     return result.filePaths[0];
 });
 
@@ -2197,11 +2214,13 @@ handleIpc('pick-attachments', async (_, mode = 'files') => {
     const isFolder = mode === 'folder';
     const result = await dialog.showOpenDialog(mainWindow, {
         title: isFolder ? 'Selecciona una carpeta' : 'Selecciona archivos para adjuntar',
+        defaultPath: dialogDefaultPath('attach', app.getPath('documents')),
         properties: isFolder
             ? ['openDirectory']
             : ['openFile', 'multiSelections'],
     });
     if (result.canceled || !result.filePaths.length) return [];
+    rememberDialogDir('attach', result.filePaths[0]);
     return result.filePaths;
 });
 
@@ -2549,7 +2568,7 @@ app.whenReady().then(async () => {
             if ((filePath !== baseDir && !filePath.startsWith(baseDir + path.sep)) || !fs.existsSync(filePath)) {
                 return new Response('Not found', { status: 404 });
             }
-            return net.fetch(`file://${filePath.replace(/\\/g, '/')}`);
+            return net.fetch(pathToFileURL(filePath).href);
         } catch (err) {
             console.error(`[Skin] Error sirviendo gmini-skin://: ${err.message}`);
             return new Response('Error', { status: 500 });
