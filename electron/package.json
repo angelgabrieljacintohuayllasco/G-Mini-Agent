@@ -1,6 +1,6 @@
 {
   "name": "gmini-agent-ui",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "G-Mini Agent: agente de IA de escritorio",
   "main": "main.js",
   "scripts": {
