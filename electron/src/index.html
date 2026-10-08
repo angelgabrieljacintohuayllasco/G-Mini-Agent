@@ -1623,6 +1623,36 @@
                     </div>
 
                     <div class="setting-group">
+                        <span class="setting-group-title">Tokens para scripts</span>
+                        <div class="setting-help-text">Para scripts e integraciones que llaman a la API de este G-Mini con la cabecera <code>Authorization: Bearer</code>. El token se muestra una sola vez; se revoca como cualquier dispositivo.</div>
+                        <form id="token-form" class="pairing-form token-form" novalidate>
+                            <div class="pairing-field token-label-field">
+                                <label for="token-label">Para qué es</label>
+                                <input id="token-label" class="setting-input" type="text" maxlength="80" placeholder="Respaldo nocturno, Home Assistant, script de reportes" autocomplete="off" spellcheck="false">
+                            </div>
+                            <fieldset class="pairing-scopes">
+                                <legend>Permisos</legend>
+                                <label><input type="checkbox" name="token-scope" value="chat" checked>Conversar</label>
+                                <label><input type="checkbox" name="token-scope" value="voice">Voz</label>
+                                <label><input type="checkbox" name="token-scope" value="tasks" checked>Tareas en segundo plano</label>
+                                <label><input type="checkbox" name="token-scope" value="node">Nodo</label>
+                                <label class="token-scope-admin"><input type="checkbox" name="token-scope" value="admin">Administrar: crea y revoca accesos</label>
+                            </fieldset>
+                            <button id="btn-token-create" class="btn-primary-accent" type="submit"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-key-round"></use></svg>Crear token</button>
+                        </form>
+                        <div id="token-result" class="token-result" hidden>
+                            <div class="token-result-head"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-triangle-alert"></use></svg><strong>Cópialo ahora: no se vuelve a mostrar.</strong></div>
+                            <div class="token-value-row">
+                                <code id="token-value" class="token-value"></code>
+                                <button id="btn-token-copy" class="btn-secondary btn-panel-action" type="button"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-copy"></use></svg><span>Copiar</span></button>
+                            </div>
+                            <p id="token-meta" class="setting-help-text"></p>
+                            <button id="btn-token-done" class="btn-secondary btn-panel-action" type="button"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-check"></use></svg>Ya lo guardé</button>
+                        </div>
+                        <div id="token-status" class="connector-status" role="status"></div>
+                    </div>
+
+                    <div class="setting-group">
                         <div class="skills-head-row">
                             <span class="setting-group-title">Dispositivos con acceso</span>
                             <button id="btn-devices-refresh" class="btn-secondary btn-panel-action" type="button"><svg class="icon" aria-hidden="true"><use href="assets/icons.svg#i-refresh-cw"></use></svg>Actualizar</button>

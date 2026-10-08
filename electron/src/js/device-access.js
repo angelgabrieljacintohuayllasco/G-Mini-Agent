@@ -5,7 +5,8 @@
  * conecten a este:
  *  - código de un solo uso (POST /api/v1/pairing, vence a los 5 minutos) con
  *    cuenta regresiva y QR (vendor/qrcode-generator.js, dibujado como SVG);
- *  - dispositivos con acceso (GET /api/v1/devices) y revocación
+ *  - tokens para scripts (POST /api/v1/tokens), visibles una sola vez;
+ *  - dispositivos y tokens con acceso (GET /api/v1/devices) y revocación
  *    (DELETE /api/v1/devices/{id}).
  * Las llamadas llevan el token de sesión de la app (api-auth.js), que tiene
  * todos los alcances.
@@ -453,6 +454,88 @@
         $('access-devices-list')?.querySelector(`[data-id="${CSS.escape(fresh.id)}"]`)?.classList.add('is-new');
     }
 
+    // ── Tokens para scripts ────────────────────────────────────
+
+    async function createToken(e) {
+        e.preventDefault();
+        const status = $('token-status');
+        const label = $('token-label');
+        const scopes = Array.from(document.querySelectorAll('#token-form input[name="token-scope"]:checked')).map((i) => i.value);
+        status.classList.remove('is-error');
+        status.textContent = '';
+        if (!label.value.trim()) {
+            status.classList.add('is-error');
+            status.textContent = 'Escribe para qué es el token: así lo reconoces en la lista.';
+            label.focus();
+            return;
+        }
+        if (!scopes.length) {
+            status.classList.add('is-error');
+            status.textContent = 'Elige al menos un permiso.';
+            return;
+        }
+        const button = $('btn-token-create');
+        button.disabled = true;
+        try {
+            const data = await api('/v1/tokens', {
+                method: 'POST',
+                body: JSON.stringify({ label: label.value.trim(), scopes }),
+            });
+            showToken(data);
+            label.value = '';
+            await loadDevices();
+        } catch (err) {
+            status.classList.add('is-error');
+            status.textContent = `No se pudo crear el token: ${err.message}`;
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    /** El token solo vive en este bloque hasta "Ya lo guardé": no se guarda en ningún lado. */
+    function showToken(data) {
+        const box = $('token-result');
+        const value = $('token-value');
+        if (!box || !value) return;
+        value.textContent = String(data.token || '');
+        const scopes = (Array.isArray(data.scopes) ? data.scopes : []).map((s) => SCOPES[s] || s).join(', ');
+        $('token-meta').textContent = `"${data.name || ''}"${scopes ? ` con permisos de ${scopes}` : ''}. Úsalo en la cabecera Authorization: Bearer de cada petición a /api/v1.`;
+        resetCopy();
+        box.hidden = false;
+        $('btn-token-copy')?.focus();
+    }
+
+    function hideToken() {
+        $('token-value').textContent = '';
+        $('token-result').hidden = true;
+        $('token-status').textContent = 'Listo. El token ya no se muestra; si lo pierdes, revócalo y crea otro.';
+    }
+
+    function resetCopy() {
+        const copy = $('btn-token-copy');
+        if (copy) copy.innerHTML = `${icon('copy')}<span>Copiar</span>`;
+    }
+
+    async function copyToken() {
+        const value = $('token-value')?.textContent || '';
+        if (!value) return;
+        const copy = $('btn-token-copy');
+        try {
+            await navigator.clipboard.writeText(value);
+            copy.innerHTML = `${icon('copy-check')}<span>Copiado</span>`;
+            clearTimeout(copyToken.timer);
+            copyToken.timer = setTimeout(resetCopy, 2000);
+        } catch (err) {
+            // Sin portapapeles: el texto queda seleccionado para copiarlo a mano.
+            const range = document.createRange();
+            range.selectNodeContents($('token-value'));
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            toast('No se pudo copiar solo: el token quedó seleccionado, cópialo con Ctrl+C.', true);
+        }
+    }
+
     // ── Dispositivos con acceso ────────────────────────────────
 
     async function loadDevices() {
@@ -501,14 +584,15 @@
         title.appendChild(el('h5', 'connector-name', device.name || device.id));
         if (apiToken) title.appendChild(el('span', 'skill-chip is-muted', 'token de API'));
         main.appendChild(title);
-        const kind = [TYPE_LABELS[device.device_type] || device.device_type, device.platform].filter(Boolean).join(' · ');
+        // En un token el chip ya dice qué es; en un dispositivo, tipo y plataforma.
+        const kind = apiToken ? '' : [TYPE_LABELS[device.device_type] || device.device_type, device.platform].filter(Boolean).join(' · ');
         if (kind) main.appendChild(el('p', 'connector-desc', kind));
 
         const meta = el('div', 'connector-meta');
         const seen = relative(device.last_seen_at);
         meta.appendChild(el('span', '', seen ? `último uso ${seen}` : 'sin usar todavía'));
         const created = relative(device.created_at);
-        if (created) meta.appendChild(el('span', '', `emparejado ${created}`));
+        if (created) meta.appendChild(el('span', '', `${apiToken ? 'creado' : 'emparejado'} ${created}`));
         const scopes = el('span', 'device-scopes');
         (Array.isArray(device.scopes) ? device.scopes : []).forEach((scope) => {
             scopes.appendChild(el('span', 'skill-chip is-muted', SCOPES[scope] || scope));
@@ -558,6 +642,9 @@
     // ── Arranque ───────────────────────────────────────────────
 
     $('pairing-form')?.addEventListener('submit', generate);
+    $('token-form')?.addEventListener('submit', createToken);
+    $('btn-token-copy')?.addEventListener('click', copyToken);
+    $('btn-token-done')?.addEventListener('click', hideToken);
     $('btn-devices-refresh')?.addEventListener('click', () => loadDevices());
     $('btn-access-restart')?.addEventListener('click', () => window.gmini?.relaunch?.());
 

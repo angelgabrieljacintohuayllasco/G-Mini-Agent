@@ -5209,6 +5209,67 @@ select option {
     }
 }
 
+/* Tokens para scripts: se ven una sola vez. */
+.token-form {
+    grid-template-columns: 1fr;
+}
+
+.pairing-scopes .token-scope-admin {
+    color: var(--warning);
+}
+
+.token-result {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border));
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+    animation: pop-in var(--dur) var(--ease-out) both;
+}
+
+.token-result-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--fs-sm);
+    color: var(--text-primary);
+}
+
+.token-result-head .icon {
+    width: 16px;
+    height: 16px;
+    color: var(--warning);
+}
+
+.token-value-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+}
+
+.token-value {
+    flex: 1 1 260px;
+    min-width: 0;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--bg-code);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    overflow-wrap: anywhere;
+    user-select: all;
+}
+
+.token-result .setting-help-text {
+    margin: 0;
+}
+
 /* ── Configuración > Dispositivos (otros G-Mini) ───────────── */
 .remote-pair-form {
     display: grid;
