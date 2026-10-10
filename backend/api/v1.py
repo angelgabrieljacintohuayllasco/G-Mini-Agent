@@ -676,7 +676,23 @@ async def websocket_v1(ws: WebSocket):
                 payload = frame.get("data") if frame.get("ok", True) else {"error": frame.get("error")}
                 get_node_manager().resolve_invocation(str(frame.get("request_id") or ""), payload or {})
             elif kind == "node.event":
-                logger.info(f"Evento de nodo {info.device_name or info.device_id}: {frame.get('event')}")
+                from backend.core.node_manager import get_node_manager
+
+                event_name = str(frame.get("event") or "")
+                event_data = frame.get("data") if isinstance(frame.get("data"), dict) else {}
+                node = get_node_manager().record_event(sid, event_name, event_data)
+                logger.info(f"Evento de nodo {info.device_name or info.device_id}: {event_name}")
+                try:
+                    from backend.api.websocket_handler import sio as _sio
+
+                    await _sio.emit("agent:node_event", {
+                        "node_id": node.node_id if node else (info.device_id or ""),
+                        "name": node.name if node else (info.device_name or ""),
+                        "event": event_name,
+                        "data": event_data,
+                    })
+                except Exception:
+                    pass
             else:
                 outbox.put_nowait({"type": "error", "code": "bad_request", "message": f"Tipo desconocido: {kind}"})
     except WebSocketDisconnect:

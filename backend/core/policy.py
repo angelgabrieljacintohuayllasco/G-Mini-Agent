@@ -342,6 +342,8 @@ class PolicyEngine:
             "adb_screenshot",
             "adb_screen_read_text",
             "adb_screen_locate_text",
+            "node_list",
+            "node_events",
         }:
             return self._review(action, "observe", "reading", "low", 0.95, "accion de lectura o cierre")
 
@@ -355,6 +357,11 @@ class PolicyEngine:
         if action_type == "remote_delegate":
             return self._review(action, "development", "system", "medium", 0.78,
                                 "delega una tarea a otro G-Mini emparejado (corre con los permisos de ese equipo)")
+
+        if action_type == "node_invoke":
+            return self._review(action, "development", "system", "medium", 0.78,
+                                "usa una capacidad de un dispositivo emparejado (el propio dispositivo pide su "
+                                "confirmacion para lo sensible, p. ej. enviar un SMS)")
 
         if action_type == "memory_forget":
             return self._review(action, "observe", "files", "medium", 0.80, "borra un recuerdo del usuario a pedido suyo")

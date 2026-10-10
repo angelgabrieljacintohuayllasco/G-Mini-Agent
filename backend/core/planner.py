@@ -3971,6 +3971,70 @@ class ActionPlanner:
                     result["data"] = data
                     result["message"] = message
 
+                case "node_list":
+                    from backend.core.node_manager import get_node_manager
+
+                    nodes = await get_node_manager().list_nodes(include_disconnected=False)
+                    listed = [
+                        {"node_id": n["node_id"], "name": n["name"], "type": n["node_type"], "surfaces": n["surfaces"]}
+                        for n in nodes
+                    ]
+                    result["success"] = True
+                    result["data"] = {"nodes": listed}
+                    result["message"] = f"{len(listed)} dispositivos conectados"
+
+                case "node_invoke":
+                    from backend.core.node_manager import get_node_manager
+
+                    nm = get_node_manager()
+                    surface = str(action.params.get("surface", "")).strip()
+                    node_ref = str(action.params.get("node", action.params.get("node_id", ""))).strip()
+                    inner = action.params.get("params") or {}
+                    if not isinstance(inner, dict):
+                        result["message"] = "params debe ser un objeto JSON"
+                        return result
+                    if not surface:
+                        result["message"] = "Falta 'surface' en node_invoke"
+                        return result
+                    node = nm.find_node(node_ref) if node_ref else nm.pick_node_for_surface(surface)
+                    if not node:
+                        result["message"] = (
+                            f"No encontré el dispositivo '{node_ref}'." if node_ref
+                            else f"No hay un único dispositivo con la superficie '{surface}'. Usa node_list y pasa node=."
+                        )
+                        return result
+                    default_timeout = 180.0 if surface == "sms.send" else 60.0
+                    timeout = float(action.params.get("timeout", default_timeout) or default_timeout)
+                    data = await nm.invoke_surface(node.node_id, surface, inner, timeout=timeout)
+                    result["success"] = bool(data.get("ok"))
+                    result["data"] = data
+                    result["message"] = (
+                        f"{surface} en {node.name}: ok" if data.get("ok")
+                        else f"{surface} en {node.name}: {data.get('error', 'falló')}"
+                    )
+
+                case "node_events":
+                    from backend.core.node_manager import get_node_manager
+
+                    nm = get_node_manager()
+                    node_ref = str(action.params.get("node", action.params.get("node_id", ""))).strip()
+                    node = nm.find_node(node_ref) if node_ref else None
+                    if node_ref and not node:
+                        result["message"] = f"No encontré el dispositivo '{node_ref}'."
+                        return result
+                    if node is None:
+                        connected = await nm.list_nodes(include_disconnected=False)
+                        if len(connected) == 1:
+                            node = await nm.get_node(connected[0]["node_id"])
+                    if node is None:
+                        result["message"] = "Indica node= (usa node_list para ver los dispositivos)."
+                        return result
+                    limit = int(action.params.get("limit", 20) or 20)
+                    events = nm.get_recent_events(node.node_id, limit=limit)
+                    result["success"] = True
+                    result["data"] = {"node": node.name, "events": events}
+                    result["message"] = f"{len(events)} eventos recientes de {node.name}"
+
                 case "skill_list":
                     from backend.core import agent_skills
 

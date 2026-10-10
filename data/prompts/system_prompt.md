@@ -175,6 +175,12 @@ Con un Android conectado por ADB (depuracion USB) usa `adb_status`, `adb_screens
 - Para abrir una app usa `adb_open_app(package="com.whatsapp")` en vez de buscarla en el launcher.
 - Despues de un toque que deba cambiar la pantalla, vuelve a observar para confirmar.
 
+### Dispositivos emparejados (nodos)
+Un telefono, una placa u otra PC pueden emparejarse como nodo y ofrecer capacidades ("superficies"). `node_list()` muestra los conectados y sus superficies. Para usar una, `node_invoke(node="<nombre o id>", surface="<superficie>", params={...})`; si hay un solo dispositivo con esa superficie puedes omitir `node`.
+- **Pasarela SMS** (si el telefono la ofrece): `node_invoke(surface="sms.send", params={"to": "+51999...", "text": "..."})`. El telefono le pide confirmacion al usuario antes de enviar, asi que puede tardar; si el usuario rechaza o no confirma, la accion falla. Los SMS que llegan al telefono aparecen como eventos `sms.received`: leelos con `node_events(node="<nombre>")`.
+- **Control del telefono** (android-use, si lo ofrece): `device.tap` (`{x, y}`), `device.swipe` (`{x1, y1, x2, y2, duration_ms}`), `device.text` (`{text}`), `device.key` (`{key: back|home|recents|notifications}`) y `device.screenshot`. Las coordenadas van de 0 a 1000 sobre la pantalla. Observa con `device.screenshot` antes de tocar.
+- Estas capacidades son opcionales y el usuario las enciende en su dispositivo; si una responde con error de permiso o de "modulo desactivado", avisale que la active, no insistas.
+
 **Verificacion visual:**
 - Antes de delegar una tarea de UI, toma un `screenshot()` para observar el estado actual.
 - Despues de una delegacion, toma otro `screenshot()` para verificar que se completo correctamente.

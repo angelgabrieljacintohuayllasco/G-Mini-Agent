@@ -10,6 +10,7 @@ import asyncio
 import json
 import secrets
 import uuid
+from collections import deque
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from enum import Enum
@@ -64,6 +65,7 @@ KNOWN_SURFACES = {
     "contacts.list", "contacts.search",
     "sms.send", "sms.read",
     "sensors.list", "sensors.read",
+    "device.tap", "device.swipe", "device.text", "device.key", "device.screenshot",
 }
 
 
@@ -108,6 +110,7 @@ class NodeManager:
         self._nodes: dict[str, NodeInfo] = {}
         self._sid_to_node: dict[str, str] = {}
         self._pairing_tokens: dict[str, str] = {}
+        self._recent_events: dict[str, deque[dict[str, Any]]] = {}
         self._lock = asyncio.Lock()
         self._initialized = False
 
@@ -492,6 +495,46 @@ class NodeManager:
             1 for n in self._nodes.values()
             if n.status == NodeStatus.CONNECTED.value
         )
+
+    def find_node(self, ref: str) -> NodeInfo | None:
+        """Resuelve un nodo por id exacto o por nombre (sin distinguir mayúsculas)."""
+        ref = (ref or "").strip()
+        if not ref:
+            return None
+        node = self._nodes.get(ref)
+        if node:
+            return node
+        matches = [n for n in self._nodes.values() if n.name.lower() == ref.lower()]
+        return matches[0] if len(matches) == 1 else None
+
+    def pick_node_for_surface(self, surface: str) -> NodeInfo | None:
+        """El único nodo conectado que ofrece [surface], o None si hay 0 o varios."""
+        matches = [
+            n for n in self._nodes.values()
+            if n.status == NodeStatus.CONNECTED.value and n.is_surface_allowed(surface)
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    def record_event(self, ws_sid: str, event: str, data: dict[str, Any] | None) -> NodeInfo | None:
+        """Guarda un evento espontáneo de un nodo (p. ej. sms.received) para que el agente lo lea."""
+        node = self.get_node_by_sid(ws_sid)
+        if not node:
+            return None
+        buffer = self._recent_events.setdefault(node.node_id, deque(maxlen=50))
+        buffer.append({
+            "event": str(event),
+            "data": data or {},
+            "at": datetime.now(timezone.utc).isoformat(),
+        })
+        node.last_seen_at = datetime.now(timezone.utc).isoformat()
+        return node
+
+    def get_recent_events(self, node_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        buffer = self._recent_events.get(node_id)
+        if not buffer:
+            return []
+        items = list(buffer)
+        return items[-limit:] if limit > 0 else items
 
 
 # ── Pending Invocations (module-level for resolve_invocation) ─────
