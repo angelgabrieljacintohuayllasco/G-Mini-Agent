@@ -107,6 +107,19 @@ async def test_node_invoke_fails_without_a_matching_node(monkeypatch):
     assert not result["success"]
 
 
+async def test_node_invoke_lifts_the_screenshot_for_vision(monkeypatch):
+    node = _node("dev_1", "Pixel", ["device.screenshot"])
+    fake = _FakeManager(node, {"ok": True, "data": {"image_base64": "AAAA", "mime": "image/jpeg"}})
+    monkeypatch.setattr(node_manager_module, "get_node_manager", lambda: fake)
+    planner = ActionPlanner.__new__(ActionPlanner)
+    result = await planner._execute_single(
+        Action(type="node_invoke", params={"surface": "device.screenshot"}),
+    )
+    assert result["success"]
+    # El base64 queda al nivel que el bucle de vision del agente lee.
+    assert result["data"]["image_base64"] == "AAAA"
+
+
 async def test_node_list_reports_surfaces(monkeypatch):
     node = _node("dev_1", "Pixel", ["sms.send", "device.tap"])
     fake = _FakeManager(node, {"ok": True})

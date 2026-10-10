@@ -1809,6 +1809,7 @@ class AgentCore:
                     "adb_preview_start",
                     "screen_preview_start",
                     "adb_wait_for",
+                    "node_invoke",
                 }
                 and isinstance(data, dict)
                 and data.get("image_base64")

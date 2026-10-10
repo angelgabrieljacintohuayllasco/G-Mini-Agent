@@ -4008,6 +4008,12 @@ class ActionPlanner:
                     data = await nm.invoke_surface(node.node_id, surface, inner, timeout=timeout)
                     result["success"] = bool(data.get("ok"))
                     result["data"] = data
+                    # La captura del telefono se eleva para que el bucle de vision la
+                    # muestre al modelo (action_output descarta el base64 del texto).
+                    if surface == "device.screenshot" and isinstance(data.get("data"), dict):
+                        shot = data["data"].get("image_base64")
+                        if shot:
+                            data["image_base64"] = shot
                     result["message"] = (
                         f"{surface} en {node.name}: ok" if data.get("ok")
                         else f"{surface} en {node.name}: {data.get('error', 'falló')}"
